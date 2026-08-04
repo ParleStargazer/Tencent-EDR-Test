@@ -33,11 +33,13 @@ edr-validate report <run-id> --format html,json
 baselines/     版本化检验基准
 configs/       非敏感环境配置模板
 docs/          架构、设计和决策记录
-reference/     本项目原始需求材料
-samples/       测试样本及样本清单
 schemas/       BASELINE 与规范化事件数据契约
 src/           自动化测试框架源码
 tests/         单元、契约、集成和端到端测试
 ```
 
-许可证尚未选定。在明确公司内部开源/闭源策略前，不应对外发布本仓库。
+本地 `reference/`、`samples/` 和 `EDR-Telemetry-main/` 目录不纳入版本控制。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。

@@ -1,5 +1,7 @@
-# Local third-party reference checkout; see THIRD_PARTY_NOTICES.md
+# Local references and sample workspaces; never commit these directories
 /EDR-Telemetry-main/
+/reference/
+/samples/
 
 # Secrets and local environment
 .env

@@ -453,8 +453,6 @@ EDR_VALIDATION_TENCENT_CLIENT_SECRET
 ├─ baselines/windows/        Windows BASELINE
 ├─ configs/                  环境与套件配置模板
 ├─ docs/                     设计、ADR、接入说明
-├─ reference/                已确认的原始项目需求
-├─ samples/windows/          样本实现与 sample.yaml
 ├─ schemas/                  数据契约
 ├─ src/edr_validation/
 │  ├─ cli/                   命令入口
@@ -472,6 +470,8 @@ EDR_VALIDATION_TENCENT_CLIENT_SECRET
    ├─ integration/
    └─ e2e/
 ```
+
+本地 `reference/`、`samples/` 和 `EDR-Telemetry-main/` 作为需求参考、样本工作区或第三方资料使用，统一由 `.gitignore` 排除。样本的受控发布方式在实现阶段另行确定，不通过本仓库直接分发。
 
 ## 14. 测试策略
 
