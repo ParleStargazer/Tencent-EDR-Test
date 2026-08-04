@@ -1,0 +1,70 @@
+schema_version: "1.0"
+baseline_id: win.file.create
+version: "0.1.0"
+title: Windows 文件创建遥测
+description: 验证由受控样本创建唯一标记文件后，EDR 是否产生可关联的文件创建事件。
+platform:
+  os: windows
+  versions:
+    - windows-10
+    - windows-11
+    - windows-server-2019
+    - windows-server-2022
+risk_level: L0
+sample:
+  id: win.file.create
+  version: "0.1.0"
+  parameters:
+    target_root: "${environment.workspace_root}"
+correlation:
+  time_before_seconds: 30
+  time_after_seconds: 300
+  anchors:
+    - fields:
+        - host.id
+        - file.path
+      strength: strong
+    - fields:
+        - host.id
+        - process.pid
+        - process.command_line
+        - event.created
+      strength: medium
+expectations:
+  - id: file-create-event
+    event_type: file
+    event_action:
+      - create
+      - created
+    cardinality:
+      min: 1
+      max: 5
+    max_ingest_delay_seconds: 300
+    assertions:
+      - field: file.path
+        operator: equals
+        expected: "${sample.observed.path}"
+        severity: required
+      - field: process.pid
+        operator: equals
+        expected: "${sample.observed.process_id}"
+        severity: required
+      - field: process.executable
+        operator: present
+        severity: required
+      - field: user.id
+        operator: present
+        severity: recommended
+      - field: file.hash.sha256
+        operator: equals
+        expected: "${sample.observed.sha256}"
+        severity: informational
+scoring:
+  weight: 1.0
+  required_field_weight: 1.0
+  recommended_field_weight: 0.25
+metadata:
+  owner: edr-validation-team
+  status: draft
+  references:
+    - EDR-Telemetry / Windows / File Manipulation / File Creation

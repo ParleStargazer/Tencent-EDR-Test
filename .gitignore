@@ -1,0 +1,42 @@
+# Local third-party reference checkout; see THIRD_PARTY_NOTICES.md
+/EDR-Telemetry-main/
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+secrets/
+
+# Python / Conda
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+.conda/
+
+# Build and package output
+build/
+dist/
+
+# Run artifacts and imported EDR data
+/artifacts/
+/reports/
+*.log
+*.jsonl.gz
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store

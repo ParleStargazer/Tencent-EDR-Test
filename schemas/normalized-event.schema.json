@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/edr-validation/normalized-event.schema.json",
+  "title": "EDR Validation Canonical Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event", "host", "source", "raw_ref"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "event": {
+      "type": "object",
+      "required": ["id", "type", "created"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 },
+        "action": { "type": ["string", "null"] },
+        "category": { "type": ["string", "null"] },
+        "created": { "type": "string", "format": "date-time" },
+        "observed": { "type": ["string", "null"], "format": "date-time" },
+        "ingested": { "type": ["string", "null"], "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "host": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "hostname": { "type": ["string", "null"] },
+        "os": { "type": ["string", "null"] },
+        "agent_id": { "type": ["string", "null"] },
+        "agent_version": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "process": { "$ref": "#/$defs/process" },
+    "parent_process": { "$ref": "#/$defs/process" },
+    "user": {
+      "type": ["object", "null"],
+      "properties": {
+        "id": { "type": ["string", "null"] },
+        "name": { "type": ["string", "null"] },
+        "domain": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "file": {
+      "type": ["object", "null"],
+      "properties": {
+        "path": { "type": ["string", "null"] },
+        "name": { "type": ["string", "null"] },
+        "size": { "type": ["integer", "null"], "minimum": 0 },
+        "hash": {
+          "type": ["object", "null"],
+          "properties": {
+            "md5": { "type": ["string", "null"] },
+            "sha1": { "type": ["string", "null"] },
+            "sha256": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "registry": {
+      "type": ["object", "null"],
+      "properties": {
+        "key": { "type": ["string", "null"] },
+        "value_name": { "type": ["string", "null"] },
+        "value_data": {}
+      },
+      "additionalProperties": false
+    },
+    "network": {
+      "type": ["object", "null"],
+      "properties": {
+        "transport": { "type": ["string", "null"] },
+        "direction": { "type": ["string", "null"] },
+        "source_ip": { "type": ["string", "null"] },
+        "source_port": { "type": ["integer", "null"], "minimum": 0, "maximum": 65535 },
+        "destination_ip": { "type": ["string", "null"] },
+        "destination_port": { "type": ["integer", "null"], "minimum": 0, "maximum": 65535 }
+      },
+      "additionalProperties": false
+    },
+    "dns": {
+      "type": ["object", "null"],
+      "properties": {
+        "question": { "type": ["string", "null"] },
+        "answers": {
+          "type": ["array", "null"],
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "correlation": {
+      "type": ["object", "null"],
+      "properties": {
+        "run_id": { "type": ["string", "null"] },
+        "case_id": { "type": ["string", "null"] },
+        "nonce": { "type": ["string", "null"] },
+        "matched_anchors": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": ["vendor", "collector", "mapping_version"],
+      "properties": {
+        "vendor": { "type": "string", "minLength": 1 },
+        "collector": { "type": "string", "minLength": 1 },
+        "mapping_version": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "extensions": { "type": "object" },
+    "raw_ref": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "process": {
+      "type": ["object", "null"],
+      "properties": {
+        "entity_id": { "type": ["string", "null"] },
+        "pid": { "type": ["integer", "null"], "minimum": 0 },
+        "name": { "type": ["string", "null"] },
+        "executable": { "type": ["string", "null"] },
+        "command_line": { "type": ["string", "null"] },
+        "start": { "type": ["string", "null"], "format": "date-time" },
+        "end": { "type": ["string", "null"], "format": "date-time" },
+        "exit_code": { "type": ["integer", "null"] }
+      },
+      "additionalProperties": false
+    }
+  }
+}

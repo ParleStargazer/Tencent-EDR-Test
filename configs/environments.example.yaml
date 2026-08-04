@@ -1,0 +1,33 @@
+schema_version: "1.0"
+environments:
+  lab:
+    labels:
+      purpose: edr-validation
+      production: "false"
+    workspace_root: "C:\\EDRLab"
+    max_risk_level: L1
+    collector:
+      type: file
+      mapping: tencent-windows-v1
+      input_glob: "artifacts/import/*.jsonl"
+    timing:
+      clock_skew_tolerance_seconds: 30
+      poll_initial_seconds: 5
+      poll_max_seconds: 30
+      final_grace_seconds: 30
+    network:
+      allow_loopback: true
+      allowed_hosts:
+        - "127.0.0.1"
+        - "::1"
+      allowed_domains:
+        - "edr-lab.internal.example"
+    artifacts:
+      root: "artifacts/runs"
+      retain_days: 30
+      store_raw_events: true
+      redact:
+        - user.name
+        - network.source_ip
+
+# 腾讯 EDR API 凭据不写入本文件；实现后通过 EDR_VALIDATION_TENCENT_* 环境变量注入。
