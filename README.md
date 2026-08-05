@@ -4,8 +4,9 @@
 
 ## 当前状态
 
-项目处于设计与仓库初始化阶段，尚未提供可用于生产环境的执行器或测试样本。
+项目已完成总体设计与首版中文前端控制面。Windows Runner、SQLite 导出器及完整能力样本仍在开发中，当前页面中的轮次进度用于验证编排交互，不会直接启动 EXE。
 
+- 中文前端控制面：[web/README.md](web/README.md)
 - 详细设计：[docs/DESIGN.md](docs/DESIGN.md)
 - BASELINE 示例：[baselines/windows/file_create.yaml](baselines/windows/file_create.yaml)
 - BASELINE JSON Schema：[schemas/baseline.schema.json](schemas/baseline.schema.json)
@@ -24,7 +25,19 @@
 
 首期覆盖 Windows 基础遥测：进程、文件、注册表和网络。平台不接入腾讯 EDR API，不保存 EDR 凭据；用户自行导入平台导出的 JSON。平台验证的是“EDR 是否提供对应遥测”，不评价拦截、告警研判、响应处置或 MDR 服务质量。
 
-## 规划中的运行方式
+## 前端控制面
+
+前端基于 Node.js、React 与 Vinext，提供能力选择、测试轮次规划、本地文件导入以及首个 `ProcessCreate` 离线比较链路。日志在浏览器本地解析，不会上传至服务端。
+
+```powershell
+cd web
+pnpm install
+pnpm dev
+```
+
+访问 `http://localhost:3000/`。当前运行环境使用 Node.js 22.13 或更高版本。
+
+## 规划中的命令行运行方式
 
 ```text
 EdrTest.Runner.exe run --suite windows-smoke --environment lab
@@ -44,6 +57,7 @@ mappings/      EDR 云端 JSON 到规范化事件的映射
 schemas/       BASELINE 与规范化事件数据契约
 src/           自动化测试框架源码
 tests/         单元、契约、集成和端到端测试
+web/           中文前端控制面
 ```
 
 本地 `reference/`、`samples/`、`EDR-Telemetry-main/` 和运行制品目录不纳入版本控制。
