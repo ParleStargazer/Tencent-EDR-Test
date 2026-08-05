@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "product": {
+    "vendor": "Tencent",
+    "name": "Tencent EDR",
+    "version": null,
+    "export_format_version": null
+  },
+  "exported_at_utc": "2026-08-05T08:00:00Z",
+  "query_window": {
+    "start_utc": "2026-08-05T07:50:00Z",
+    "end_utc": "2026-08-05T08:00:00Z"
+  },
+  "host_filter": {
+    "hostname": "replace-with-test-host",
+    "host_id": null,
+    "description": "在 EDR 控制台中选择与 local-run.json 相同的测试主机。"
+  },
+  "event_filters": [
+    "ProcEvents"
+  ],
+  "source_files": [
+    {
+      "path": "EDR事件导出.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size_bytes": 1
+    }
+  ],
+  "notes": "所有时间、主机、文件大小和 SHA-256 均需替换为本次真实导出信息。"
+}

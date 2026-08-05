@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/edr-validation/baseline.schema.json",
-  "title": "EDR Validation Baseline",
+  "title": "EDR Offline Validation Baseline",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,18 +11,19 @@
     "title",
     "platform",
     "risk_level",
-    "sample",
+    "capability",
+    "local_requirements",
     "correlation",
-    "expectations",
+    "cloud_expectations",
     "metadata"
   ],
   "properties": {
-    "schema_version": { "const": "1.0" },
+    "schema_version": { "const": "1.1" },
     "baseline_id": {
       "type": "string",
       "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)+$"
     },
-    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "version": { "$ref": "#/$defs/semver" },
     "title": { "type": "string", "minLength": 1 },
     "description": { "type": "string" },
     "platform": {
@@ -44,15 +45,20 @@
       }
     },
     "risk_level": { "enum": ["L0", "L1", "L2", "L3"] },
-    "sample": {
+    "capability": {
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "version"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+        "version": { "$ref": "#/$defs/semver" },
         "parameters": { "type": "object" }
       }
+    },
+    "local_requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/local_assertion" }
     },
     "correlation": {
       "type": "object",
@@ -64,27 +70,14 @@
         "anchors": {
           "type": "array",
           "minItems": 1,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["fields", "strength"],
-            "properties": {
-              "fields": {
-                "type": "array",
-                "minItems": 1,
-                "items": { "type": "string", "minLength": 1 },
-                "uniqueItems": true
-              },
-              "strength": { "enum": ["strong", "medium", "weak"] }
-            }
-          }
+          "items": { "$ref": "#/$defs/anchor" }
         }
       }
     },
-    "expectations": {
+    "cloud_expectations": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/expectation" }
+      "items": { "$ref": "#/$defs/cloud_expectation" }
     },
     "scoring": {
       "type": "object",
@@ -111,17 +104,66 @@
     }
   },
   "$defs": {
-    "expectation": {
+    "semver": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "operator": {
+      "enum": [
+        "present",
+        "absent",
+        "equals",
+        "not_equals",
+        "contains",
+        "regex",
+        "one_of",
+        "range",
+        "cidr",
+        "timestamp_between",
+        "ref_equals"
+      ]
+    },
+    "normalizers": {
+      "type": "array",
+      "items": {
+        "enum": ["lowercase", "windows_path", "sid", "ip", "timestamp_utc", "trim"]
+      },
+      "uniqueItems": true
+    },
+    "local_assertion": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "event_type", "cardinality", "assertions"],
+      "required": ["field", "operator"],
+      "properties": {
+        "field": { "type": "string", "minLength": 1 },
+        "operator": { "$ref": "#/$defs/operator" },
+        "expected": {},
+        "normalizers": { "$ref": "#/$defs/normalizers" }
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["local_field", "cloud_field", "strength"],
+      "properties": {
+        "local_field": { "type": "string", "minLength": 1 },
+        "cloud_field": { "type": "string", "minLength": 1 },
+        "strength": { "enum": ["strong", "medium", "weak"] },
+        "normalizers": { "$ref": "#/$defs/normalizers" }
+      }
+    },
+    "cloud_expectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "event_type", "event_actions", "cardinality", "assertions"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "event_type": { "type": "string", "minLength": 1 },
-        "event_action": {
+        "event_actions": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
         },
         "cardinality": {
           "type": "object",
@@ -132,48 +174,24 @@
             "max": { "type": "integer", "minimum": 0 }
           }
         },
-        "max_ingest_delay_seconds": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 86400
-        },
         "assertions": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/assertion" }
+          "items": { "$ref": "#/$defs/cloud_assertion" }
         }
       }
     },
-    "assertion": {
+    "cloud_assertion": {
       "type": "object",
       "additionalProperties": false,
       "required": ["field", "operator", "severity"],
       "properties": {
         "field": { "type": "string", "minLength": 1 },
-        "operator": {
-          "enum": [
-            "present",
-            "absent",
-            "equals",
-            "not_equals",
-            "contains",
-            "regex",
-            "one_of",
-            "range",
-            "cidr",
-            "timestamp_between",
-            "ref_equals"
-          ]
-        },
+        "operator": { "$ref": "#/$defs/operator" },
         "expected": {},
+        "expected_from_local": { "type": "string", "minLength": 1 },
         "severity": { "enum": ["required", "recommended", "informational"] },
-        "normalizers": {
-          "type": "array",
-          "items": {
-            "enum": ["lowercase", "windows_path", "sid", "ip", "timestamp_utc", "trim"]
-          },
-          "uniqueItems": true
-        }
+        "normalizers": { "$ref": "#/$defs/normalizers" }
       }
     }
   }

@@ -1,469 +1,580 @@
-# 腾讯 EDR 能力自动化验证测试平台详细设计方案
+# EDR 能力离线验证平台详细设计方案
 
 | 属性 | 内容 |
 | --- | --- |
 | 文档状态 | Draft，作为首期实现基线 |
-| 版本 | 0.1.0 |
-| 日期 | 2026-08-04 |
-| 首期平台 | Windows 10/11、Windows Server 2019/2022 |
-| 目标产品 | 腾讯 EDR，适配接口待与产品侧确认 |
+| 版本 | 0.2.0 |
+| 日期 | 2026-08-05 |
+| 首期平台 | Windows 10/11、Windows Server 2019/2022，x64 |
+| 验证模式 | 本地执行并记录，用户导入 EDR 平台导出的 JSON，离线比较 |
+| 目标产品 | 首个映射为腾讯 EDR，但框架不调用腾讯 EDR API |
 
-## 1. 摘要与核心决策
+## 1. 设计结论
 
-本项目建设一套可重复执行、证据可追溯、结果可解释的 EDR 遥测能力验证平台。一次完整验证由五个相互独立的结论组成：
+平台调整为完全离线的三段式工作流：
 
-1. 测试样本是否成功产生预期的系统行为；
-2. 腾讯 EDR 是否在允许的时间窗口内采集到对应事件；
-3. 事件是否能与本次运行可靠关联，避免把历史或并发噪声当作命中；
-4. 关键字段是否存在且取值正确；
-5. 事件上报延迟、重复率和跨事件关联是否满足基准。
+1. **能力执行**：每个能力包标配一个控制/观察程序和一个或多个行为参与程序。控制程序生成唯一测试信息、启动行为、监控结果并写入本轮 SQLite 数据库。
+2. **结果导出**：每轮测试使用独立 `.db` 文件，一轮可顺序执行一个或多个能力；导出工具把本地事实转换为稳定、可审计的 JSON。
+3. **离线验证**：用户从 EDR 平台手工导出对应主机和时间窗口的 JSON 日志；比较工具按版本化映射将云端日志规范化，再与本地 JSON 和 BASELINE 比较，输出 JSON 验证报告。
 
-首版选择以下架构：
+首版明确不建设腾讯 EDR 鉴权、API 查询、轮询或在线 Collector。这样可降低接口依赖和凭据风险，也与当前已有的控制台 JSON 导出能力一致。
 
-- 控制面采用 Python 3.12 模块化单体，先提供 CLI，接口边界保持可服务化；
-- Windows 样本优先使用 PowerShell 与小型 C# 原生程序，避免把 Atomic Red Team 作为强依赖；
-- Windows 测试机内运行轻量执行器，负责前置检查、样本执行、自验证、清理和证据封装；
-- 腾讯 EDR 数据接入实现为可插拔 Collector Adapter；在 API 未确认前同时支持离线 JSON/CSV 和 Mock Collector；
-- BASELINE 使用 YAML 编写、JSON Schema 校验、Git 版本化；
-- 所有厂商事件先映射为稳定的 Canonical Event，再执行规则比对；
-- MVP 使用 SQLite 保存运行元数据，原始事件和报告保存在运行制品目录；团队化部署可切换 PostgreSQL 与对象存储；
-- 参考 EDR-Telemetry 的分类和权重思想，但本项目的实测结果、字段级证据和版本上下文独立维护。
+核心技术决策：
 
-## 2. 背景、目标与非目标
+- 全部平台工具和首期 Windows 程序优先采用 C# / .NET 8；
+- `EdrTest.Runner.exe` 只负责编排一轮测试，不直接产生被测能力行为；
+- 每项能力必须有独立的 `*.Controller.exe`；
+- 行为侧至少一个 `*.Actor.exe`，按能力需要增加 `*.Target.exe` 或 `*.Helper.exe`；
+- Controller 是能力记录的唯一责任者，Actor/Target 不直接写数据库；
+- 每轮一个 SQLite 数据库，默认串行执行能力，先保证可重复和低噪声；
+- 本地导出 JSON、云端原始 JSON、映射版本和 BASELINE 共同决定验证结果；
+- “本地行为失败”“云端事件未发现”“云端导出范围不足”严格区分。
 
-### 2.1 背景
+## 2. 术语
 
-EDR 的检测、调查和溯源依赖进程、文件、注册表、网络及系统配置等终端遥测。产品文档中的“支持”通常不能回答默认配置是否生效、具体字段是否可查询、何时可见，以及版本升级后是否退化。必须以可控行为和可重复证据进行端到端验证。
+| 术语 | 定义 |
+| --- | --- |
+| Test Run / 测试轮次 | 一次测试会话，对应唯一 Run ID 和唯一 SQLite 数据库，可包含多个能力 |
+| Capability / 能力 | 被验证的遥测能力，例如进程创建、文件创建、注册表修改 |
+| Capability Package / 能力包 | 某能力的 Controller、Actor、可选 Target/Helper、清单和资源 |
+| Runner / 轮次编排器 | 创建一轮数据库、选择能力、调度 Controller、最终封存数据库 |
+| Controller / 控制观察程序 | 每项能力专属，生成标记、启动 Actor、监控行为、自验证、清理、记录事实 |
+| Actor / 行为执行者 | 真正发起系统行为的程序 |
+| Target / 被执行对象 | 某些能力中的行为对象，例如进程创建中的子进程 |
+| Local Fact / 本地事实 | 由 Controller 直接观测并写入 SQLite 的进程、文件、注册表或网络事实 |
+| Cloud Event / 云端事件 | 用户从 EDR 平台导出的原始 JSON 事件 |
+| Mapping Profile / 映射配置 | 把特定版本的云端字段映射为平台规范化字段 |
+| BASELINE / 检验基准 | 定义本地行为必须成立的条件和云端事件必须满足的条件 |
 
-目录中的参考项目包含 Windows 57 个遥测子类，覆盖 16 个大类；Windows 生成器通过 Atomic Red Team GUID 映射触发部分行为，并以 `Yes / Partially / Via EnablingTelemetry / Via EventLogs / No` 表达厂商能力。Linux/macOS 生成器则更多使用原生系统调用或系统 API，并记录本地执行结果。
+## 3. 目标与边界
 
-这些资料带来四点设计结论：
+### 3.1 目标
 
-- “能力矩阵”适合定义测试范围，但不能替代可执行 BASELINE；
-- 单个攻击模拟可能同时触发多个遥测，样本和预期事件必须是一对多关系；
-- 行为执行成功与 EDR 事件命中必须分开记录；
-- 仅按事件类型判定会产生误命中，必须设计运行级关联标识和多字段匹配。
+- 建立每项能力独立、可执行、可监控、可清理的能力包；
+- 通过本地事实证明行为真实发生，不能只依赖进程退出码；
+- 一轮测试可选择一个或多个能力并在同一个数据库中留痕；
+- 支持把每轮数据库确定性导出为 JSON；
+- 支持用户导入任意大小的 EDR JSON 导出文件；
+- 通过映射配置兼容腾讯 EDR 字段变化，不把厂商字段写死在比较核心；
+- 输出事件覆盖、字段完整性、关联可信度和时间差异；
+- 所有结论都能回溯到本地事实、云端原始记录和逐条断言。
 
-### 2.2 项目目标
+### 3.2 非目标
 
-- 建立安全、幂等、可自验证、可清理的 Windows 测试样本库；
-- 建立事件类型、字段、时序、数量和延迟均可表达的版本化 BASELINE；
-- 支持腾讯 EDR 的 API、导出文件或日志平台接入，并统一为规范化事件；
-- 自动输出用例结论、证据、能力矩阵、字段缺口、延迟分布和版本对比；
-- 支持在无 EDR 环境先验证样本，在有 EDR 环境执行端到端回归；
-- 对样本版本、BASELINE 版本、产品版本、Agent 策略和测试环境进行完整留痕。
+- 不调用腾讯 EDR API，不保存腾讯 EDR 账号或密钥；
+- 不自动登录或操作 EDR 控制台；
+- 不验证拦截、告警、处置或 MDR 服务质量；
+- 首期不测试进程注入、驱动、凭据访问、VSS 删除或 Agent 停止等高风险能力；
+- 不把用户导入的原始云端日志复制进 Git 仓库；
+- 不在首期提供集中式服务器、PostgreSQL 或远程 Worker。
 
-### 2.3 非目标
+## 4. 参考日志分析与设计影响
 
-- 不评价恶意行为检测率、告警质量、处置能力或 MDR 服务；
-- 首期不执行凭据访问、内核驱动、进程注入、破坏性操作等高风险行为；
-- 首期不建设通用 SOAR，也不控制生产终端；
-- 不直接继承参考项目中其他厂商的能力结论；
-- 不以 GUI 抓取作为长期稳定的数据接口，GUI 自动化只可用作短期人工验证手段。
+本地 `reference/EDR事件导出示例.json` 是顶层 JSON 数组，当前样例约 9.9 MB、1760 条事件，特征如下：
 
-## 3. 设计原则
+- `@table` 全部为 `ProcEvents`；
+- `Action.Name` 包含 1744 条 `ProcessCreate`、13 条 `ProcessHandleObject`、3 条 `RemoteThread`；
+- 字段使用点号扁平命名，例如 `Common.EventTime`，不是嵌套对象；
+- `Common.EventTime`、`Child.ProcCreateTime`、`Parent.ProcCreateTime` 为 Unix 毫秒；
+- `Common.EventUUId` 在进程创建样例中可作为云端事件唯一标识；
+- `Common.Mid` 和 `Environment.HostName` 可用于主机过滤；
+- `Child.*` 描述新创建进程，`Parent.*` 描述创建者，`PParent.*` 描述更上层进程；
+- `Child.ProcCmdline` 与 `Parent.ProcCmdline` 大多数记录有值，但不能假定永远存在；
+- PID 在导出时间窗内会复用，不能只按 PID 匹配。
 
-1. **证据优先**：每个结论必须能回溯到样本日志、本地观察证据、查询条件、原始 EDR 事件和匹配明细。
-2. **三态隔离**：样本失败、未采集、无法判定是不同状态，禁止都归为 `FAIL`。
-3. **安全默认**：默认只运行低风险样本；提权、联网和系统配置变更需要显式授权标签。
-4. **适配器隔离**：腾讯 EDR 字段名、分页方式和鉴权不得泄漏到领域规则。
-5. **配置即代码**：样本清单、BASELINE、Schema 和环境非敏感配置进入 Git 审查。
-6. **版本可重复**：结果必须绑定 Git commit、样本摘要、BASELINE 版本和运行环境快照。
-7. **时间不可信任**：记录控制器、执行器和 EDR 的时间偏移，匹配窗口包含可配置容差。
-8. **最小权限**：只有确需管理员权限的用例才提升权限，并在隔离测试机执行。
+对“进程创建”能力，三程序模型与日志天然对应：
 
-## 4. 范围分层与优先级
+```text
+ProcessCreate.Controller.exe
+  └─ 启动 ProcessCreate.Actor.exe
+       └─ 创建 ProcessCreate.Target.exe
 
-### 4.1 首期 P0：基础遥测冒烟
+云端目标事件：
+  Parent.*  ≈ Actor
+  Child.*   ≈ Target
+  PParent.* ≈ Controller（作为辅助，不作强制假设）
+```
 
-| 领域 | 用例 | 本地判据 | EDR 关键判据 | 风险等级 |
-| --- | --- | --- | --- | --- |
-| 进程 | 创建、退出、父子关系 | PID、退出码、父 PID | image、pid、parent、command_line、user、timestamp | L0 |
-| 文件 | 创建、修改、重命名、删除 | 路径/内容/hash/存在性变化 | action、path、process、user、timestamp | L0 |
-| 注册表 | Key/Value 创建、修改、删除 | HKCU 测试路径实读 | action、key、value、process、user | L1 |
-| 网络 | DNS 查询 | 本地解析结果 | query、process、timestamp | L0 |
-| 网络 | TCP 连接 | 本地测试服务接受连接 | destination、port、protocol、process | L0 |
-| 网络 | HTTP 请求 | 本地 HTTP 服务收到 nonce | url/host、method（若支持）、process | L0 |
-
-网络样本默认只访问测试机回环地址或明确配置的内网靶机，禁止默认访问公网。
-
-### 4.2 P1：系统行为
-
-计划覆盖服务、计划任务、PowerShell Script Block、WMI、BITS、Named Pipe、本地账户，以及文件下载。用例按 L1/L2 管理，要求管理员权限、快照和更严格的清理验证。
-
-### 4.3 P2：高级或高风险行为
-
-驱动加载、进程访问/注入、VSS 删除、Agent 停止/卸载、策略变更等列为 L3。只有在独立实验室、审批完成、快照可恢复且腾讯 EDR 产品方确认后才进入执行计划；默认流水线永不选择 L3。
+首个映射配置见 `mappings/tencent-edr-proc-events-v1.yaml`。样例文件本身位于忽略目录，不进入版本控制。
 
 ## 5. 总体架构
 
 ```mermaid
-flowchart LR
-    U["测试人员 / CI"] --> C["Controller CLI / API"]
-    C --> P["Planner & Orchestrator"]
-    P --> B["Baseline Registry"]
-    P --> W["Windows Executor"]
-    W --> S["Samples"]
-    S --> OS["Windows 行为"]
-    OS --> A["腾讯 EDR Agent"]
-    A --> E["腾讯 EDR 后台"]
-    E --> K["Collector Adapter"]
-    K --> N["Normalizer"]
-    N --> M["Matcher / Comparator"]
-    B --> M
-    W --> M
-    M --> R["Report & Capability Matrix"]
-    C --> D[("Run Store")]
-    K --> D
-    M --> D
-    R --> D
+flowchart TB
+    U["用户 / 测试脚本"] --> R["EdrTest.Runner.exe"]
+    R --> DB[("本轮 run-id.db")]
+    R --> C1["Capability A Controller.exe"]
+    R --> C2["Capability B Controller.exe"]
+    C1 --> A1["Actor.exe"]
+    A1 --> T1["可选 Target.exe"]
+    C2 --> A2["Actor.exe"]
+    C1 --> DB
+    C2 --> DB
+    DB --> X["EdrTest.Export.exe"]
+    X --> LJ["local-run.json"]
+    E["用户从 EDR 平台导出"] --> CJ["cloud-events.json"]
+    LJ --> P["EdrTest.Compare.exe"]
+    CJ --> P
+    M["Mapping Profile"] --> P
+    B["BASELINE"] --> P
+    P --> V["validation-result.json"]
 ```
 
-### 5.1 部署形态
+平台分成两个时间上解耦的阶段：
 
-**MVP 单机形态**：控制器和执行器都运行在 Windows 实验测试机，适合样本开发、离线事件导入和小规模 EDR 验证。
+- 执行阶段只需要 Windows 测试机和能力包；
+- 比较阶段可以在另一台机器上离线完成，只需要本地导出 JSON、云端 JSON、映射和 BASELINE。
 
-**团队形态**：控制器部署在管理节点；Windows 执行器作为受控 Worker 运行在一个或多个隔离 VM；通过 HTTPS/mTLS 领取签名任务并回传证据。控制器不得任意下发 Shell 文本，只能下发仓库中已登记、摘要匹配的 Sample ID 和参数。
+## 6. 可执行程序编排
 
-## 6. 模块设计
+### 6.1 全局工具
 
-### 6.1 CLI / API
+| 程序 | 职责 |
+| --- | --- |
+| `EdrTest.Runner.exe` | 创建 Test Run、选择能力、生成 Run ID、调度 Controller、封存数据库 |
+| `EdrTest.Export.exe` | 读取已封存 `.db`，校验结构并导出本地 JSON |
+| `EdrTest.Compare.exe` | 检查云端导出范围、规范化云端事件、执行 BASELINE、输出结果 JSON |
+| `EdrTest.Inspect.exe`（可选） | 查看数据库摘要、能力状态和清理情况，不修改数据库 |
 
-职责：提供计划预览、执行、恢复、事件重采集、重新比对、报告生成和基线校验入口。
+### 6.2 每项能力的两类程序
 
-规划命令：
+每个能力包必须包含以下两类程序：
+
+1. **Controller 类**：固定一个能力专属 EXE。负责测试标识、前置检查、行为启动、本地监控、事实保存、超时和清理。
+2. **Behavior 类**：一个或多个行为参与 EXE。`Actor` 必需；`Target` 和 `Helper` 按能力可选。
+
+因此“进程创建”能力有三个 EXE：
 
 ```text
-edr-validate baseline lint [path]
-edr-validate sample verify <sample-id> --environment lab
-edr-validate plan --suite <suite> --environment <env>
-edr-validate run --suite <suite> --environment <env>
-edr-validate collect <run-id> [--until <time>]
-edr-validate compare <run-id> [--baseline-ref <git-ref>]
-edr-validate report <run-id> --format html,json,junit
+ProcessCreate.Controller.exe   # 控制/观察
+ProcessCreate.Actor.exe        # 调用 CreateProcess 创建子进程
+ProcessCreate.Target.exe       # 被创建对象，保持短暂存活并安全退出
 ```
 
-`plan` 必须显示风险等级、提权要求、联网目标、预计变更和清理动作；L2/L3 在执行前要求不可伪造的审批记录。
+“文件创建”通常只需两个 EXE，因为被操作对象是文件：
 
-### 6.2 Planner 与 Orchestrator
+```text
+FileCreate.Controller.exe
+FileCreate.Actor.exe
+```
 
-职责：解析测试套件、过滤平台和风险等级、建立 Run/CaseRun、调度执行、轮询事件、触发比对并持久化状态。
+### 6.3 Controller 职责
 
-用例状态机：
+Controller 接收 Runner 下发的固定参数：
+
+```text
+--run-id <uuid>
+--case-run-id <uuid>
+--nonce <128-bit marker>
+--run-db <absolute-path>
+--work-dir <absolute-path>
+--timeout-ms <integer>
+```
+
+Controller 必须：
+
+1. 校验能力包清单、程序 SHA-256、运行目录和权限；
+2. 将 Controller 自身进程信息写入数据库；
+3. 生成带 `run_id + case_id + nonce` 的命令行和工件名；
+4. 启动本地观察器后再启动 Actor，避免丢失瞬时事件；
+5. 通过进程句柄、文件状态、注册表读取或本地服务回执验证行为；
+6. 记录 Actor/Target 的 PID、路径、命令行、开始/结束 UTC、退出码和文件 hash；
+7. 对每条本地事实标记观测来源和可信度；
+8. 无论成功失败都执行清理，并记录清理前后证据；
+9. 返回结构化退出码，不以控制台文本作为唯一接口。
+
+Controller 是能力数据的唯一写入者。Actor、Target、Helper 通过匿名管道、命名管道或受控 stdout 返回小型 JSON 消息，不直接打开本轮 SQLite 数据库。
+
+### 6.4 Behavior 程序约束
+
+- 只执行单一、明确的行为；
+- 不选择测试范围，不访问 BASELINE，不决定 PASS/FAIL；
+- 不直接写 SQLite；
+- 接收 nonce 并尽可能写入命令行、工件名或协议数据；
+- 支持硬超时和父进程退出联动；
+- 默认不访问公网、不下载内容、不修改系统关键路径；
+- 输出使用版本化 JSON 消息，stderr 只用于诊断；
+- 提供源码、确定性构建配置和 SHA-256 清单。
+
+### 6.5 Runner 职责与并发
+
+Runner 负责“轮次”，Controller 负责“能力”。Runner 不替代能力 Controller。
+
+默认按用户选择顺序串行执行能力，原因是：
+
+- 降低 EDR 背景噪声和能力间相互影响；
+- 避免多个进程写 SQLite 的竞争；
+- 更容易确定每个能力的时间窗；
+- 清理失败时可以立即停止后续能力。
+
+后续可增加 `--parallel N`。并行时启用 SQLite WAL、`busy_timeout` 和短事务，并要求每个能力使用独立工作目录和 nonce。L2/L3 能力永不与其他能力并行。
+
+## 7. 进程创建能力时序示例
+
+```mermaid
+sequenceDiagram
+    participant R as Runner
+    participant C as ProcessCreate.Controller
+    participant A as ProcessCreate.Actor
+    participant T as ProcessCreate.Target
+    participant D as run.db
+
+    R->>D: 创建 capability_run
+    R->>C: run-id / case-run-id / nonce / db
+    C->>D: 记录 Controller 进程与开始时间
+    C->>C: 启动观察器
+    C->>A: 启动 Actor，命令行携带 nonce
+    A->>T: CreateProcess(Target, nonce)
+    A-->>C: target PID / start time / handle result
+    C->>C: 校验 Target 路径、PID、存活和退出
+    C->>D: 记录 Actor、Target 与本地 ProcessCreate 事实
+    C->>A: 等待退出或超时终止
+    C->>D: 记录清理和结束状态
+    C-->>R: 结构化能力结果
+    R->>D: 封存本轮
+```
+
+本地必须记录的最小事实：
+
+- Controller、Actor、Target 的绝对路径和 SHA-256；
+- 三者 PID，Actor/Target 的进程创建 UTC；
+- Actor 和 Target 的完整命令行；
+- Actor 观测到的 `CreateProcess` 返回值；
+- Controller 通过进程句柄独立确认的 Target 身份；
+- nonce、测试开始/结束、超时和退出码。
+
+## 8. 测试轮次与状态机
+
+### 8.1 一轮测试
+
+文件布局：
+
+```text
+runs/<yyyyMMdd>/<run-id>/
+  <run-id>.db
+  work/<case-id>/
+  export/local-run.json
+  import/cloud-events.json
+  import/cloud-export-manifest.json
+  result/validation-result.json
+```
+
+其中 `runs/` 为本地制品目录，应由 `.gitignore` 排除。
+
+数据库命名必须包含 Run ID，禁止固定使用 `result.db`。Run ID 使用 UUIDv7；时间字段统一保存 UTC，同时记录本机时区和单调时钟耗时。
+
+### 8.2 状态机
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PLANNED
-    PLANNED --> PRECHECK
-    PRECHECK --> EXECUTING: 通过
+    [*] --> CREATED
+    CREATED --> PRECHECK
+    PRECHECK --> EXECUTING: 条件满足
     PRECHECK --> SKIPPED: 条件不满足
     EXECUTING --> SELF_VERIFY
-    EXECUTING --> SAMPLE_ERROR: 超时或异常
-    SELF_VERIFY --> CLEANUP: 行为已证实
-    SELF_VERIFY --> SAMPLE_ERROR: 行为未产生
-    CLEANUP --> COLLECTING
-    CLEANUP --> CLEANUP_ERROR
-    COLLECTING --> COMPARING
-    COLLECTING --> INCONCLUSIVE: 数据源不可用
-    COMPARING --> PASSED
-    COMPARING --> PARTIAL
-    COMPARING --> FAILED
+    EXECUTING --> SAMPLE_ERROR: 启动失败或超时
+    SELF_VERIFY --> CLEANUP: 行为已确认
+    SELF_VERIFY --> SAMPLE_ERROR: 本地事实不足
+    CLEANUP --> LOCAL_PASS: 清理成功
+    CLEANUP --> CLEANUP_ERROR: 清理失败
+    LOCAL_PASS --> [*]
 ```
 
-进程崩溃后可从最后一个持久化状态恢复。清理动作必须放入 `finally` 路径，并允许单独执行 `cleanup`。
+云端验证是后置阶段，不改变 `LOCAL_PASS`。比较结果单独记录 `PASS / PARTIAL / FAIL / INCONCLUSIVE`。
 
-### 6.3 Sample Registry 与 Windows Executor
+## 9. SQLite 设计
 
-每个样本由实现文件和 `sample.yaml` 清单组成，不允许控制器根据 BASELINE 动态拼接任意命令。清单至少包含：
+### 9.1 原则
 
-- `sample_id`、版本、平台、架构和入口点；
-- 风险等级 `L0-L3`、所需权限、是否联网；
-- 参数 Schema、默认超时和允许的目标范围；
-- 前置检查、行为执行、自验证和清理入口；
-- 预期副作用及最大持续时间；
-- 产物路径和签名/摘要信息。
+- 每轮一个数据库，一个数据库只允许一个 `run` 主记录；
+- `PRAGMA foreign_keys=ON`；
+- 执行期间使用 WAL；封存前执行 checkpoint，最终交付以单个 `.db` 为准；
+- 写入使用参数化 SQL、短事务和 `busy_timeout`；
+- 数据库通过 `PRAGMA user_version` 管理 Schema 版本；
+- 保存结构化字段和必要的 JSON 扩展，关键关联字段不能只塞进 JSON；
+- 数据库封存后计算 SHA-256，导出工具默认只读打开；
+- 不把云端完整原始日志写入本地运行数据库，比较报告只记录输入文件 hash 和证据定位。
 
-样本输出统一 JSON Lines，关键记录如下：
+首版 DDL 见 `schemas/run-db.sql`。
+
+### 9.2 核心表
+
+| 表 | 用途 |
+| --- | --- |
+| `run` | 本轮唯一主记录、环境快照、开始/结束、数据库状态 |
+| `capability_run` | 本轮选择的每个能力及本地执行状态 |
+| `program_instance` | Controller/Actor/Target/Helper 的路径、hash、PID、命令行和时间 |
+| `local_event` | Controller 观测到的本地规范化行为 |
+| `local_fact` | 可独立断言的 key/value 事实及可信度 |
+| `artifact` | 文件、日志和证据的路径、类型、大小与 hash |
+| `execution_log` | 结构化阶段日志，不保存秘密 |
+| `cleanup_result` | 清理动作、前后状态和结果 |
+
+### 9.3 事务边界
+
+- Runner 创建 `run` 和 `capability_run` 后提交；
+- Controller 每个生命周期阶段单独提交；
+- 高频观察先在内存缓冲，再批量写 `local_event`；
+- 状态更新与其关键证据在同一事务；
+- 封存事务写结束时间和状态，之后不再修改事实表。
+
+异常退出后，下一次 `inspect` 可识别未封存数据库。恢复只允许补做清理或标记 `ABORTED`，不能伪造已完成的事实。
+
+## 10. 本地 JSON 导出
+
+`EdrTest.Export.exe` 的输入是已封存数据库，输出是版本化 JSON。示例命令：
+
+```powershell
+EdrTest.Export.exe --db .\runs\...\<run-id>.db --out .\local-run.json
+```
+
+导出要求：
+
+- 输出符合 `schemas/run-export.schema.json`；
+- 数组按稳定键排序，同一数据库重复导出内容一致；
+- 包含数据库 Schema、工具版本、Run ID、环境、能力、程序、本地事件和工件摘要；
+- 不内嵌大文件，只记录相对路径、大小和 SHA-256；
+- 默认脱敏用户名、IP 等非关联字段；
+- 导出前校验数据库已封存、外键完整、无 WAL 残留；
+- 导出完成后输出 JSON 自身 SHA-256。
+
+顶层结构：
 
 ```json
-{"phase":"execute","status":"started","run_id":"...","case_id":"win.file.create","nonce":"...","time":"..."}
-{"phase":"execute","status":"succeeded","observed":{"path":"C:\\EDRLab\\..."}}
-{"phase":"self_verify","status":"succeeded","evidence":{"exists":true,"sha256":"..."}}
-{"phase":"cleanup","status":"succeeded"}
+{
+  "schema_version": "1.0",
+  "run": {},
+  "capabilities": [],
+  "programs": [],
+  "local_events": [],
+  "local_facts": [],
+  "artifacts": [],
+  "integrity": {}
+}
 ```
 
-样本质量要求：
+## 11. 云端 JSON 导入
 
-- 幂等：重复运行不会因遗留状态得到假成功；
-- 唯一：所有工件包含 `run_id + case_id + nonce`；
-- 自证：通过 API/系统状态读取证明行为发生，而非仅以命令退出码判断；
-- 可清理：清理前后都有证据，失败时给出人工恢复指引；
-- 确定：固定输入、固定超时、固定工作目录，禁止下载未锁定内容；
-- 可审计：脚本启用严格错误处理，小型二进制提供源码与可复现构建方式。
+### 11.1 用户操作流程
 
-### 6.4 Baseline Registry
+1. 在带 EDR Agent 的隔离测试机运行一轮能力测试；
+2. 使用 Export 工具生成 `local-run.json`；
+3. Compare 工具根据本轮主机和时间生成建议导出范围；
+4. 用户在 EDR 平台选择对应主机、事件类型和时间窗，导出 JSON；
+5. 用户把 JSON 放入本轮 `import/`，可选填写 `cloud-export-manifest.json`；
+6. Compare 工具离线比较并输出 `validation-result.json`。
 
-BASELINE 描述“在给定上下文中，应观察到什么”，不描述腾讯 EDR 的查询实现。其版本随 Git 管理，包含：
+建议时间窗：本轮最早能力开始前 60 秒，到最晚能力结束后 5 分钟。具体余量可在 BASELINE 中覆盖。
 
-- 用例身份、适用 OS/Agent/策略条件和风险等级；
-- 样本引用及参数；
-- 查询时间窗与最大上报延迟；
-- 一个或多个预期事件、数量、顺序和关联关系；
-- 必填、推荐和信息字段断言；
-- 可接受的厂商差异与已知限制；
-- 评分权重、维护人、评审记录和变更原因。
+### 11.2 导出范围证明
 
-三种字段严重度：
+“云端没有命中事件”只有在导出范围完整时才能判为 `FAIL`。建议使用 `schemas/cloud-export-manifest.schema.json` 记录：
 
-- `required`：缺失或错误导致该预期事件失败；
-- `recommended`：事件仍可判为 `PARTIAL`，并记录字段缺口；
-- `informational`：只统计，不影响结论。
+- EDR 产品和导出格式版本；
+- 导出操作时间；
+- 查询开始/结束 UTC；
+- 主机筛选条件；
+- 事件表/类型筛选；
+- 原始 JSON 文件名和 SHA-256。
 
-断言操作符首期支持：`present`、`absent`、`equals`、`not_equals`、`contains`、`regex`、`one_of`、`range`、`cidr`、`timestamp_between`、`ref_equals`。字符串比较默认在规范化后进行，原始值始终保留。
+如果没有 manifest，Compare 会从事件时间和主机字段推断覆盖范围。推断不能证明缺失事件时，结果为 `INCONCLUSIVE`，而不是 `FAIL`。用户可显式使用 `--assume-export-complete`，该决定会写入报告。
 
-BASELINE 示例见 `baselines/windows/file_create.yaml`，机器校验规则见 `schemas/baseline.schema.json`。
+### 11.3 大文件与容错
 
-### 6.5 Collector Adapter
+- 使用 `System.Text.Json` 的流式读取，不一次性反序列化全部日志；
+- 首期支持顶层数组、JSONL 两种容器；
+- 自动检测 UTF-8 BOM，拒绝无法确定的编码；
+- 单条坏记录记录偏移和错误，默认使结果 `INCONCLUSIVE`；
+- 保留原始记录序号和事件唯一 ID，报告不复制无关记录；
+- 文件读取采用只读共享模式，比较过程中不改写用户原始文件。
 
-统一接口：
+## 12. 映射与规范化
 
-```text
-healthcheck() -> CollectorHealth
-resolve_host(host_identity) -> VendorHostIdentity
-query(host, start, end, cursor, event_hints) -> EventPage
-get_raw(event_id) -> RawEvent
+比较核心只认识 Canonical Event，厂商字段由 Mapping Profile 转换。
+
+进程创建的首版映射：
+
+| Canonical 字段 | 腾讯 EDR 导出字段 |
+| --- | --- |
+| `event.id` | `Common.EventUUId` |
+| `event.type` | 常量 `process` |
+| `event.action` | `Action.Name` 映射 `ProcessCreate -> create` |
+| `event.created` | `Common.EventTime`，Unix ms |
+| `host.id` | `Common.Mid` |
+| `host.hostname` | `Environment.HostName` |
+| `process.pid` | `Child.ProcPid` |
+| `process.entity_id` | `Child.ProcGuid` |
+| `process.executable` | `Child.FilePath` |
+| `process.name` | `Child.FileName` |
+| `process.command_line` | `Child.ProcCmdline` |
+| `process.start` | `Child.ProcCreateTime`，Unix ms |
+| `process.hash.md5` | `Child.FileMd5` |
+| `parent_process.pid` | `Parent.ProcPid` |
+| `parent_process.entity_id` | `Parent.ProcGuid` |
+| `parent_process.executable` | `Parent.FilePath` |
+| `parent_process.command_line` | `Parent.ProcCmdline` |
+
+映射配置必须包含：格式标识、记录选择器、字段映射、枚举映射、时间单位、路径规范化、缺失字段策略和映射版本。
+
+Normalizer 不得静默丢弃未知字段；报告记录未映射字段数，但只在证据片段中保存必要的原始字段。
+
+## 13. JSON 比较引擎
+
+示例：
+
+```powershell
+EdrTest.Compare.exe compare `
+  --local .\local-run.json `
+  --cloud .\EDR事件导出.json `
+  --cloud-manifest .\cloud-export-manifest.json `
+  --mapping .\mappings\tencent-edr-proc-events-v1.yaml `
+  --baselines .\baselines\windows `
+  --out .\validation-result.json
 ```
 
-首期实现顺序：
+### 13.1 比较步骤
 
-1. `mock`：以固定事件夹具验证编排和比对；
-2. `file`：导入控制台导出的 JSON/JSONL/CSV，支持字段映射模板；
-3. `tencent_api`：待确认鉴权、检索 API、分页、限流和事件保留策略后实现；
-4. 可选 `log_platform`：若事件已汇聚到日志平台，则实现其查询适配器。
+1. 校验本地 JSON、云端文件、manifest、mapping 和 BASELINE；
+2. 校验本地能力为 `LOCAL_PASS`，否则返回 `SAMPLE_ERROR`；
+3. 计算每项能力的主机和宽时间窗口；
+4. 流式扫描云端日志，只召回表/类型/主机/时间匹配的候选；
+5. 将候选规范化为 Canonical Event；
+6. 按强、中、弱锚点评分并排除冲突候选；
+7. 对唯一最佳候选执行字段、数量和时间断言；
+8. 检查云端导出范围是否足以支持“未发现”结论；
+9. 输出逐能力结果、逐字段结果、候选说明和输入 hash。
 
-Collector 必须记录查询起止时间、服务端 request ID、分页游标、重试次数、限流信息和原始响应摘要。鉴权信息只从环境变量或密钥服务读取，不进入仓库、日志或报告。
+### 13.2 关联锚点
 
-轮询采用截止时间模型：样本结束后按退避策略查询，直到所有 required 事件命中或超过 `max_ingest_delay`。超时后再执行一次带安全余量的最终查询，防止边界丢失。
-
-### 6.6 Normalizer
-
-Normalizer 将厂商事件转换为 Canonical Event。标准结构包含：
-
-- 标识：`event_id`、`event_type`、`event_action`、`category`；
-- 时间：事件产生、Agent 观察、后台接收、采集器获取四类时间；
-- 主机：hostname、host ID、OS、IP、Agent ID/版本；
-- 主体：process、parent process、user；
-- 客体：file、registry、network、dns；
-- 关联：run/case/nonce 命中痕迹、process entity ID；
-- 来源：collector、vendor、raw reference、mapping version；
-- 扩展：无法标准化但需保留的厂商字段。
-
-`schemas/normalized-event.schema.json` 定义最小数据契约。Normalizer 不应静默丢弃未知字段；映射失败产生告警和覆盖率指标。
-
-### 6.7 Matcher / Comparator
-
-比对分四步执行：
-
-1. **候选召回**：按主机、宽时间窗、事件类型提示抓取候选；
-2. **关联过滤**：优先匹配 nonce、工件路径、命令行、DNS 名称、目标端口和进程树；
-3. **断言求值**：检查字段值、数量、时间和事件间引用；
-4. **歧义处理**：多个候选得分接近且无法唯一确定时标记 `INCONCLUSIVE`，不得自动取第一条。
-
-匹配优先级：
+进程创建建议：
 
 ```text
-强锚点：nonce / 唯一工件全路径 / 唯一 DNS 名
-  > 实体锚点：host + process entity ID + parent entity ID
-  > 组合锚点：host + image + pid + 时间 + 参数
-  > 弱锚点：仅事件类型 + 时间
+强锚点：Target 绝对路径 + Target 命令行 nonce
+强锚点：Actor 绝对路径 + Actor 命令行 nonce
+中锚点：Target PID + 创建时间容差
+中锚点：Actor PID + Target PID + 父子关系
+弱锚点：文件名 + 主机 + 宽时间窗
 ```
 
-弱锚点不能单独使 required 事件通过。每次匹配输出候选列表、排除原因、选中事件和逐条断言结果。
+PID 不能单独形成 PASS。Windows 路径比较需统一分隔符、大小写和设备路径前缀，但报告同时保留原始值。
 
-### 6.8 Run Store 与制品
+如果多个候选得分接近且无法唯一选择，结果为 `INCONCLUSIVE`。比较器不得按数组第一条或最新一条盲选。
 
-领域实体：
+### 13.3 断言操作符
 
-- `EnvironmentSnapshot`：OS、补丁、时区、Agent 版本、策略 ID、时间偏移；
-- `TestRun`：套件、Git commit、操作者、开始/结束时间、总体状态；
-- `CaseRun`：样本版本、Baseline 版本、状态机、重试；
-- `SampleEvidence`：标准输出、自验证和清理证据；
-- `RawEvent` / `CanonicalEvent`：原始与规范化事件；
-- `AssertionResult`：期望、实际、严重度、证据引用；
-- `ReportArtifact`：JSON、HTML、JUnit、摘要。
-
-每次运行目录建议：
+首期支持：
 
 ```text
-artifacts/runs/<run-id>/
-  manifest.json
-  environment.json
-  cases/<case-id>/sample.jsonl
-  cases/<case-id>/local-evidence.json
-  raw-events/<page>.json.gz
-  canonical-events.jsonl
-  match-results.json
-  report.json
-  report.html
+present, absent, equals, not_equals, contains, regex,
+one_of, range, cidr, timestamp_between, ref_equals
 ```
 
-敏感字段在落盘前按配置脱敏；原始事件制品应加密保存并配置保留期限。
-
-### 6.9 Report
-
-报告输出：
-
-- 运行摘要：产品/Agent/策略/OS/代码与 Baseline 版本；
-- 用例结果：`PASS / PARTIAL / FAIL / SAMPLE_ERROR / CLEANUP_ERROR / INCONCLUSIVE / SKIPPED`；
-- 能力矩阵：事件覆盖、字段完整性、默认/需配置、证据链接；
-- 延迟指标：p50、p95、max、超时率；
-- 数据质量：重复率、时间戳异常、实体关联缺失、Normalizer 未映射字段；
-- 版本对比：新增、修复、退化、基线变化和环境变化；
-- JUnit：供 CI 门禁使用；HTML：供人工审阅；JSON：供二次分析。
-
-## 7. 关联标识设计
-
-每个 CaseRun 生成：
+`ref_equals` 用于把云端字段与本地字段比较，例如：
 
 ```text
-run_id  = UUIDv7
-case_id = 稳定用例 ID，例如 win.file.create
-nonce   = 128-bit 随机值的短编码
-marker  = EDRTEST_<run-short>_<case-short>_<nonce>
+cloud.process.pid == local.programs[target].pid
+cloud.parent_process.pid == local.programs[actor].pid
 ```
 
-marker 应尽可能同时出现在：
+## 14. BASELINE 设计
 
-- 进程命令行参数；
-- 文件名、文件内容或注册表 value；
-- DNS 左侧标签、HTTP path/header；
-- 样本日志和本地证据。
+BASELINE 同时定义两层条件：
 
-考虑到 EDR 不一定采集所有 marker，BASELINE 必须声明至少一组备用关联键。PID 可能复用，不能跨长时间窗单独作为关联依据。
+1. `local_requirements`：Controller 必须保存哪些本地事实，行为怎样才算真实发生；
+2. `cloud_expectations`：云端应出现哪些事件、字段和值。
 
-## 8. 结果模型与评分
+BASELINE 不包含腾讯字段名；腾讯字段只出现在 Mapping Profile 中。这样同一个能力 BASELINE 可以复用于其他 EDR 产品。
 
-### 8.1 用例状态
+每条云端断言分为：
 
-- `PASS`：所有 required 事件和字段通过，时延在阈值内；
-- `PARTIAL`：required 事件存在，但 recommended 字段、非关键关联或软延迟目标未满足；
-- `FAIL`：样本已被本地证据确认成功，但 required 事件缺失或 required 断言失败；
-- `SAMPLE_ERROR`：样本未成功产生行为，不能用于判断 EDR；
-- `CLEANUP_ERROR`：行为已产生但未完全恢复环境，需要人工处理；
-- `INCONCLUSIVE`：采集接口故障、时间严重漂移或事件歧义导致无法判断；
-- `SKIPPED`：平台、权限、策略或审批条件不满足。
+- `required`：缺失或错误导致能力失败；
+- `recommended`：能力可判 `PARTIAL`；
+- `informational`：只记录，不影响结论。
 
-### 8.2 指标
+能力程序构成由版本化 Capability Manifest 描述，Schema 见 `schemas/capability-manifest.schema.json`。实际能力包位于被忽略的本地 `samples/` 工作区或独立受控制品库。
 
-设用例权重为 `w_i`：
+本地引用采用两种稳定路径：`facts.<fact_key>` 从当前能力的 `local_fact` 索引解析；`programs.<role>.<field>` 从当前能力唯一的 Controller/Actor/Target 角色实例解析。存在同角色多实例时必须使用带实例名的引用，比较器不得自行任选。
+
+## 15. 结果模型
+
+### 15.1 本地结果
+
+- `LOCAL_PASS`：行为已发生、自验证通过且清理成功；
+- `SAMPLE_ERROR`：程序启动、行为执行或自验证失败；
+- `CLEANUP_ERROR`：行为发生但清理失败；
+- `SKIPPED`：平台、权限或安全条件不满足；
+- `ABORTED`：Runner 或 Controller 非正常结束。
+
+### 15.2 云端验证结果
+
+- `PASS`：所有 required 事件和字段通过；
+- `PARTIAL`：required 事件存在，但 recommended 字段或软目标不完整；
+- `FAIL`：本地为 `LOCAL_PASS`、导出范围完整，但 required 事件或字段未满足；
+- `INCONCLUSIVE`：导出范围不足、格式错误、映射失败或候选歧义；
+- `NOT_COMPARED`：本地能力没有进入可比较状态。
+
+### 15.3 指标
 
 ```text
-事件覆盖率 = Σ(w_i × required事件命中率_i) / Σw_i
+事件覆盖率 = 命中的 required 云端事件数 / required 云端事件总数
 字段完整率 = Σ(字段权重 × 通过值) / Σ字段权重
-及时率     = 阈值内命中的 required 事件数 / 已命中的 required 事件数
-可判定率   = 可得出 PASS/PARTIAL/FAIL 的用例数 / 已执行用例数
+可判定率   = PASS/PARTIAL/FAIL 数 / 已请求比较的能力数
+关联置信度 = 选中候选的锚点得分与冲突情况综合结果
 ```
 
-总体得分只在可判定率达到门槛后展示，避免采集器大面积故障时产生虚假的低能力分。建议能力状态映射：
+离线模式不测“API 查询等待时间”。如果云端记录同时包含事件产生时间和平台收集时间，可报告这两个字段的差值，但需命名为“记录内采集时差”，不能宣称是平台端到端可见延迟。
 
-- `Supported`：事件覆盖 100%，required 字段 100%；
-- `Partial`：事件存在但字段、关联或时效不完整；
-- `Not observed`：样本成功但事件未观察到；
-- `Requires configuration`：只在明确记录的非默认策略下通过；
-- `Not testable`：当前环境或接口无法验证。
+## 16. 安全控制
 
-参考项目的 feature weight 可作为优先级初值，但正式权重需要腾讯 EDR 使用场景负责人评审。禁止把不同 BASELINE 版本的总分直接比较；趋势报告必须先解释基线变化。
-
-## 9. 本地无 EDR 验证方案
-
-接入 EDR 前，每个样本需通过两层 Oracle：
-
-1. **状态 Oracle**：直接读取目标系统状态，例如文件内容/hash、注册表值、监听端收到的数据、进程 PID/退出码；
-2. **独立观察 Oracle**：使用 Windows 事件日志、ETW 或实验室 Sysmon（仅作为旁证）确认行为轨迹。
-
-验收要求：
-
-- 连续运行 20 次，行为成功率 100%；
-- 中断、超时和重复执行后仍能清理；
-- 并发运行时 marker 不冲突；
-- 中文路径、空格路径、标准用户和管理员上下文均按用例声明工作；
-- Windows 支持版本上有明确测试记录；
-- 本地 Oracle 不依赖腾讯 EDR Agent。
-
-任务管理器、regedit、Wireshark 可用于开发排查，但不作为自动化验收的唯一证据。
-
-## 10. 安全控制
-
-### 10.1 风险分级
-
-| 等级 | 含义 | 默认策略 |
+| 等级 | 行为 | 默认策略 |
 | --- | --- | --- |
-| L0 | 用户目录/回环网络内的无害行为 | 可自动运行 |
-| L1 | HKCU、小范围系统对象或内网靶机 | 允许在实验室自动运行 |
-| L2 | 管理员权限、服务/计划任务/账户变更 | 明确审批、VM 快照 |
-| L3 | 注入、驱动、凭据、VSS、Agent 防护变更 | 默认禁用，专项审批 |
+| L0 | 用户目录、短生命周期进程、回环网络 | 可自动运行 |
+| L1 | HKCU、命名管道、内网测试服务 | 实验室可自动运行 |
+| L2 | 管理员权限、服务、计划任务、账户 | 审批并要求 VM 快照 |
+| L3 | 注入、驱动、凭据、VSS、Agent 变更 | 首期不实现 |
 
-### 10.2 强制护栏
+强制要求：
 
-- 执行器校验主机标签 `EDR_LAB=true`，生产域成员默认拒绝；
-- 网络目标必须命中 allowlist，DNS marker 使用内部测试域；
-- 文件/注册表操作限制在专用命名空间；
-- 每个样本有硬超时、进程树终止和清理超时；
-- L2/L3 要求 VM 快照 ID、审批 ID 和一次性运行授权；
-- 禁止在参数或日志中输出 token、cookie、租户秘密；
-- 样本包使用 SHA-256 清单；团队形态再加入代码签名；
-- 高风险 Suite 不接入普通 CI 定时任务；
-- 保留全局 kill switch，可阻止新任务并触发安全清理。
+- Runner 校验实验室主机标记，生产环境默认拒绝；
+- 网络目标必须在 allowlist，默认只允许回环；
+- 文件和注册表操作限定专用命名空间；
+- 每个进程都有硬超时和进程树清理；
+- 程序及能力清单记录 SHA-256；
+- 数据库、导出和报告不得包含凭据；
+- 云端日志可能含用户名、主机、路径和网络信息，默认仅本地处理并禁止提交 Git。
 
-## 11. 配置与密钥
+## 17. 推荐技术栈
 
-环境配置只保存非敏感信息：主机选择器、collector 类型、时间窗、网络 allowlist、风险上限和制品策略。示例见 `configs/environments.example.yaml`。
+| 层 | 首选 |
+| --- | --- |
+| Runner / Export / Compare | C#，.NET 8 |
+| Windows 能力程序 | C# + Win32 P/Invoke；特殊场景可用小型 C/C++ |
+| SQLite | `Microsoft.Data.Sqlite` |
+| JSON | `System.Text.Json` 流式 API |
+| YAML | `YamlDotNet` |
+| Schema | JSON Schema Draft 2020-12 |
+| CLI | `System.CommandLine` |
+| 日志 | `Microsoft.Extensions.Logging`，结构化 JSON sink |
+| 测试 | xUnit + FluentAssertions |
 
-敏感配置通过环境变量或密钥管理系统注入，例如：
+发布以 `win-x64` 为首个 Runtime Identifier。开发构建可 framework-dependent；测试机分发包可 self-contained，是否启用 single-file 由体积和 EDR 行为影响测试决定。
 
-```text
-EDR_VALIDATION_TENCENT_API_BASE_URL
-EDR_VALIDATION_TENCENT_CLIENT_ID
-EDR_VALIDATION_TENCENT_CLIENT_SECRET
-```
-
-启动时只报告密钥“已配置/未配置”，不打印值。报告中的用户名、IP、命令行和文件路径根据数据分级做掩码。
-
-## 12. 推荐技术栈
-
-| 层 | 首选 | 理由 |
-| --- | --- | --- |
-| 控制器 | Python 3.12 | 生态成熟、适合 API/数据处理/测试 |
-| CLI/配置 | Typer + Pydantic Settings | 类型化参数与配置校验 |
-| YAML/Schema | ruamel.yaml + jsonschema | 保留可读性并执行机器校验 |
-| HTTP | httpx + tenacity | 超时、连接池与可控重试 |
-| 存储 | SQLAlchemy + SQLite/PostgreSQL | MVP 与团队部署共用模型 |
-| 报告 | Jinja2 + JSON/JUnit | 人工与 CI 双用途 |
-| Windows 样本 | PowerShell 7 / C# .NET 8 | 系统 API 覆盖与可审计源码 |
-| 测试 | pytest + hypothesis | 单元、契约和属性测试 |
-| 质量 | Ruff + mypy + pre-commit | 快速、可重复的门禁 |
-
-项目使用独立 Conda 环境；依赖安装统一通过 `python -m pip install`，不使用 `conda install` 修改项目依赖。
-
-## 13. 仓库结构
+## 18. 仓库结构
 
 ```text
 .
-├─ .github/workflows/        CI（实现阶段加入）
-├─ baselines/windows/        Windows BASELINE
-├─ configs/                  环境与套件配置模板
-├─ docs/                     设计、ADR、接入说明
-├─ schemas/                  数据契约
-├─ src/edr_validation/
-│  ├─ cli/                   命令入口
-│  ├─ domain/                领域模型与状态机
-│  ├─ orchestration/         计划、执行与恢复
-│  ├─ executors/             Windows Worker 协议
-│  ├─ collectors/            mock/file/tencent 适配器
-│  ├─ normalization/         厂商事件映射
-│  ├─ matching/              候选召回与断言引擎
-│  ├─ persistence/           Run Store
-│  └─ reporting/             报告与能力矩阵
+├─ baselines/windows/        厂商无关的能力 BASELINE
+├─ configs/                  离线运行与比较配置模板
+├─ docs/                     设计与决策记录
+├─ mappings/                 云端导出格式映射
+├─ schemas/                  DB、Manifest、导出和事件 Schema
+├─ src/
+│  ├─ EdrTest.Runner/
+│  ├─ EdrTest.Export/
+│  ├─ EdrTest.Compare/
+│  ├─ EdrTest.Core/
+│  ├─ EdrTest.Storage.Sqlite/
+│  └─ EdrTest.CloudImport/
 └─ tests/
    ├─ unit/
    ├─ contract/
@@ -471,98 +582,81 @@ EDR_VALIDATION_TENCENT_CLIENT_SECRET
    └─ e2e/
 ```
 
-本地 `reference/`、`samples/` 和 `EDR-Telemetry-main/` 作为需求参考、样本工作区或第三方资料使用，统一由 `.gitignore` 排除。样本的受控发布方式在实现阶段另行确定，不通过本仓库直接分发。
+本地 `reference/`、`samples/`、`EDR-Telemetry-main/` 和 `runs/` 均不追踪。能力包在 `samples/` 工作区开发或由独立制品库分发，正式源码归属和发布流程在实现阶段单独确定。
 
-## 14. 测试策略
+## 19. 测试策略
 
-### 14.1 框架自身
+### 19.1 Runner 与 SQLite
 
-- 单元测试：状态机、断言操作符、时间窗、评分、脱敏；
-- 属性测试：事件顺序、重复事件、时间边界和空字段；
-- Schema 测试：所有 BASELINE、样本清单和事件夹具必须验证通过；
-- Collector 契约测试：分页、重试、429、空页、重复页和时区；
-- Normalizer 金样测试：固定原始事件映射为固定 Canonical Event；
-- Matcher 反例测试：历史噪声、PID 复用、并发 marker、多个近似候选；
-- 集成测试：Mock Collector 端到端产生 JSON/HTML/JUnit；
-- E2E：隔离 Windows VM + 腾讯 EDR，按风险等级分流水线执行。
+- 一轮一个 DB、多个能力顺序执行；
+- 事务中断、进程崩溃、数据库锁和磁盘空间不足；
+- WAL checkpoint 后只靠 `.db` 可完整读取；
+- 外键、唯一约束、状态迁移和 `user_version`；
+- 本地文件保留而数据库索引不泄漏忽略目录内容。
 
-### 14.2 回归门禁
+### 19.2 能力包
 
-- PR：lint、类型检查、单元/契约/集成、Schema 校验；
-- 每日：Windows L0 本地样本稳定性；
-- 每周或产品版本变更：腾讯 EDR P0 Suite；
-- 手工审批：L2/L3 Suite；
-- 退化规则：稳定 BASELINE 从 PASS 变为 FAIL，且环境/策略无变化时阻断发布并生成缺陷包。
+- 每个能力连续运行 20 次，本地行为成功率 100%；
+- Actor/Target 启动失败、超时、异常退出和父进程终止；
+- nonce、PID、路径和时间均被记录；
+- 清理成功、清理失败和重试；
+- 标准用户与管理员上下文按清单验证。
 
-## 15. 实施路线与验收标准
+### 19.3 Export 与 Compare
 
-### M0：需求与接口确认（1 周）
+- 同一 DB 重复导出结果确定；
+- 顶层数组、JSONL、大文件、BOM、坏记录和未知字段；
+- `ProcessCreate` 正反例、PID 复用、相同文件名、并发噪声；
+- 云端范围不足时必须 `INCONCLUSIVE`；
+- 映射版本变化使用金样契约测试；
+- 所有 PASS/FAIL 都能定位原始记录序号与事件 ID。
 
-交付：设计评审稿、字段映射草案、风险分级、实验室拓扑。
+## 20. 实施路线
 
-验收：确认腾讯 EDR 数据获取方式、可查询事件类型、鉴权、限流、时区、典型延迟、Agent/策略版本字段和数据保留周期。
+### M0：数据契约和骨架（1 周）
 
-### M1：框架内核与 Mock 闭环（2 周）
+交付：SQLite DDL、Capability Manifest、Run Export Schema、Cloud Export Manifest、腾讯进程事件映射、CLI 参数约定。
 
-交付：CLI、领域模型、状态机、Baseline lint、Mock/File Collector、Normalizer/Matcher、JSON 报告。
+验收：所有 Schema 可校验；参考 JSON 可被流式解析并识别三类进程事件。
 
-验收：使用事件夹具覆盖 PASS/PARTIAL/FAIL/SAMPLE_ERROR/INCONCLUSIVE；可离线重复比对且结果确定。
+### M1：进程创建最小闭环（2 周）
 
-### M2：P0 样本与本地验证（2～3 周）
+交付：Runner、ProcessCreate Controller/Actor/Target、SQLite Store、Export、Compare。
 
-交付：进程、文件、HKCU 注册表、回环 DNS/TCP/HTTP 样本，自验证和清理证据。
+验收：本地连续 20 次成功；能从参考格式 JSON 中唯一关联目标事件；缺失、噪声和范围不足结论正确。
 
-验收：每个样本连续 20 次成功；失败注入后可恢复；L0/L1 安全审查通过。
+### M2：基础能力扩展（2～3 周）
 
-### M3：腾讯 EDR 适配与端到端（2～3 周，取决于 API）
+交付：进程退出/父子关系、文件创建/修改/重命名/删除、HKCU 注册表创建/修改/删除、回环 TCP/HTTP/DNS。
 
-交付：Tencent Collector、字段映射、P0 BASELINE、HTML/JUnit/能力矩阵。
+验收：一轮可选多个能力，数据库完整封存，每个能力独立导出和比较。
 
-验收：同一环境重复 5 轮结果稳定；每个结论可链接到原始事件；接口异常不会误判为产品缺失。
+### M3：报告与稳健性（2 周）
 
-### M4：系统行为与团队化（持续迭代）
+交付：字段完整率、能力矩阵、JSON 报告、可选 HTML/JUnit、映射版本兼容和脱敏。
 
-交付：P1 样本、集中调度、PostgreSQL、签名任务、趋势与退化检测。
+验收：结果可离线复算，输入 hash、版本和证据完整；格式错误不误判为产品能力缺失。
 
-验收：权限、审批、快照、kill switch 和并发隔离全部可验证。
+## 21. 待确认决策
 
-## 16. 腾讯 EDR 接入待确认清单
+1. Capability 源码是否放在独立私有仓库，还是仅发布签名二进制到 `samples/`；
+2. 第一版只支持 .NET framework-dependent，还是同时发布 self-contained；
+3. 云端导出时用户能否填写查询时间范围和主机筛选，从而形成完整 manifest；
+4. 腾讯 EDR 导出格式是否会因事件大类、控制台页面或产品版本而变化；
+5. 是否需要在 Compare 中提供人工确认候选事件的交互模式；
+6. 测试轮次是否允许并行，首版建议固定为串行；
+7. MIT 许可是否同样适用于后续独立分发的能力包。
 
-以下问题会直接影响 Collector 和 BASELINE，需在 M0 关闭：
+## 22. 完成定义
 
-1. 是否提供事件检索 API；若提供，鉴权、分页、限流和查询最大时间范围是什么？
-2. 控制台展示的是原始遥测、聚合事件还是告警相关事件？
-3. 是否能稳定获取 host ID、Agent ID/版本、策略 ID 和事件唯一 ID？
-4. 进程是否有跨事件稳定的 entity ID；父进程、命令行、用户 SID 是否可用？
-5. 文件、注册表、DNS、网络事件的实际字段名和动作枚举是什么？
-6. 事件时间、接收时间分别是什么时区和精度？典型与最坏上报延迟是多少？
-7. 默认策略与开启额外遥测后的差异如何标识？
-8. 是否允许实验用 marker 字符串，查询是否支持精确/模糊过滤？
-9. 原始事件导出是否脱敏或截断；数据保留期多长？
-10. 哪些样本会被防护阻断；被阻断时是否仍产生行为尝试遥测？
+一个能力只有在以下条件全部满足后才算完成：
 
-## 17. 风险与应对
-
-| 风险 | 影响 | 应对 |
-| --- | --- | --- |
-| EDR API 不可用或不稳定 | 无法全自动采集 | 先支持文件导入；推动只读服务账号/API |
-| 事件延迟波动 | 偶发 FAIL | 记录延迟分布、退避轮询、软硬阈值分离 |
-| 字段/枚举随版本变化 | Normalizer 失败 | 映射版本化、未知字段告警、金样契约测试 |
-| 历史噪声误命中 | 虚假 PASS | nonce、多锚点、歧义转 INCONCLUSIVE |
-| 样本被 EDR 阻断 | 无法证明采集缺失 | 区分 attempt/behavior；记录防护结果与本地 Oracle |
-| 清理不完整 | 污染后续测试 | 专用命名空间、finally 清理、快照、清理门禁 |
-| 参考代码许可证限制 | 发布合规风险 | 只借鉴分类/思想；第三方代码不纳入本仓库提交 |
-| 基线频繁变化 | 趋势不可比较 | Schema 版本、评审、变更原因和基线差异报告 |
-
-## 18. 完成定义（Definition of Done）
-
-一个能力用例只有在以下条件全部满足后才可标记“已建设”：
-
-- Sample 清单、实现、自验证、清理和风险评审齐全；
-- 无 EDR 环境稳定性验收通过；
-- BASELINE 通过 Schema 校验并至少两人评审；
-- Collector/Normalizer 有脱敏后的真实事件夹具和契约测试；
-- PASS、FAIL、歧义、迟到和接口失败路径都有自动化测试；
-- 报告能定位到原始事件和逐字段断言；
-- 文档列明适用 OS、Agent/策略版本与已知限制；
-- 结果可在同一 Git commit 和环境快照下离线复算。
+- 独立 Controller 和至少一个 Actor 已实现；需要对象程序时包含 Target；
+- Capability Manifest、程序 hash、权限和风险等级齐全；
+- Controller 能证明本地行为、完整写入本轮 DB 并安全清理；
+- 本地连续 20 次测试通过；
+- BASELINE 同时包含本地要求和云端预期；
+- 至少一个真实脱敏云端事件夹具通过 Mapping 契约测试；
+- PASS、FAIL、PARTIAL、INCONCLUSIVE 和噪声场景有自动化测试；
+- Run DB、local JSON 和验证报告都能回溯同一 Run ID；
+- 比较结果记录所有输入文件 SHA-256、Schema 版本和映射版本。

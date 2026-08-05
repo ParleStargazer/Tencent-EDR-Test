@@ -1,8 +1,8 @@
-schema_version: "1.0"
+schema_version: "1.1"
 baseline_id: win.file.create
-version: "0.1.0"
+version: "0.2.0"
 title: Windows 文件创建遥测
-description: 验证由受控样本创建唯一标记文件后，EDR 是否产生可关联的文件创建事件。
+description: 验证受控 Actor 创建唯一标记文件后，云端是否存在可关联的文件创建事件。
 platform:
   os: windows
   versions:
@@ -10,44 +10,54 @@ platform:
     - windows-11
     - windows-server-2019
     - windows-server-2022
+  architectures:
+    - x64
 risk_level: L0
-sample:
+capability:
   id: win.file.create
   version: "0.1.0"
   parameters:
     target_root: "${environment.workspace_root}"
+local_requirements:
+  - field: facts.file.create_succeeded
+    operator: equals
+    expected: true
+  - field: facts.file.path
+    operator: present
+  - field: facts.file.sha256
+    operator: present
+  - field: programs.actor.pid
+    operator: present
 correlation:
-  time_before_seconds: 30
+  time_before_seconds: 60
   time_after_seconds: 300
   anchors:
-    - fields:
-        - host.id
-        - file.path
+    - local_field: facts.file.path
+      cloud_field: file.path
       strength: strong
-    - fields:
-        - host.id
-        - process.pid
-        - process.command_line
-        - event.created
+      normalizers:
+        - windows_path
+    - local_field: programs.actor.pid
+      cloud_field: process.pid
       strength: medium
-expectations:
+cloud_expectations:
   - id: file-create-event
     event_type: file
-    event_action:
+    event_actions:
       - create
-      - created
     cardinality:
       min: 1
       max: 5
-    max_ingest_delay_seconds: 300
     assertions:
       - field: file.path
         operator: equals
-        expected: "${sample.observed.path}"
+        expected_from_local: facts.file.path
         severity: required
+        normalizers:
+          - windows_path
       - field: process.pid
         operator: equals
-        expected: "${sample.observed.process_id}"
+        expected_from_local: programs.actor.pid
         severity: required
       - field: process.executable
         operator: present
@@ -57,7 +67,7 @@ expectations:
         severity: recommended
       - field: file.hash.sha256
         operator: equals
-        expected: "${sample.observed.sha256}"
+        expected_from_local: facts.file.sha256
         severity: informational
 scoring:
   weight: 1.0
@@ -66,5 +76,6 @@ scoring:
 metadata:
   owner: edr-validation-team
   status: draft
+  change_reason: 调整为 SQLite 本地事实与用户导入云端 JSON 的离线比较模式。
   references:
     - EDR-Telemetry / Windows / File Manipulation / File Creation

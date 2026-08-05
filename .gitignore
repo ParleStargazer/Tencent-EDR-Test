@@ -32,6 +32,11 @@ dist/
 # Run artifacts and imported EDR data
 /artifacts/
 /reports/
+/runs/
+/import/
+*.db
+*.db-shm
+*.db-wal
 *.log
 *.jsonl.gz
 

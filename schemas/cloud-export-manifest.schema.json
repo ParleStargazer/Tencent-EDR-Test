@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/edr-validation/cloud-export-manifest.schema.json",
+  "title": "User Supplied EDR Cloud Export Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "product",
+    "exported_at_utc",
+    "query_window",
+    "host_filter",
+    "source_files"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vendor", "name"],
+      "properties": {
+        "vendor": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": ["string", "null"] },
+        "export_format_version": { "type": ["string", "null"] }
+      }
+    },
+    "exported_at_utc": { "type": "string", "format": "date-time" },
+    "query_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_utc", "end_utc"],
+      "properties": {
+        "start_utc": { "type": "string", "format": "date-time" },
+        "end_utc": { "type": "string", "format": "date-time" }
+      }
+    },
+    "host_filter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hostname": { "type": ["string", "null"] },
+        "host_id": { "type": ["string", "null"] },
+        "description": { "type": ["string", "null"] }
+      },
+      "anyOf": [
+        { "required": ["hostname"] },
+        { "required": ["host_id"] },
+        { "required": ["description"] }
+      ]
+    },
+    "event_filters": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "source_files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "size_bytes"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+          "size_bytes": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "notes": { "type": "string" }
+  }
+}

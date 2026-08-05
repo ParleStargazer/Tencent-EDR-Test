@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/edr-validation/run-export.schema.json",
+  "title": "EDR Validation Local Run Export",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run",
+    "capabilities",
+    "programs",
+    "local_events",
+    "local_facts",
+    "artifacts",
+    "integrity"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "database_schema_version",
+        "tool_version",
+        "status",
+        "started_at_utc",
+        "ended_at_utc",
+        "host"
+      ],
+      "properties": {
+        "run_id": { "$ref": "#/$defs/id" },
+        "database_schema_version": { "type": "integer", "minimum": 1 },
+        "tool_version": { "type": "string", "minLength": 1 },
+        "suite_id": { "type": ["string", "null"] },
+        "status": { "enum": ["COMPLETED", "COMPLETED_WITH_ERRORS", "ABORTED"] },
+        "started_at_utc": { "$ref": "#/$defs/date_time" },
+        "ended_at_utc": { "$ref": "#/$defs/date_time" },
+        "timezone": { "type": "string", "minLength": 1 },
+        "host": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hostname", "os_version", "architecture"],
+          "properties": {
+            "hostname": { "type": "string", "minLength": 1 },
+            "machine_id": { "type": ["string", "null"] },
+            "os_version": { "type": "string", "minLength": 1 },
+            "architecture": { "type": "string", "minLength": 1 },
+            "boot_id": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "case_run_id",
+          "capability_id",
+          "capability_version",
+          "sequence",
+          "nonce",
+          "status",
+          "started_at_utc",
+          "ended_at_utc"
+        ],
+        "properties": {
+          "case_run_id": { "$ref": "#/$defs/id" },
+          "capability_id": { "type": "string", "minLength": 1 },
+          "capability_version": { "type": "string", "minLength": 1 },
+          "sequence": { "type": "integer", "minimum": 1 },
+          "nonce": { "type": "string", "minLength": 16 },
+          "risk_level": { "enum": ["L0", "L1", "L2", "L3"] },
+          "status": {
+            "enum": ["LOCAL_PASS", "SAMPLE_ERROR", "CLEANUP_ERROR", "SKIPPED", "ABORTED"]
+          },
+          "started_at_utc": { "$ref": "#/$defs/date_time" },
+          "ended_at_utc": { "$ref": "#/$defs/date_time" },
+          "error_code": { "type": ["string", "null"] },
+          "error_message": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "programs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["case_run_id", "role", "instance_index", "executable", "sha256", "pid", "started_at_utc"],
+        "properties": {
+          "case_run_id": { "$ref": "#/$defs/id" },
+          "role": { "enum": ["controller", "actor", "target", "helper"] },
+          "instance_index": { "type": "integer", "minimum": 0 },
+          "executable": { "type": "string", "minLength": 1 },
+          "command_line": { "type": ["string", "null"] },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "md5": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{32}$" },
+          "pid": { "type": "integer", "minimum": 0 },
+          "started_at_utc": { "$ref": "#/$defs/date_time" },
+          "ended_at_utc": { "oneOf": [{ "$ref": "#/$defs/date_time" }, { "type": "null" }] },
+          "exit_code": { "type": ["integer", "null"] }
+        }
+      }
+    },
+    "local_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["local_event_id", "case_run_id", "event_type", "event_action", "observed_at_utc", "source", "confidence", "data"],
+        "properties": {
+          "local_event_id": { "$ref": "#/$defs/id" },
+          "case_run_id": { "$ref": "#/$defs/id" },
+          "event_type": { "type": "string", "minLength": 1 },
+          "event_action": { "type": "string", "minLength": 1 },
+          "observed_at_utc": { "$ref": "#/$defs/date_time" },
+          "source": { "type": "string", "minLength": 1 },
+          "confidence": { "enum": ["high", "medium", "low"] },
+          "data": { "type": "object" }
+        }
+      }
+    },
+    "local_facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["case_run_id", "key", "value", "value_type", "observed_at_utc", "source", "confidence"],
+        "properties": {
+          "case_run_id": { "$ref": "#/$defs/id" },
+          "key": { "type": "string", "minLength": 1 },
+          "value": {},
+          "value_type": { "enum": ["string", "integer", "number", "boolean", "null", "object", "array"] },
+          "observed_at_utc": { "$ref": "#/$defs/date_time" },
+          "source": { "type": "string", "minLength": 1 },
+          "confidence": { "enum": ["high", "medium", "low"] }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifact_id", "case_run_id", "kind", "relative_path", "sha256", "size_bytes"],
+        "properties": {
+          "artifact_id": { "$ref": "#/$defs/id" },
+          "case_run_id": { "$ref": "#/$defs/id" },
+          "kind": { "type": "string", "minLength": 1 },
+          "relative_path": { "type": "string", "minLength": 1 },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "size_bytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["database_sha256", "exported_at_utc", "exporter_version"],
+      "properties": {
+        "database_sha256": { "$ref": "#/$defs/sha256" },
+        "exported_at_utc": { "$ref": "#/$defs/date_time" },
+        "exporter_version": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 16 },
+    "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+    "date_time": { "type": "string", "format": "date-time" }
+  }
+}

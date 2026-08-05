@@ -1,0 +1,108 @@
+schema_version: "1.1"
+baseline_id: win.process.create
+version: "0.1.0"
+title: Windows 进程创建遥测
+description: 验证 Actor 创建 Target 后，云端是否存在包含正确父子进程信息的进程创建事件。
+platform:
+  os: windows
+  versions:
+    - windows-10
+    - windows-11
+    - windows-server-2019
+    - windows-server-2022
+  architectures:
+    - x64
+risk_level: L0
+capability:
+  id: win.process.create
+  version: "0.1.0"
+  parameters:
+    target_lifetime_ms: 5000
+local_requirements:
+  - field: facts.process.create_succeeded
+    operator: equals
+    expected: true
+  - field: programs.actor.pid
+    operator: present
+  - field: programs.actor.command_line
+    operator: contains
+    expected: "${nonce}"
+  - field: programs.target.pid
+    operator: present
+  - field: programs.target.command_line
+    operator: contains
+    expected: "${nonce}"
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  anchors:
+    - local_field: programs.target.executable
+      cloud_field: process.executable
+      strength: strong
+      normalizers:
+        - windows_path
+    - local_field: programs.target.command_line
+      cloud_field: process.command_line
+      strength: strong
+      normalizers:
+        - trim
+    - local_field: programs.actor.executable
+      cloud_field: parent_process.executable
+      strength: strong
+      normalizers:
+        - windows_path
+    - local_field: programs.target.pid
+      cloud_field: process.pid
+      strength: medium
+    - local_field: programs.actor.pid
+      cloud_field: parent_process.pid
+      strength: medium
+cloud_expectations:
+  - id: process-create-event
+    event_type: process
+    event_actions:
+      - create
+    cardinality:
+      min: 1
+      max: 3
+    assertions:
+      - field: process.pid
+        operator: equals
+        expected_from_local: programs.target.pid
+        severity: required
+      - field: process.executable
+        operator: equals
+        expected_from_local: programs.target.executable
+        severity: required
+        normalizers:
+          - windows_path
+      - field: process.command_line
+        operator: contains
+        expected: "${nonce}"
+        severity: required
+      - field: parent_process.pid
+        operator: equals
+        expected_from_local: programs.actor.pid
+        severity: required
+      - field: parent_process.executable
+        operator: equals
+        expected_from_local: programs.actor.executable
+        severity: required
+        normalizers:
+          - windows_path
+      - field: process.entity_id
+        operator: present
+        severity: recommended
+      - field: process.hash.md5
+        operator: equals
+        expected_from_local: programs.target.md5
+        severity: informational
+scoring:
+  weight: 1.0
+  required_field_weight: 1.0
+  recommended_field_weight: 0.25
+metadata:
+  owner: edr-validation-team
+  status: draft
+  references:
+    - EDR-Telemetry / Windows / Process Activity / Process Creation

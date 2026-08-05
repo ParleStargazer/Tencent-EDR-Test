@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "event", "host", "source", "raw_ref"],
   "properties": {
-    "schema_version": { "const": "1.0" },
+    "schema_version": { "const": "1.1" },
     "event": {
       "type": "object",
       "required": ["id", "type", "created"],
@@ -109,10 +109,10 @@
     },
     "source": {
       "type": "object",
-      "required": ["vendor", "collector", "mapping_version"],
+      "required": ["vendor", "importer", "mapping_version"],
       "properties": {
         "vendor": { "type": "string", "minLength": 1 },
-        "collector": { "type": "string", "minLength": 1 },
+        "importer": { "type": "string", "minLength": 1 },
         "mapping_version": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
@@ -131,7 +131,16 @@
         "command_line": { "type": ["string", "null"] },
         "start": { "type": ["string", "null"], "format": "date-time" },
         "end": { "type": ["string", "null"], "format": "date-time" },
-        "exit_code": { "type": ["integer", "null"] }
+        "exit_code": { "type": ["integer", "null"] },
+        "hash": {
+          "type": ["object", "null"],
+          "properties": {
+            "md5": { "type": ["string", "null"] },
+            "sha1": { "type": ["string", "null"] },
+            "sha256": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     }

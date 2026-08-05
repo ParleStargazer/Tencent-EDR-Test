@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/edr-validation/capability-manifest.schema.json",
+  "title": "EDR Validation Capability Package Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "capability_id",
+    "version",
+    "platform",
+    "risk_level",
+    "required_privilege",
+    "controller",
+    "participants",
+    "timeouts"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "capability_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)+$"
+    },
+    "version": { "$ref": "#/$defs/semver" },
+    "display_name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architectures"],
+      "properties": {
+        "os": { "const": "windows" },
+        "minimum_version": { "type": "string", "minLength": 1 },
+        "architectures": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["x86", "x64", "arm64"] }
+        }
+      }
+    },
+    "risk_level": { "enum": ["L0", "L1", "L2", "L3"] },
+    "required_privilege": { "enum": ["standard_user", "administrator", "system"] },
+    "controller": { "$ref": "#/$defs/program" },
+    "participants": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/participant" },
+      "contains": {
+        "type": "object",
+        "properties": { "role": { "const": "actor" } },
+        "required": ["role"]
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "enum": ["string", "integer", "boolean"] },
+          "required": { "type": "boolean" },
+          "default": {},
+          "minimum": { "type": "number" },
+          "maximum": { "type": "number" },
+          "allowed_values": { "type": "array" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execute_seconds", "cleanup_seconds"],
+      "properties": {
+        "execute_seconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+        "cleanup_seconds": { "type": "integer", "minimum": 1, "maximum": 3600 }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "allowed_destination_parameters": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "expected_fact_keys": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[A-Fa-f0-9]{64}$"
+    },
+    "program": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executable"],
+      "properties": {
+        "executable": { "type": "string", "pattern": "^[^:/]+(?:[\\\\/][^:/]+)*\\.exe$" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "arguments": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "participant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "executable"],
+      "properties": {
+        "role": { "enum": ["actor", "target", "helper"] },
+        "instance_name": { "type": "string", "minLength": 1 },
+        "executable": { "type": "string", "pattern": "^[^:/]+(?:[\\\\/][^:/]+)*\\.exe$" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "arguments": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/edr-validation/mapping-profile.schema.json",
+  "title": "EDR Cloud JSON Mapping Profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "vendor",
+    "product",
+    "input",
+    "routes",
+    "raw_reference",
+    "unmapped_fields"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "profile_id": { "type": "string", "minLength": 1 },
+    "vendor": { "type": "string", "minLength": 1 },
+    "product": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["containers", "encoding", "record_selector", "event_id_field", "host_id_field", "event_time"],
+      "properties": {
+        "containers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["json-array", "jsonl"] }
+        },
+        "encoding": { "const": "utf-8" },
+        "record_selector": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["all"],
+          "properties": { "all": { "type": "object", "minProperties": 1 } }
+        },
+        "event_id_field": { "type": "string", "minLength": 1 },
+        "host_id_field": { "type": "string", "minLength": 1 },
+        "event_time": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field", "format"],
+          "properties": {
+            "field": { "type": "string", "minLength": 1 },
+            "format": { "enum": ["unix_s", "unix_ms", "iso8601"] }
+          }
+        }
+      }
+    },
+    "routes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["route_id", "when", "canonical"],
+        "properties": {
+          "route_id": { "type": "string", "minLength": 1 },
+          "when": { "type": "object", "minProperties": 1 },
+          "canonical": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": { "$ref": "#/$defs/field_rule" }
+          }
+        }
+      }
+    },
+    "raw_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id_field", "ordinal_base"],
+      "properties": {
+        "id_field": { "type": "string", "minLength": 1 },
+        "ordinal_base": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "unmapped_fields": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy", "preserve_in_report"],
+      "properties": {
+        "policy": { "enum": ["count-and-ignore", "preserve", "error"] },
+        "preserve_in_report": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "field_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": { "type": "string", "minLength": 1 },
+        "constant": {},
+        "transform": {
+          "type": "array",
+          "items": {
+            "enum": ["unix_s_to_utc", "unix_ms_to_utc", "parse_datetime_to_utc", "windows_path", "lowercase", "trim"]
+          }
+        },
+        "on_error": {},
+        "on_empty": {},
+        "on_zero": {}
+      },
+      "oneOf": [
+        { "required": ["source"] },
+        { "required": ["constant"] }
+      ]
+    }
+  }
+}

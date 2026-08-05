@@ -1,0 +1,105 @@
+schema_version: "1.0"
+profile_id: tencent-edr-proc-events-v1
+vendor: Tencent
+product: Tencent EDR
+description: 将控制台导出的扁平 ProcEvents JSON 数组映射为平台 Canonical Event。
+
+input:
+  containers:
+    - json-array
+    - jsonl
+  encoding: utf-8
+  record_selector:
+    all:
+      "@table": ProcEvents
+      "Action.Type": Proc
+  event_id_field: "Common.EventUUId"
+  host_id_field: "Common.Mid"
+  event_time:
+    field: "Common.EventTime"
+    format: unix_ms
+
+routes:
+  - route_id: process-create
+    when:
+      "Action.Name": ProcessCreate
+    canonical:
+      "event.type":
+        constant: process
+      "event.action":
+        constant: create
+      "event.category":
+        constant: process
+      "event.id":
+        source: "Common.EventUUId"
+      "event.created":
+        source: "Common.EventTime"
+        transform:
+          - unix_ms_to_utc
+      "event.observed":
+        source: "@collection"
+        transform:
+          - parse_datetime_to_utc
+        on_error: null
+      "host.id":
+        source: "Common.Mid"
+      "host.hostname":
+        source: "Environment.HostName"
+      "host.os":
+        source: "Environment.OsVersion"
+      "host.agent_id":
+        source: "Common.Guid"
+      "host.agent_version":
+        source: "Common.ClientVer"
+      "process.pid":
+        source: "Child.ProcPid"
+      "process.entity_id":
+        source: "Child.ProcGuid"
+      "process.name":
+        source: "Child.FileName"
+      "process.executable":
+        source: "Child.FilePath"
+        transform:
+          - windows_path
+      "process.command_line":
+        source: "Child.ProcCmdline"
+      "process.start":
+        source: "Child.ProcCreateTime"
+        transform:
+          - unix_ms_to_utc
+      "process.hash.md5":
+        source: "Child.FileMd5"
+        transform:
+          - lowercase
+        on_empty: null
+      "parent_process.pid":
+        source: "Parent.ProcPid"
+      "parent_process.entity_id":
+        source: "Parent.ProcGuid"
+      "parent_process.name":
+        source: "Parent.FileName"
+      "parent_process.executable":
+        source: "Parent.FilePath"
+        transform:
+          - windows_path
+      "parent_process.command_line":
+        source: "Parent.ProcCmdline"
+      "parent_process.start":
+        source: "Parent.ProcCreateTime"
+        transform:
+          - unix_ms_to_utc
+        on_zero: null
+      "user.name":
+        source: "Child.ProcUserName"
+        on_empty: null
+      "user.domain":
+        source: "Child.ProcDomainName"
+        on_empty: null
+
+raw_reference:
+  id_field: "Common.EventUUId"
+  ordinal_base: 0
+
+unmapped_fields:
+  policy: count-and-ignore
+  preserve_in_report: false
