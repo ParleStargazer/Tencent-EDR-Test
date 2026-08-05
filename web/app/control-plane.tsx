@@ -4,15 +4,23 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 
 type RiskLevel = "L0" | "L1";
-type CapabilityCategory = "进程" | "文件" | "注册表" | "网络";
 
 type Capability = {
   id: string;
-  name: string;
-  description: string;
-  category: CapabilityCategory;
+  nameZh: string;
+  nameEn: string;
+  categoryId: string;
   risk: RiskLevel;
   programs: string;
+};
+
+type CapabilityDefinition = Omit<Capability, "categoryId">;
+
+type CapabilityCategory = {
+  id: string;
+  nameZh: string;
+  nameEn: string;
+  capabilities: CapabilityDefinition[];
 };
 
 type ActiveRun = {
@@ -54,114 +62,190 @@ type ComparisonResult = {
 
 type JsonRecord = Record<string, unknown>;
 
-const capabilities: Capability[] = [
+function defineCapability(
+  id: string,
+  nameZh: string,
+  nameEn: string,
+  risk: RiskLevel = "L0",
+  programs = "Controller · Actor",
+): CapabilityDefinition {
+  return { id, nameZh, nameEn, risk, programs };
+}
+
+const capabilityCatalog: CapabilityCategory[] = [
   {
-    id: "win.process.create",
-    name: "进程创建",
-    description: "验证 Actor 创建 Target 的父子进程遥测。",
-    category: "进程",
-    risk: "L0",
-    programs: "Controller · Actor · Target",
+    id: "process-activity",
+    nameZh: "进程活动",
+    nameEn: "Process Activity",
+    capabilities: [
+      defineCapability("win.process.create", "进程创建", "Process Creation", "L0", "Controller · Actor · Target"),
+      defineCapability("win.process.terminate", "进程终止", "Process Termination", "L0", "Controller · Actor · Target"),
+      defineCapability("win.process.access", "进程访问", "Process Access", "L0", "Controller · Actor · Target"),
+      defineCapability("win.process.image_load", "加载镜像或动态库", "Image/Library Loaded", "L0", "Controller · Actor · Target"),
+      defineCapability("win.process.remote_thread", "远程线程创建", "Remote Thread Creation", "L1", "Controller · Actor · Target"),
+      defineCapability("win.process.tampering", "进程篡改活动", "Process Tampering Activity", "L1", "Controller · Actor · Target"),
+    ],
   },
   {
-    id: "win.process.terminate",
-    name: "进程退出",
-    description: "记录目标进程退出、退出码与时间。",
-    category: "进程",
-    risk: "L0",
-    programs: "Controller · Actor",
+    id: "file-manipulation",
+    nameZh: "文件操作",
+    nameEn: "File Manipulation",
+    capabilities: [
+      defineCapability("win.file.create", "文件创建", "File Creation"),
+      defineCapability("win.file.open", "文件打开", "File Opened"),
+      defineCapability("win.file.delete", "文件删除", "File Deletion"),
+      defineCapability("win.file.modify", "文件修改", "File Modification"),
+      defineCapability("win.file.rename", "文件重命名", "File Renaming"),
+    ],
   },
   {
-    id: "win.process.parent-child",
-    name: "父子关系",
-    description: "校验三层进程链和命令行关联。",
-    category: "进程",
-    risk: "L0",
-    programs: "Controller · Actor · Target",
+    id: "user-account-activity",
+    nameZh: "用户账号活动",
+    nameEn: "User Account Activity",
+    capabilities: [
+      defineCapability("win.account.local.create", "本地账号创建", "Local Account Creation", "L1"),
+      defineCapability("win.account.local.modify", "本地账号修改", "Local Account Modification", "L1"),
+      defineCapability("win.account.local.delete", "本地账号删除", "Local Account Deletion", "L1"),
+      defineCapability("win.account.login", "账号登录", "Account Login"),
+      defineCapability("win.account.logoff", "账号注销", "Account Logoff"),
+    ],
   },
   {
-    id: "win.file.create",
-    name: "文件创建",
-    description: "在专用工作区创建带唯一标记的文件。",
-    category: "文件",
-    risk: "L0",
-    programs: "Controller · Actor",
+    id: "network-activity",
+    nameZh: "网络活动",
+    nameEn: "Network Activity",
+    capabilities: [
+      defineCapability("win.network.tcp", "TCP 连接", "TCP Connection", "L0", "Controller · Actor · Helper"),
+      defineCapability("win.network.udp", "UDP 连接", "UDP Connection", "L0", "Controller · Actor · Helper"),
+      defineCapability("win.network.url", "URL 访问", "URL", "L0", "Controller · Actor · Helper"),
+      defineCapability("win.network.dns", "DNS 查询", "DNS Query", "L0", "Controller · Actor · Helper"),
+      defineCapability("win.network.file_download", "文件下载", "File Downloaded", "L0", "Controller · Actor · Helper"),
+    ],
   },
   {
-    id: "win.file.modify",
-    name: "文件修改",
-    description: "变更内容并记录修改前后 Hash。",
-    category: "文件",
-    risk: "L0",
-    programs: "Controller · Actor",
+    id: "hash-algorithms",
+    nameZh: "哈希算法",
+    nameEn: "Hash Algorithms",
+    capabilities: [
+      defineCapability("win.hash.md5", "MD5 哈希", "MD5", "L0", "Controller · Actor · Target"),
+      defineCapability("win.hash.sha", "SHA 哈希", "SHA", "L0", "Controller · Actor · Target"),
+      defineCapability("win.hash.imphash", "导入表哈希", "IMPHASH", "L0", "Controller · Actor · Target"),
+    ],
   },
   {
-    id: "win.file.rename",
-    name: "文件重命名",
-    description: "记录源路径、目标路径和操作进程。",
-    category: "文件",
-    risk: "L0",
-    programs: "Controller · Actor",
+    id: "registry-activity",
+    nameZh: "注册表活动",
+    nameEn: "Registry Activity",
+    capabilities: [
+      defineCapability("win.registry.create", "键/值创建", "Key/Value Creation", "L1"),
+      defineCapability("win.registry.modify", "键/值修改", "Key/Value Modification", "L1"),
+      defineCapability("win.registry.delete", "键/值删除", "Key/Value Deletion", "L1"),
+    ],
   },
   {
-    id: "win.file.delete",
-    name: "文件删除",
-    description: "删除测试工件并验证清理状态。",
-    category: "文件",
-    risk: "L0",
-    programs: "Controller · Actor",
+    id: "schedule-task-activity",
+    nameZh: "计划任务活动",
+    nameEn: "Schedule Task Activity",
+    capabilities: [
+      defineCapability("win.scheduled_task.create", "计划任务创建", "Scheduled Task Creation", "L1"),
+      defineCapability("win.scheduled_task.modify", "计划任务修改", "Scheduled Task Modification", "L1"),
+      defineCapability("win.scheduled_task.delete", "计划任务删除", "Scheduled Task Deletion", "L1"),
+    ],
   },
   {
-    id: "win.registry.create",
-    name: "注册表创建",
-    description: "在 HKCU 专用命名空间创建 Key/Value。",
-    category: "注册表",
-    risk: "L1",
-    programs: "Controller · Actor",
+    id: "service-activity",
+    nameZh: "服务活动",
+    nameEn: "Service Activity",
+    capabilities: [
+      defineCapability("win.service.create", "服务创建", "Service Creation", "L1"),
+      defineCapability("win.service.modify", "服务修改", "Service Modification", "L1"),
+      defineCapability("win.service.delete", "服务删除", "Service Deletion", "L1"),
+    ],
   },
   {
-    id: "win.registry.modify",
-    name: "注册表修改",
-    description: "修改测试 Value 并保存前后值。",
-    category: "注册表",
-    risk: "L1",
-    programs: "Controller · Actor",
+    id: "driver-module-activity",
+    nameZh: "驱动/模块活动",
+    nameEn: "Driver/Module Activity",
+    capabilities: [
+      defineCapability("win.driver.load", "驱动加载", "Driver Loaded", "L1"),
+      defineCapability("win.driver.modify", "驱动修改", "Driver Modification", "L1"),
+      defineCapability("win.driver.unload", "驱动卸载", "Driver Unloaded", "L1"),
+    ],
   },
   {
-    id: "win.registry.delete",
-    name: "注册表删除",
-    description: "删除测试 Key 并确认无残留。",
-    category: "注册表",
-    risk: "L1",
-    programs: "Controller · Actor",
+    id: "device-operations",
+    nameZh: "设备操作",
+    nameEn: "Device Operations",
+    capabilities: [
+      defineCapability("win.device.virtual_disk.mount", "虚拟磁盘挂载", "Virtual Disk Mount", "L1", "Controller · Actor · Helper"),
+      defineCapability("win.device.usb.unmount", "USB 设备卸载", "USB Device Unmount", "L1", "Controller · Actor · Helper"),
+      defineCapability("win.device.usb.mount", "USB 设备挂载", "USB Device Mount", "L1", "Controller · Actor · Helper"),
+    ],
   },
   {
-    id: "win.network.dns",
-    name: "DNS 查询",
-    description: "解析内部测试域名并记录查询信息。",
-    category: "网络",
-    risk: "L0",
-    programs: "Controller · Actor",
+    id: "other-relevant-events",
+    nameZh: "其他相关事件",
+    nameEn: "Other Relevant Events",
+    capabilities: [
+      defineCapability("win.group_policy.modify", "组策略修改", "Group Policy Modification", "L1"),
+    ],
   },
   {
-    id: "win.network.tcp",
-    name: "TCP 连接",
-    description: "连接回环测试服务并记录四元组。",
-    category: "网络",
-    risk: "L0",
-    programs: "Controller · Actor · Helper",
+    id: "named-pipe-activity",
+    nameZh: "命名管道活动",
+    nameEn: "Named Pipe Activity",
+    capabilities: [
+      defineCapability("win.named_pipe.create", "管道创建", "Pipe Creation", "L0", "Controller · Actor · Helper"),
+      defineCapability("win.named_pipe.connect", "管道连接", "Pipe Connection", "L0", "Controller · Actor · Helper"),
+    ],
   },
   {
-    id: "win.network.http",
-    name: "HTTP 请求",
-    description: "向本地服务发送带 nonce 的请求。",
-    category: "网络",
-    risk: "L0",
-    programs: "Controller · Actor · Helper",
+    id: "edr-sysops",
+    nameZh: "EDR 系统运维活动",
+    nameEn: "EDR SysOps",
+    capabilities: [
+      defineCapability("edr.agent.start", "Agent 启动", "Agent Start", "L1"),
+      defineCapability("edr.agent.stop", "Agent 停止", "Agent Stop", "L1"),
+      defineCapability("edr.agent.install", "Agent 安装", "Agent Install", "L1"),
+      defineCapability("edr.agent.uninstall", "Agent 卸载", "Agent Uninstall", "L1"),
+      defineCapability("edr.agent.keep_alive", "Agent 心跳保活", "Agent Keep-Alive"),
+      defineCapability("edr.agent.error", "Agent 异常错误", "Agent Errors"),
+    ],
+  },
+  {
+    id: "wmi-activity",
+    nameZh: "WMI 活动",
+    nameEn: "WMI Activity",
+    capabilities: [
+      defineCapability("win.wmi.consumer_filter.bind", "WMI 事件消费者与过滤器绑定", "WmiEventConsumerToFilter", "L1"),
+      defineCapability("win.wmi.consumer", "WMI 事件消费者", "WmiEventConsumer", "L1"),
+      defineCapability("win.wmi.filter", "WMI 事件过滤器", "WmiEventFilter", "L1"),
+    ],
+  },
+  {
+    id: "bits-jobs-activity",
+    nameZh: "BITS 后台传输任务活动",
+    nameEn: "BIT JOBS Activity",
+    capabilities: [
+      defineCapability("win.bits.job", "BITS 任务活动", "BIT JOBS Activity", "L1", "Controller · Actor · Helper"),
+    ],
+  },
+  {
+    id: "powershell-activity",
+    nameZh: "PowerShell 活动",
+    nameEn: "PowerShell Activity",
+    capabilities: [
+      defineCapability("win.powershell.script_block", "脚本块活动", "Script-Block Activity", "L0", "Controller · Actor · Target"),
+    ],
   },
 ];
 
-const categoryOrder: CapabilityCategory[] = ["进程", "文件", "注册表", "网络"];
+const capabilities: Capability[] = capabilityCatalog.flatMap((category) =>
+  category.capabilities.map((capability) => ({
+    ...capability,
+    categoryId: category.id,
+  })),
+);
 
 const initialUploads: UploadState = {
   name: "尚未选择文件",
@@ -549,7 +633,7 @@ export function ControlPlane() {
         const capabilityId = asString(capabilityRun.capability_id) ?? "unknown";
         const localStatus = asString(capabilityRun.status);
         const capabilityName =
-          capabilities.find((item) => item.id === capabilityId)?.name ?? capabilityId;
+          capabilities.find((item) => item.id === capabilityId)?.nameZh ?? capabilityId;
 
         if (localStatus !== "LOCAL_PASS") {
           return {
@@ -665,13 +749,14 @@ export function ControlPlane() {
             </div>
 
             <div className="capability-groups">
-              {categoryOrder.map((category) => (
-                <fieldset className="capability-group" key={category}>
-                  <legend>{category}</legend>
+              {capabilityCatalog.map((category) => (
+                <fieldset className="capability-group" key={category.id}>
+                  <legend>
+                    <span className="category-name-zh">{category.nameZh}</span>
+                    <span className="category-name-en" lang="en">{category.nameEn}</span>
+                  </legend>
                   <div className="capability-list">
-                    {capabilities
-                      .filter((capability) => capability.category === category)
-                      .map((capability) => {
+                    {category.capabilities.map((capability) => {
                         const selected = selectedIds.includes(capability.id);
                         return (
                           <label className={`capability-item ${selected ? "selected" : ""}`} key={capability.id}>
@@ -683,10 +768,13 @@ export function ControlPlane() {
                             <span className="checkbox-ui" aria-hidden="true" />
                             <span className="capability-copy">
                               <span className="capability-title-row">
-                                <strong>{capability.name}</strong>
+                                <strong>
+                                  <span className="capability-name-zh">{capability.nameZh}</span>
+                                  <span className="capability-name-en" lang="en">{capability.nameEn}</span>
+                                </strong>
                                 <span className={`risk-badge ${capability.risk.toLowerCase()}`}>{capability.risk}</span>
                               </span>
-                              <span className="capability-description">{capability.description}</span>
+                              <span className="capability-description">{capability.id}</span>
                               <span className="program-line">{capability.programs}</span>
                             </span>
                           </label>

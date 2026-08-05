@@ -39,7 +39,43 @@ test("服务端渲染中文 EDR 控制面核心内容", async () => {
   assert.match(html, /EDR 云端事件/);
   assert.match(html, /开始比较/);
   assert.match(html, /进程创建/);
+  assert.match(html, /Process Creation/);
+  assert.match(html, /BITS 后台传输任务活动/);
+  assert.match(html, /PowerShell Activity/);
   assert.doesNotMatch(html, /Your site is taking shape|Starter Project|codex-preview/i);
+});
+
+test("能力目录包含 16 个中英活动域和 53 项唯一能力", async () => {
+  const page = await readFile(new URL("../app/control-plane.tsx", import.meta.url), "utf8");
+  const catalog = page.match(/const capabilityCatalog:[\s\S]+?const capabilities:/)?.[0] ?? "";
+  const capabilityIds = [...catalog.matchAll(/defineCapability\("([^"]+)"/g)].map(
+    (match) => match[1],
+  );
+  const categoryNames = [
+    "Process Activity",
+    "File Manipulation",
+    "User Account Activity",
+    "Network Activity",
+    "Hash Algorithms",
+    "Registry Activity",
+    "Schedule Task Activity",
+    "Service Activity",
+    "Driver/Module Activity",
+    "Device Operations",
+    "Other Relevant Events",
+    "Named Pipe Activity",
+    "EDR SysOps",
+    "WMI Activity",
+    "BIT JOBS Activity",
+    "PowerShell Activity",
+  ];
+
+  assert.equal(capabilityIds.length, 53);
+  assert.equal(new Set(capabilityIds).size, 53);
+  categoryNames.forEach((name) => assert.match(catalog, new RegExp(name.replace("/", "\\/"))));
+  assert.match(catalog, /"进程篡改活动", "Process Tampering Activity"/);
+  assert.match(catalog, /"WMI 事件消费者与过滤器绑定", "WmiEventConsumerToFilter"/);
+  assert.match(catalog, /"脚本块活动", "Script-Block Activity"/);
 });
 
 test("模板预览和无关持久化代码已移除", async () => {

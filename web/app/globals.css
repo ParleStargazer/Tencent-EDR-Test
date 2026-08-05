@@ -421,10 +421,28 @@ h2 {
 
 .capability-group legend {
   padding: 0 8px 0 0;
-  color: var(--muted);
-  font-size: 11px;
+}
+
+.category-name-zh,
+.category-name-en {
+  display: block;
+}
+
+.category-name-zh {
+  color: var(--text);
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
+}
+
+.category-name-en {
+  margin-top: 2px;
+  color: var(--quiet);
+  font-family: Consolas, monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .capability-list {
@@ -437,7 +455,7 @@ h2 {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 10px;
-  min-height: 76px;
+  min-height: 94px;
   padding: 11px 12px;
   cursor: pointer;
   border: 1px solid var(--line);
@@ -491,7 +509,7 @@ h2 {
 .capability-title-row,
 .file-title-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
 }
@@ -500,6 +518,25 @@ h2 {
 .file-title-row strong {
   font-size: 13px;
   font-weight: 650;
+}
+
+.capability-title-row strong {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.capability-name-zh,
+.capability-name-en {
+  display: block;
+}
+
+.capability-name-en {
+  color: var(--muted);
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.25;
 }
 
 .risk-badge {
@@ -520,9 +557,10 @@ h2 {
 
 .capability-description {
   display: block;
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 11px;
+  margin-top: 7px;
+  color: var(--quiet);
+  font-family: Consolas, monospace;
+  font-size: 9px;
 }
 
 .program-line {
