@@ -20,6 +20,8 @@ pwsh -NoProfile -File ..\scripts\Start-EdrTest.ps1
 
 默认访问：<http://127.0.0.1:3000/>
 
+`http://127.0.0.1:3000/` 与 `http://localhost:3000/` 均受支持。仓库通过 pnpm 版本化补丁修复 Vinext 0.0.50 在 Windows 生产服务器中无法解析 `/assets/` 路径的问题；升级 Vinext 时需重新确认该补丁是否仍有必要。
+
 仅开发前端时可运行 `pnpm dev`，但轮次和比较功能仍要求本地 API 已启动。
 
 ## 验证

@@ -112,7 +112,8 @@ try {
         "--host", "127.0.0.1",
         "--port", $ApiPort,
         "--repo-root", $repositoryRoot,
-        "--allowed-origin", $webUrl
+        "--allowed-origin", $webUrl,
+        "--allowed-origin", "http://localhost:$WebPort"
     )
     $backend = Start-Process -FilePath $dotnet.Source -ArgumentList $backendArguments -WorkingDirectory $repositoryRoot `
         -WindowStyle Hidden -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr -PassThru
