@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 
-type RiskLevel = "L0" | "L1";
+export type RiskLevel = "L0" | "L1" | "L2" | "L3";
 
-type Capability = {
+export type Capability = {
   id: string;
   nameZh: string;
   nameEn: string;
@@ -14,9 +14,9 @@ type Capability = {
   programs: string;
 };
 
-type CapabilityDefinition = Omit<Capability, "categoryId">;
+export type CapabilityDefinition = Omit<Capability, "categoryId">;
 
-type CapabilityCategory = {
+export type CapabilityCategory = {
   id: string;
   nameZh: string;
   nameEn: string;
@@ -72,7 +72,7 @@ function defineCapability(
   return { id, nameZh, nameEn, risk, programs };
 }
 
-const capabilityCatalog: CapabilityCategory[] = [
+export const capabilityCatalog: CapabilityCategory[] = [
   {
     id: "process-activity",
     nameZh: "进程活动",

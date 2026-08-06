@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目已实现可运行的首版 Windows 框架：能力包发现与校验、Controller 串行调度、每轮独立 SQLite、确定性本地 JSON 导出、云端日志映射和 BASELINE 离线比较已经形成闭环。Process Activity 六项真实能力样本均已实现；当前前端控制面尚未直接启动 EXE。
+项目已实现可运行的首版 Windows 框架：能力包发现与校验、Controller 串行调度、每轮独立 SQLite、确定性本地 JSON 导出、云端日志映射和 BASELINE 离线比较已经形成闭环。Process Activity 六项真实能力样本均已实现；中文前端通过本机回环 API 直接编排 Runner、查看轮次并提交离线比较。
 
 - 中文前端控制面：[web/README.md](web/README.md)
 - 详细设计：[docs/DESIGN.md](docs/DESIGN.md)
@@ -17,6 +17,7 @@
 - 本地信息采集设计：[docs/LOCAL-OBSERVATION-DESIGN.md](docs/LOCAL-OBSERVATION-DESIGN.md)
 - 能力样本接入指南：[docs/SAMPLE-INTEGRATION.md](docs/SAMPLE-INTEGRATION.md)
 - Process Activity 六项能力样本：[docs/PROCESS-ACTIVITY-SAMPLES.md](docs/PROCESS-ACTIVITY-SAMPLES.md)
+- 本地前后端与一键启动说明：[docs/LOCAL-CONTROL-PLANE.md](docs/LOCAL-CONTROL-PLANE.md)
 - 能力包清单模板：[examples/capability-package/capability.json](examples/capability-package/capability.json)
 - 进程创建本地 JSON 示例：[examples/local-run.process-create.example.json](examples/local-run.process-create.example.json)
 - 验证结果 Schema：[schemas/validation-result.schema.json](schemas/validation-result.schema.json)
@@ -31,17 +32,21 @@
 
 首期覆盖 Windows 基础遥测：进程、文件、注册表和网络。平台不接入腾讯 EDR API，不保存 EDR 凭据；用户自行导入平台导出的 JSON。平台验证的是“EDR 是否提供对应遥测”，不评价拦截、告警研判、响应处置或 MDR 服务质量。
 
-## 前端控制面
+## 一键启动（推荐）
 
-前端基于 Node.js、React 与 Vinext，提供能力选择、测试轮次规划、本地文件导入以及首个 `ProcessCreate` 离线比较链路。日志在浏览器本地解析，不会上传至服务端。
+准备好 .NET 8 SDK（或更高版本）、PowerShell 7、Node.js 22.13+ 和 pnpm 11.9+ 后，双击仓库根目录的 `启动平台.cmd`。脚本会构建框架与能力包、构建前端、启动本地服务并打开 `http://127.0.0.1:3000/`。
 
 ```powershell
-cd web
-pnpm install
-pnpm dev
+pwsh -NoProfile -File scripts/Start-EdrTest.ps1
+
+# 已有最新构建产物时可快速启动
+pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -SkipBuild
+
+# 停止前后端及其子进程
+pwsh -NoProfile -File scripts/Stop-EdrTest.ps1
 ```
 
-访问 `http://localhost:3000/`。当前运行环境使用 Node.js 22.13 或更高版本。
+前端只连接 `127.0.0.1` 上的 API；云端日志由用户自行从 EDR 平台导出后上传到本机 API，保存在 Git 忽略的 `import/`，比较报告保存在 `reports/`。平台不会连接腾讯 EDR API，也不会保存 EDR 凭据。
 
 ## 命令行框架
 
@@ -50,6 +55,8 @@ dotnet restore EdrTest.sln
 dotnet build EdrTest.sln
 
 dotnet run --project src/EdrTest -- capabilities --root samples
+
+dotnet run --project src/EdrTest -- serve --repo-root .
 
 pwsh -NoProfile -File scripts/Build-ProcessActivitySamples.ps1
 

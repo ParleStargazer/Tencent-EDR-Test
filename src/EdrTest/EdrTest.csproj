@@ -13,6 +13,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="..\..\schemas\run-db.sql" Link="Schemas\run-db.sql" />
   </ItemGroup>
 </Project>

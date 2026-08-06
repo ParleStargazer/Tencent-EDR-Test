@@ -1,5 +1,5 @@
-import { ControlPlane } from "./control-plane";
+import { LiveControlPlane } from "./live-control-plane";
 
 export default function Home() {
-  return <ControlPlane />;
+  return <LiveControlPlane />;
 }

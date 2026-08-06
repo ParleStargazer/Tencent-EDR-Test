@@ -15,12 +15,16 @@ public sealed record CompareRequest(
     IReadOnlyList<string> CloudPaths,
     string MappingPath,
     IReadOnlyList<string> BaselinePaths,
-    string OutputPath);
+    string OutputPath,
+    string? CloudManifestPath = null);
 
 public sealed class MappingProfile
 {
     public required string SchemaVersion { get; init; }
     public required string ProfileId { get; init; }
+    public string? Vendor { get; init; }
+    public string? Product { get; init; }
+    public string? Description { get; init; }
     public required MappingInput Input { get; init; }
     public required List<MappingRoute> Routes { get; init; }
 }
@@ -96,6 +100,8 @@ public sealed class BaselineDefinition
     public required string SchemaVersion { get; init; }
     public required string BaselineId { get; init; }
     public required string Version { get; init; }
+    public string? Title { get; init; }
+    public string? RiskLevel { get; init; }
     public required BaselineCapability Capability { get; init; }
     public List<BaselineAssertion> LocalRequirements { get; init; } = [];
     public required CorrelationDefinition Correlation { get; init; }
@@ -202,6 +208,7 @@ public static class CompareService
             {
                 ["local_export"] = FileReference(localPath),
                 ["cloud_exports"] = new JsonArray(request.CloudPaths.Select(path => (JsonNode)FileReference(Path.GetFullPath(path))).ToArray()),
+                ["cloud_manifest"] = request.CloudManifestPath is null ? null : FileReference(Path.GetFullPath(request.CloudManifestPath)),
                 ["mapping_profiles"] = new JsonArray(new JsonObject
                 {
                     ["id"] = mapping.ProfileId,
@@ -621,6 +628,7 @@ public static class CompareService
         if (!File.Exists(request.LocalExportPath)) throw new FileNotFoundException("找不到本地导出。", request.LocalExportPath);
         if (request.CloudPaths.Count == 0) throw new ArgumentException("至少需要一个云端 JSON。");
         foreach (var path in request.CloudPaths) if (!File.Exists(path)) throw new FileNotFoundException("找不到云端 JSON。", path);
+        if (request.CloudManifestPath is not null && !File.Exists(request.CloudManifestPath)) throw new FileNotFoundException("找不到云端导出清单。", request.CloudManifestPath);
         if (!File.Exists(request.MappingPath)) throw new FileNotFoundException("找不到 Mapping Profile。", request.MappingPath);
         if (request.BaselinePaths.Count == 0) throw new ArgumentException("至少需要一个 BASELINE。");
         foreach (var path in request.BaselinePaths) if (!File.Exists(path)) throw new FileNotFoundException("找不到 BASELINE。", path);
@@ -628,6 +636,7 @@ public static class CompareService
         var inputs = request.CloudPaths
             .Append(request.LocalExportPath)
             .Append(request.MappingPath)
+            .Concat(request.CloudManifestPath is null ? [] : [request.CloudManifestPath])
             .Concat(request.BaselinePaths)
             .Select(Path.GetFullPath);
         if (inputs.Any(path => string.Equals(path, output, StringComparison.OrdinalIgnoreCase)))

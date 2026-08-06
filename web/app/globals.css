@@ -189,6 +189,7 @@ label:has(input:focus-visible) {
 .status-dot.green { background: #2d8b68; }
 .status-dot.amber { background: #c78b36; }
 .status-dot.blue { background: #3a7990; }
+.status-dot.red { background: var(--danger); }
 
 .main-content {
   width: calc(100% - 228px);
@@ -337,6 +338,30 @@ h2 {
   text-decoration: underline;
 }
 
+.danger-button,
+.sidebar-button {
+  cursor: pointer;
+  border: 1px solid #c88c85;
+  border-radius: var(--radius);
+  background: #fff7f5;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.danger-button {
+  min-height: 38px;
+  padding: 9px 14px;
+}
+
+.sidebar-button {
+  width: 100%;
+  margin-top: 12px;
+  padding: 7px 10px;
+  border-color: var(--sidebar-line);
+  background: transparent;
+  color: #cfe6dd;
+}
+
 .metric-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -472,6 +497,16 @@ h2 {
   background: var(--accent-soft);
 }
 
+.capability-item.unavailable {
+  cursor: not-allowed;
+  opacity: 0.52;
+  background: #f4f6f5;
+}
+
+.capability-item.unavailable:hover {
+  border-color: var(--line);
+}
+
 .capability-item input {
   position: absolute;
   opacity: 0;
@@ -555,6 +590,12 @@ h2 {
   color: var(--warning);
 }
 
+.risk-badge.l2,
+.risk-badge.l3 {
+  border-color: #ddbbb6;
+  color: var(--danger);
+}
+
 .capability-description {
   display: block;
   margin-top: 7px;
@@ -629,6 +670,21 @@ h2 {
   font-weight: 600;
 }
 
+.risk-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid #ddbbb6;
+  background: #fff7f5;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.risk-confirm input {
+  margin-top: 2px;
+}
+
 .run-status {
   margin: 0 20px 20px;
   padding: 16px;
@@ -689,6 +745,18 @@ h2 {
   white-space: nowrap;
 }
 
+.run-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.api-error {
+  margin: 12px 0 0;
+  color: var(--danger);
+  font-size: 11px;
+}
+
 .empty-state {
   display: grid;
   min-height: 154px;
@@ -724,6 +792,11 @@ h2 {
 
 .compare-heading {
   align-items: center;
+}
+
+.mapping-field {
+  max-width: 540px;
+  padding: 16px 20px;
 }
 
 .upload-grid {

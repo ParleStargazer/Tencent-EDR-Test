@@ -34,6 +34,7 @@ test("服务端渲染中文 EDR 控制面核心内容", async () => {
   assert.match(html, /验证工作台/);
   assert.match(html, /选择本轮能力/);
   assert.match(html, /启动本轮测试/);
+  assert.match(html, /启动真实 Runner/);
   assert.match(html, /导入结果并验证/);
   assert.match(html, /本地运行 JSON/);
   assert.match(html, /EDR 云端事件/);
@@ -78,16 +79,22 @@ test("能力目录包含 16 个中英活动域和 53 项唯一能力", async () 
   assert.match(catalog, /"脚本块活动", "Script-Block Activity"/);
 });
 
-test("模板预览和无关持久化代码已移除", async () => {
+test("模板预览已移除且页面接入本地 Runner API", async () => {
   const packageJson = await readFile(new URL("../package.json", import.meta.url), "utf8");
   const hosting = await readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8");
   const page = await readFile(new URL("../app/control-plane.tsx", import.meta.url), "utf8");
+  const livePage = await readFile(new URL("../app/live-control-plane.tsx", import.meta.url), "utf8");
+  const route = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 
   assert.doesNotMatch(packageJson, /react-loading-skeleton|drizzle-orm|tailwindcss/);
   assert.match(hosting, /"d1": null/);
   assert.match(hosting, /"r2": null/);
-  assert.match(page, /文件内容未上传/);
   assert.match(page, /win\.process\.create/);
+  assert.match(route, /LiveControlPlane/);
+  assert.match(livePage, /127\.0\.0\.1:4317\/api/);
+  assert.match(livePage, /apiRequest<ApiRun>\("\/runs"/);
+  assert.match(livePage, /apiRequest<ValidationResult>\("\/compare"/);
+  assert.doesNotMatch(livePage, /当前为控制面阶段|真实 EXE 调度将在/);
 
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
   await assert.rejects(access(new URL("../db", import.meta.url)));

@@ -23,6 +23,7 @@ public static class Program
                 "export" => Export(options),
                 "compare" => Compare(options),
                 "inspect" => Inspect(options),
+                "serve" => await Serve(options),
                 "version" => Version(),
                 _ => throw new ArgumentException($"未知命令：{args[0]}")
             };
@@ -103,7 +104,8 @@ public static class Program
             options.GetMany("cloud"),
             options.Require("mapping"),
             baselines,
-            options.Require("out"));
+            options.Require("out"),
+            options.Get("cloud-manifest"));
         var result = CompareService.Compare(request);
         var summary = result["summary"]!.AsObject();
         Console.WriteLine($"比较完成：PASS={summary["pass"]} PARTIAL={summary["partial"]} FAIL={summary["fail"]} INCONCLUSIVE={summary["inconclusive"]}");
@@ -122,6 +124,27 @@ public static class Program
         Console.WriteLine(EdrTestVersion.Current);
         return 0;
     }
+
+    private static Task<int> Serve(CliOptions options)
+    {
+        var port = ParsePort(options.Get("port") ?? "4317");
+        var repositoryRoot = Path.GetFullPath(options.Get("repo-root") ?? Environment.CurrentDirectory);
+        var allowedOrigins = options.GetMany("allowed-origin");
+        return LocalApiService.RunAsync(new LocalApiOptions(
+            options.Get("host") ?? "127.0.0.1",
+            port,
+            repositoryRoot,
+            Path.GetFullPath(options.Get("samples-root") ?? Path.Combine(repositoryRoot, "samples")),
+            Path.GetFullPath(options.Get("runs-dir") ?? Path.Combine(repositoryRoot, "runs")),
+            Path.GetFullPath(options.Get("import-dir") ?? Path.Combine(repositoryRoot, "import")),
+            Path.GetFullPath(options.Get("reports-dir") ?? Path.Combine(repositoryRoot, "reports")),
+            allowedOrigins.Count == 0 ? ["http://127.0.0.1:3000", "http://localhost:3000"] : allowedOrigins,
+            options.Get("token")));
+    }
+
+    private static int ParsePort(string value) => int.TryParse(value, out var port) && port is >= 1024 and <= 65535
+        ? port
+        : throw new ArgumentException("--port 必须在 1024..65535 内。");
 
     private static string? ReadInlineOrFile(string? value)
     {
@@ -142,8 +165,11 @@ public static class Program
               export --db <run.db> --out <local-run.json>
               compare --local <local-run.json> --cloud <cloud.json> [--cloud <...>]
                   --mapping <mapping.yaml> --baseline <baseline.yaml> [--baseline <...>]
-                  --out <validation-result.json>
+                  [--cloud-manifest <manifest.json>] --out <validation-result.json>
               inspect --db <run.db>
+              serve [--host 127.0.0.1] [--port 4317] [--repo-root <path>]
+                  [--samples-root samples] [--runs-dir runs]
+                  [--allowed-origin http://localhost:3000] [--token <local-token>]
               version
 
             samples/、runs/ 和云端导出均为本地文件，不纳入版本控制。

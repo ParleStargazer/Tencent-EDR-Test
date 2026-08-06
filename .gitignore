@@ -39,6 +39,7 @@ TestResults/
 /reports/
 /runs/
 /import/
+/.edr-test/
 *.db
 *.db-shm
 *.db-wal
