@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.process.remote_thread",
+  "version": "0.1.0",
+  "display_name_zh": "远程线程创建",
+  "display_name_en": "Remote Thread Creation",
+  "description": "Actor 仅对本轮受控 Target 分配参数缓冲区并创建执行 LoadLibraryW 的远程线程。",
+  "platform": {
+    "os": "windows",
+    "minimum_version": "10.0.19041",
+    "architectures": ["x64"]
+  },
+  "risk_level": "L2",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "RemoteThread.Controller.exe" },
+  "participants": [
+    { "role": "actor", "executable": "RemoteThread.Actor.exe" },
+    { "role": "target", "executable": "RemoteThread.Target.exe" }
+  ],
+  "parameters": {
+    "library_name": {
+      "type": "string",
+      "required": true,
+      "default": "winhttp.dll",
+      "allowed_values": ["winhttp.dll", "dbghelp.dll", "version.dll"]
+    }
+  },
+  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "process.remote_thread_create_succeeded",
+    "process.target_pid",
+    "process.thread_id",
+    "process.image_path",
+    "correlation.nonce"
+  ]
+}

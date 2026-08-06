@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>ProcessActivity.Behavior</AssemblyName>
+    <RootNamespace>ProcessActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ProcessActivity.Protocol\ProcessActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

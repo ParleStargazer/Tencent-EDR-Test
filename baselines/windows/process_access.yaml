@@ -1,0 +1,69 @@
+schema_version: "1.1"
+baseline_id: win.process.access
+version: "0.1.0"
+title: Windows 进程访问遥测
+description: 验证 Actor 打开受控 Target 进程句柄时，云端存在正确源进程与目标进程信息。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L0
+capability:
+  id: win.process.access
+  version: "0.1.0"
+  parameters:
+    requested_access_mask: 4096
+local_requirements:
+  - field: facts.process.access_succeeded
+    operator: equals
+    expected: true
+  - field: programs.actor.command_line
+    operator: contains
+    expected: "${nonce}"
+  - field: programs.target.command_line
+    operator: contains
+    expected: "${nonce}"
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  anchors:
+    - local_field: programs.target.executable
+      cloud_field: process.executable
+      strength: strong
+      normalizers: [windows_path]
+    - local_field: programs.actor.executable
+      cloud_field: source_process.executable
+      strength: strong
+      normalizers: [windows_path]
+    - local_field: programs.target.pid
+      cloud_field: process.pid
+      strength: medium
+cloud_expectations:
+  - id: process-access-event
+    event_type: process
+    event_actions: [access]
+    cardinality: { min: 1, max: 5 }
+    assertions:
+      - field: process.pid
+        operator: equals
+        expected_from_local: programs.target.pid
+        severity: required
+      - field: process.executable
+        operator: equals
+        expected_from_local: programs.target.executable
+        severity: required
+        normalizers: [windows_path]
+      - field: source_process.pid
+        operator: equals
+        expected_from_local: programs.actor.pid
+        severity: required
+      - field: source_process.executable
+        operator: equals
+        expected_from_local: programs.actor.executable
+        severity: required
+        normalizers: [windows_path]
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: draft
+  references: [EDR-Telemetry / Windows / Process Activity / Process Access]

@@ -189,13 +189,14 @@
         "tamper": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["technique", "target_address", "size_bytes", "before_sha256", "after_sha256"],
+          "required": ["technique", "target_address", "size_bytes", "before_sha256", "after_sha256", "memory_released"],
           "properties": {
             "technique": { "type": "string", "minLength": 1 },
             "target_address": { "$ref": "#/$defs/hex_address" },
             "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
             "before_sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
-            "after_sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" }
+            "after_sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
+            "memory_released": { "type": "boolean" }
           }
         }
       },

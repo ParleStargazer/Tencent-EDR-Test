@@ -1,0 +1,63 @@
+schema_version: "1.1"
+baseline_id: win.process.image_load
+version: "0.1.0"
+title: Windows 镜像或动态库加载遥测
+description: 验证受控 Target 动态加载指定系统 DLL 后，云端存在目标进程和镜像路径。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L0
+capability:
+  id: win.process.image_load
+  version: "0.1.0"
+  parameters:
+    library_name: winhttp.dll
+local_requirements:
+  - field: facts.process.image_load_succeeded
+    operator: equals
+    expected: true
+  - field: facts.process.image_path
+    operator: present
+  - field: facts.process.image_sha256
+    operator: present
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  anchors:
+    - local_field: programs.target.executable
+      cloud_field: process.executable
+      strength: strong
+      normalizers: [windows_path]
+    - local_field: facts.process.image_path
+      cloud_field: file.path
+      strength: strong
+      normalizers: [windows_path]
+    - local_field: programs.target.pid
+      cloud_field: process.pid
+      strength: medium
+cloud_expectations:
+  - id: image-load-event
+    event_type: process
+    event_actions: [image_load]
+    cardinality: { min: 1, max: 3 }
+    assertions:
+      - field: process.pid
+        operator: equals
+        expected_from_local: programs.target.pid
+        severity: required
+      - field: process.executable
+        operator: equals
+        expected_from_local: programs.target.executable
+        severity: required
+        normalizers: [windows_path]
+      - field: file.path
+        operator: equals
+        expected_from_local: facts.process.image_path
+        severity: required
+        normalizers: [windows_path]
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: draft
+  references: [EDR-Telemetry / Windows / Process Activity / Image Library Loaded]

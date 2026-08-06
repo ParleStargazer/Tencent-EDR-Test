@@ -106,8 +106,8 @@
         "on_zero": {}
       },
       "oneOf": [
-        { "required": ["source"] },
-        { "required": ["constant"] }
+        { "properties": { "source": true }, "required": ["source"] },
+        { "properties": { "constant": true }, "required": ["constant"] }
       ]
     }
   }

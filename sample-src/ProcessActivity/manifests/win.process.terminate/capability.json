@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.process.terminate",
+  "version": "0.1.0",
+  "display_name_zh": "进程终止",
+  "display_name_en": "Process Termination",
+  "description": "Controller 创建受控 Target，Actor 使用 TerminateProcess 终止它并核验退出码。",
+  "platform": {
+    "os": "windows",
+    "minimum_version": "10.0.19041",
+    "architectures": ["x64"]
+  },
+  "risk_level": "L1",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "ProcessTerminate.Controller.exe" },
+  "participants": [
+    { "role": "actor", "executable": "ProcessTerminate.Actor.exe" },
+    { "role": "target", "executable": "ProcessTerminate.Target.exe" }
+  ],
+  "parameters": {
+    "requested_exit_code": {
+      "type": "integer",
+      "required": true,
+      "default": 197,
+      "minimum": 0,
+      "maximum": 255
+    }
+  },
+  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "process.terminate_succeeded",
+    "process.target_pid",
+    "process.exit_code",
+    "correlation.nonce"
+  ]
+}

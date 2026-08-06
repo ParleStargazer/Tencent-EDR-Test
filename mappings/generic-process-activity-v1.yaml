@@ -1,0 +1,86 @@
+schema_version: "1.0"
+profile_id: generic-process-activity-v1
+vendor: Generic
+product: Process Activity Self-Test Fixture
+description: 用于验证六类 Process Activity BASELINE 与比较器的扁平 JSON 适配；不是任何 EDR 厂商的生产映射。
+
+input:
+  containers:
+    - json-array
+    - jsonl
+  encoding: utf-8
+  record_selector:
+    all:
+      table: ProcessActivity
+  event_id_field: event_id
+  host_id_field: host_id
+  event_time:
+    field: event_time
+    format: iso8601
+
+routes:
+  - route_id: process-activity
+    when:
+      table: ProcessActivity
+    canonical:
+      "event.type":
+        constant: process
+      "event.action":
+        source: action
+      "event.category":
+        constant: process
+      "event.id":
+        source: event_id
+      "event.created":
+        source: event_time
+        transform:
+          - parse_datetime_to_utc
+      "host.id":
+        source: host_id
+      "process.pid":
+        source: target_pid
+      "process.entity_id":
+        source: target_entity_id
+      "process.executable":
+        source: target_executable
+        transform:
+          - windows_path
+      "process.command_line":
+        source: target_command_line
+      "process.exit_code":
+        source: exit_code
+        on_zero: 0
+      "source_process.pid":
+        source: actor_pid
+      "source_process.executable":
+        source: actor_executable
+        transform:
+          - windows_path
+      "source_process.command_line":
+        source: actor_command_line
+      "parent_process.pid":
+        source: actor_pid
+      "parent_process.entity_id":
+        source: actor_entity_id
+      "parent_process.executable":
+        source: actor_executable
+        transform:
+          - windows_path
+      "parent_process.command_line":
+        source: actor_command_line
+      "file.path":
+        source: file_path
+        transform:
+          - windows_path
+        on_empty: null
+      "thread.id":
+        source: thread_id
+        on_zero: null
+
+raw_reference:
+  id_field: event_id
+  ordinal_base: 0
+
+unmapped_fields:
+  policy: count-and-ignore
+  preserve_in_report: false

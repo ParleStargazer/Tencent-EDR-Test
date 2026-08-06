@@ -590,7 +590,7 @@ BASELINE 不包含腾讯字段名；腾讯字段只出现在 Mapping Profile 中
    └─ e2e/
 ```
 
-本地 `reference/`、`samples/`、`EDR-Telemetry-main/` 和 `runs/` 均不追踪。能力包在 `samples/` 工作区开发或由独立制品库分发，正式源码归属和发布流程在实现阶段单独确定。
+本地 `reference/`、`samples/`、`EDR-Telemetry-main/` 和 `runs/` 均不追踪。可审计的官方能力样本源码与清单模板归档在 `sample-src/`，构建脚本将带 EXE SHA-256 的可运行能力包生成到本地 `samples/`；第三方或敏感样本仍可由独立制品库分发。
 
 ## 19. 测试策略
 

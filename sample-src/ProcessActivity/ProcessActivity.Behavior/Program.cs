@@ -1,0 +1,426 @@
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace ProcessActivity;
+
+internal static class Program
+{
+    private const int BehaviorError = 20;
+
+    public static int Main(string[] args)
+    {
+        try
+        {
+            var options = ArgumentReader.Parse(args);
+            return options.Require("role") switch
+            {
+                "actor" => RunActor(options),
+                "target" => RunTarget(options),
+                var role => throw new ArgumentException($"未知行为角色：{role}"),
+            };
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception);
+            return BehaviorError;
+        }
+    }
+
+    private static int RunActor(ArgumentReader options)
+    {
+        var operation = options.Require("operation");
+        var resultPath = Path.GetFullPath(options.Require("result"));
+        BehaviorResult result;
+        try
+        {
+            result = operation switch
+            {
+                "create" => CreateProcess(options),
+                "terminate" => TerminateProcess(options),
+                "access" => AccessProcess(options),
+                "image_load" => TriggerImageLoad(options),
+                "remote_thread_create" => CreateRemoteThread(options),
+                "tamper" => TamperProcess(options),
+                _ => throw new ArgumentException($"未知进程行为：{operation}"),
+            };
+        }
+        catch (Exception exception)
+        {
+            result = Failure(operation, exception);
+        }
+
+        ProtocolJson.WriteAtomic(resultPath, result);
+        Thread.Sleep(options.GetInt("hold-ms", 750, 0, 10_000));
+        return result.Succeeded ? 0 : BehaviorError;
+    }
+
+    private static int RunTarget(ArgumentReader options)
+    {
+        var operation = options.Require("operation");
+        var readyPath = Path.GetFullPath(options.Require("ready"));
+        ProtocolJson.WriteAtomic(readyPath, CaptureCurrentSnapshot());
+        if (operation == "idle")
+        {
+            Thread.Sleep(options.GetInt("lifetime-ms", 15_000, 100, 120_000));
+            return 0;
+        }
+
+        if (operation != "image_load") throw new ArgumentException($"未知 Target 行为：{operation}");
+        var goPath = Path.GetFullPath(options.Require("go"));
+        var resultPath = Path.GetFullPath(options.Require("result"));
+        WaitForFile(goPath, options.GetInt("wait-ms", 15_000, 100, 120_000));
+        var library = ResolveSystemLibrary(options.Get("library", "winhttp.dll"));
+        var moduleName = Path.GetFileName(library);
+        var before = NativeMethods.GetModuleHandleW(moduleName) != IntPtr.Zero;
+        var occurred = DateTimeOffset.UtcNow;
+        var module = NativeMethods.LoadLibraryW(library);
+        var error = module == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
+        var after = NativeMethods.GetModuleHandleW(moduleName) != IntPtr.Zero;
+        var loadedPath = module == IntPtr.Zero ? library : GetModulePath(module);
+        var result = new BehaviorResult
+        {
+            Operation = operation,
+            Succeeded = module != IntPtr.Zero && !before && after,
+            Win32Error = error,
+            Error = module == IntPtr.Zero
+                ? new Win32Exception(error).Message
+                : before ? $"目标模块在触发加载前已经存在：{moduleName}" : null,
+            OccurredAtUtc = occurred,
+            Target = CaptureCurrentSnapshot(),
+            ImagePath = loadedPath,
+            ImageBaseAddress = module == IntPtr.Zero ? null : Hex(module),
+            ImageSizeBytes = File.Exists(loadedPath) ? new FileInfo(loadedPath).Length : null,
+            ImageSha256 = File.Exists(loadedPath) ? FileSha256(loadedPath) : null,
+            BeforeLoaded = before,
+            AfterLoaded = after,
+        };
+        ProtocolJson.WriteAtomic(resultPath, result);
+        Thread.Sleep(options.GetInt("hold-ms", 2_000, 0, 30_000));
+        return result.Succeeded ? 0 : BehaviorError;
+    }
+
+    private static BehaviorResult CreateProcess(ArgumentReader options)
+    {
+        var target = Path.GetFullPath(options.Require("target"));
+        var ready = Path.GetFullPath(options.Require("target-ready"));
+        var lifetime = options.GetInt("target-lifetime-ms", 5_000, 500, 120_000);
+        var nonce = options.Require("nonce");
+        var targetArguments = new[]
+        {
+            "--role", "target", "--operation", "idle", "--ready", ready,
+            "--lifetime-ms", lifetime.ToString(), "--nonce", nonce,
+        };
+        using var process = Start(target, targetArguments);
+        WaitForFile(ready, Math.Min(lifetime, 10_000));
+        var snapshot = ProtocolJson.Read<ProcessSnapshot>(ready);
+        var threadId = TryGetInitialThreadId(process);
+        return new BehaviorResult
+        {
+            Operation = "create",
+            Succeeded = !process.HasExited && snapshot.Pid == process.Id,
+            Win32Error = 0,
+            OccurredAtUtc = snapshot.StartedAtUtc,
+            Target = snapshot,
+            InitialThreadId = threadId,
+        };
+    }
+
+    private static BehaviorResult TerminateProcess(ArgumentReader options)
+    {
+        var pid = options.GetInt("target-pid", 0, 1, int.MaxValue);
+        var exitCode = options.GetInt("exit-code", 197, 0, 255);
+        using var handle = NativeMethods.OpenProcess(
+            NativeMethods.ProcessTerminate | NativeMethods.Synchronize | NativeMethods.ProcessQueryLimitedInformation,
+            false,
+            pid);
+        if (handle.IsInvalid) throw LastWin32("OpenProcess(PROCESS_TERMINATE)");
+        var occurred = DateTimeOffset.UtcNow;
+        if (!NativeMethods.TerminateProcess(handle, (uint)exitCode)) throw LastWin32("TerminateProcess");
+        if (NativeMethods.WaitForSingleObject(handle.DangerousGetHandle(), 10_000) != NativeMethods.WaitObject0)
+        {
+            throw new TimeoutException("等待 Target 终止超时。");
+        }
+        if (!NativeMethods.GetExitCodeProcess(handle, out var observedExitCode)) throw LastWin32("GetExitCodeProcess");
+        return new BehaviorResult
+        {
+            Operation = "terminate",
+            Succeeded = observedExitCode == (uint)exitCode,
+            Win32Error = 0,
+            OccurredAtUtc = occurred,
+            RequestedExitCode = exitCode,
+            ObservedExitCode = checked((int)observedExitCode),
+            ObservedExitAtUtc = DateTimeOffset.UtcNow,
+        };
+    }
+
+    private static BehaviorResult AccessProcess(ArgumentReader options)
+    {
+        var pid = options.GetInt("target-pid", 0, 1, int.MaxValue);
+        var accessMask = options.GetUInt("access-mask", NativeMethods.ProcessQueryLimitedInformation);
+        var occurred = DateTimeOffset.UtcNow;
+        using var handle = NativeMethods.OpenProcess(accessMask, false, pid);
+        var obtained = !handle.IsInvalid;
+        var error = obtained ? 0 : Marshal.GetLastWin32Error();
+        if (obtained)
+        {
+            var path = new StringBuilder(32_768);
+            var size = (uint)path.Capacity;
+            if (!NativeMethods.QueryFullProcessImageName(handle, 0, path, ref size))
+            {
+                throw LastWin32("QueryFullProcessImageName");
+            }
+        }
+        return new BehaviorResult
+        {
+            Operation = "access",
+            Succeeded = obtained,
+            Win32Error = error,
+            Error = obtained ? null : new Win32Exception(error).Message,
+            OccurredAtUtc = occurred,
+            AccessOperationName = "OpenProcess/QueryFullProcessImageName",
+            RequestedAccessMask = accessMask,
+            GrantedAccessMask = obtained ? accessMask : null,
+            HandleObtained = obtained,
+        };
+    }
+
+    private static BehaviorResult TriggerImageLoad(ArgumentReader options)
+    {
+        var goPath = Path.GetFullPath(options.Require("go"));
+        Directory.CreateDirectory(Path.GetDirectoryName(goPath)!);
+        File.WriteAllText(goPath, options.Require("nonce"));
+        return new BehaviorResult
+        {
+            Operation = "image_load",
+            Succeeded = File.Exists(goPath),
+            Win32Error = 0,
+            OccurredAtUtc = DateTimeOffset.UtcNow,
+        };
+    }
+
+    private static BehaviorResult CreateRemoteThread(ArgumentReader options)
+    {
+        var pid = options.GetInt("target-pid", 0, 1, int.MaxValue);
+        var library = ResolveSystemLibrary(options.Get("library", "winhttp.dll"));
+        var bytes = Encoding.Unicode.GetBytes(library + '\0');
+        const uint access = NativeMethods.ProcessCreateThread | NativeMethods.ProcessQueryInformation |
+            NativeMethods.ProcessVmOperation | NativeMethods.ProcessVmWrite | NativeMethods.ProcessVmRead;
+        using var handle = NativeMethods.OpenProcess(access, false, pid);
+        if (handle.IsInvalid) throw LastWin32("OpenProcess(remote-thread)");
+        var parameter = NativeMethods.VirtualAllocEx(handle, IntPtr.Zero, (nuint)bytes.Length,
+            NativeMethods.MemCommit | NativeMethods.MemReserve, NativeMethods.PageReadWrite);
+        if (parameter == IntPtr.Zero) throw LastWin32("VirtualAllocEx");
+        try
+        {
+            if (!NativeMethods.WriteProcessMemory(handle, parameter, bytes, (nuint)bytes.Length, out var written) || written != (nuint)bytes.Length)
+            {
+                throw LastWin32("WriteProcessMemory(remote-thread parameter)");
+            }
+
+            var startAddress = ResolveRemoteLoadLibrary(pid);
+            var occurred = DateTimeOffset.UtcNow;
+            var thread = NativeMethods.CreateRemoteThread(handle, IntPtr.Zero, 0, startAddress, parameter, 0, out var threadId);
+            if (thread == IntPtr.Zero) throw LastWin32("CreateRemoteThread");
+            try
+            {
+                if (NativeMethods.WaitForSingleObject(thread, 10_000) != NativeMethods.WaitObject0)
+                {
+                    throw new TimeoutException("等待远程线程执行超时。");
+                }
+                if (!NativeMethods.GetExitCodeThread(thread, out var remoteResult)) throw LastWin32("GetExitCodeThread");
+                return new BehaviorResult
+                {
+                    Operation = "remote_thread_create",
+                    Succeeded = remoteResult != 0,
+                    Win32Error = 0,
+                    Error = remoteResult == 0 ? "远程 LoadLibraryW 返回空模块句柄。" : null,
+                    OccurredAtUtc = occurred,
+                    ImagePath = library,
+                    ThreadId = checked((int)threadId),
+                    StartAddress = Hex(startAddress),
+                    ParameterAddress = Hex(parameter),
+                    CreationFlags = 0,
+                };
+            }
+            finally
+            {
+                NativeMethods.CloseHandle(thread);
+            }
+        }
+        finally
+        {
+            NativeMethods.VirtualFreeEx(handle, parameter, 0, NativeMethods.MemRelease);
+        }
+    }
+
+    private static BehaviorResult TamperProcess(ArgumentReader options)
+    {
+        var pid = options.GetInt("target-pid", 0, 1, int.MaxValue);
+        var requestedSize = options.GetInt("payload-size", 64, 16, 4096);
+        var nonce = options.Require("nonce");
+        var seed = Encoding.UTF8.GetBytes("EDRTEST:" + nonce + ":CONTROLLED_MEMORY_WRITE");
+        var payload = Enumerable.Range(0, requestedSize).Select(index => seed[index % seed.Length]).ToArray();
+        const uint access = NativeMethods.ProcessQueryInformation | NativeMethods.ProcessVmOperation |
+            NativeMethods.ProcessVmWrite | NativeMethods.ProcessVmRead;
+        using var handle = NativeMethods.OpenProcess(access, false, pid);
+        if (handle.IsInvalid) throw LastWin32("OpenProcess(tamper)");
+        var address = NativeMethods.VirtualAllocEx(handle, IntPtr.Zero, (nuint)payload.Length,
+            NativeMethods.MemCommit | NativeMethods.MemReserve, NativeMethods.PageReadWrite);
+        if (address == IntPtr.Zero) throw LastWin32("VirtualAllocEx(tamper)");
+        BehaviorResult? result = null;
+        var memoryReleased = false;
+        try
+        {
+            var before = new byte[payload.Length];
+            if (!NativeMethods.ReadProcessMemory(handle, address, before, (nuint)before.Length, out var beforeRead) || beforeRead != (nuint)before.Length)
+            {
+                throw LastWin32("ReadProcessMemory(before)");
+            }
+            var occurred = DateTimeOffset.UtcNow;
+            if (!NativeMethods.WriteProcessMemory(handle, address, payload, (nuint)payload.Length, out var written) || written != (nuint)payload.Length)
+            {
+                throw LastWin32("WriteProcessMemory(tamper)");
+            }
+            var after = new byte[payload.Length];
+            if (!NativeMethods.ReadProcessMemory(handle, address, after, (nuint)after.Length, out var afterRead) || afterRead != (nuint)after.Length)
+            {
+                throw LastWin32("ReadProcessMemory(after)");
+            }
+            var beforeHash = ByteSha256(before);
+            var afterHash = ByteSha256(after);
+            result = new BehaviorResult
+            {
+                Operation = "tamper",
+                Succeeded = payload.SequenceEqual(after) && !string.Equals(beforeHash, afterHash, StringComparison.Ordinal),
+                Win32Error = 0,
+                Error = payload.SequenceEqual(after) ? null : "远程内存回读与写入内容不一致。",
+                OccurredAtUtc = occurred,
+                TamperTechnique = "VirtualAllocEx/WriteProcessMemory controlled buffer",
+                TargetAddress = Hex(address),
+                SizeBytes = payload.Length,
+                BeforeSha256 = beforeHash,
+                AfterSha256 = afterHash,
+            };
+        }
+        finally
+        {
+            memoryReleased = NativeMethods.VirtualFreeEx(handle, address, 0, NativeMethods.MemRelease);
+            if (result is not null) result.MemoryReleased = memoryReleased;
+        }
+        if (!memoryReleased) throw LastWin32("VirtualFreeEx(tamper cleanup)");
+        return result ?? throw new InvalidOperationException("进程篡改行为未产生结果。");
+    }
+
+    private static IntPtr ResolveRemoteLoadLibrary(int pid)
+    {
+        var localKernel = NativeMethods.GetModuleHandleW("kernel32.dll");
+        if (localKernel == IntPtr.Zero) throw LastWin32("GetModuleHandleW(kernel32.dll)");
+        var localLoadLibrary = NativeMethods.GetProcAddress(localKernel, "LoadLibraryW");
+        if (localLoadLibrary == IntPtr.Zero) throw LastWin32("GetProcAddress(LoadLibraryW)");
+        using var target = Process.GetProcessById(pid);
+        var remoteKernel = target.Modules.Cast<ProcessModule>()
+            .FirstOrDefault(module => string.Equals(module.ModuleName, "kernel32.dll", StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException("Target 未列出 kernel32.dll 模块。");
+        var offset = localLoadLibrary.ToInt64() - localKernel.ToInt64();
+        return new IntPtr(remoteKernel.BaseAddress.ToInt64() + offset);
+    }
+
+    private static Process Start(string executable, IEnumerable<string> arguments)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executable,
+            WorkingDirectory = Path.GetDirectoryName(executable)!,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+        return Process.Start(startInfo) ?? throw new InvalidOperationException($"启动程序失败：{executable}");
+    }
+
+    private static ProcessSnapshot CaptureCurrentSnapshot()
+    {
+        using var process = Process.GetCurrentProcess();
+        return new ProcessSnapshot
+        {
+            Pid = Environment.ProcessId,
+            ParentPid = 0,
+            StartedAtUtc = process.StartTime.ToUniversalTime(),
+            Executable = Environment.ProcessPath ?? process.MainModule?.FileName ?? throw new InvalidOperationException("无法取得当前程序路径。"),
+            CommandLine = Environment.CommandLine,
+        };
+    }
+
+    private static int? TryGetInitialThreadId(Process process)
+    {
+        try
+        {
+            return process.Threads.Cast<ProcessThread>().OrderBy(thread => thread.StartTime).FirstOrDefault()?.Id;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static void WaitForFile(string path, int timeoutMs)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (!File.Exists(path))
+        {
+            if (stopwatch.ElapsedMilliseconds >= timeoutMs) throw new TimeoutException($"等待协议文件超时：{path}");
+            Thread.Sleep(25);
+        }
+    }
+
+    private static string ResolveSystemLibrary(string name)
+    {
+        if (Path.IsPathRooted(name)) return Path.GetFullPath(name);
+        if (name.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]) >= 0)
+        {
+            throw new ArgumentException("library 只能是系统 DLL 文件名或绝对路径。");
+        }
+        var path = Path.Combine(Environment.SystemDirectory, name);
+        if (!File.Exists(path)) throw new FileNotFoundException("找不到系统 DLL。", path);
+        return path;
+    }
+
+    private static string GetModulePath(IntPtr module)
+    {
+        var path = new StringBuilder(32_768);
+        var length = NativeMethods.GetModuleFileNameW(module, path, path.Capacity);
+        if (length == 0) throw LastWin32("GetModuleFileNameW");
+        return path.ToString();
+    }
+
+    private static BehaviorResult Failure(string operation, Exception exception)
+    {
+        var win32Error = exception is Win32Exception win32 ? win32.NativeErrorCode : Marshal.GetLastWin32Error();
+        return new BehaviorResult
+        {
+            Operation = operation,
+            Succeeded = false,
+            Win32Error = win32Error == 0 ? null : win32Error,
+            Error = exception.Message,
+            OccurredAtUtc = DateTimeOffset.UtcNow,
+        };
+    }
+
+    private static Win32Exception LastWin32(string operation)
+    {
+        var error = Marshal.GetLastWin32Error();
+        return new Win32Exception(error, $"{operation} 失败：{new Win32Exception(error).Message}");
+    }
+
+    private static string FileSha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+    }
+
+    private static string ByteSha256(byte[] value) => Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
+    private static string Hex(IntPtr value) => $"0x{value.ToInt64():X}";
+}

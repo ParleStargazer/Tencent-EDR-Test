@@ -6,6 +6,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EdrTest", "src\EdrTest\EdrT
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EdrTest.Tests", "tests\EdrTest.Tests\EdrTest.Tests.csproj", "{7E8606D6-B93A-48C4-AD02-29C6DE07318D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProcessActivity.Protocol", "sample-src\ProcessActivity\ProcessActivity.Protocol\ProcessActivity.Protocol.csproj", "{C79D9E5F-CF01-4E3E-B2AB-AC0EC726761E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProcessActivity.Behavior", "sample-src\ProcessActivity\ProcessActivity.Behavior\ProcessActivity.Behavior.csproj", "{F40C850B-1C4E-4D2B-9E19-A41E197B2D58}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProcessActivity.Controller", "sample-src\ProcessActivity\ProcessActivity.Controller\ProcessActivity.Controller.csproj", "{9535AF5A-5275-41F6-820A-4109489AA715}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -20,5 +26,17 @@ Global
 		{7E8606D6-B93A-48C4-AD02-29C6DE07318D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7E8606D6-B93A-48C4-AD02-29C6DE07318D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7E8606D6-B93A-48C4-AD02-29C6DE07318D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C79D9E5F-CF01-4E3E-B2AB-AC0EC726761E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C79D9E5F-CF01-4E3E-B2AB-AC0EC726761E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C79D9E5F-CF01-4E3E-B2AB-AC0EC726761E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C79D9E5F-CF01-4E3E-B2AB-AC0EC726761E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F40C850B-1C4E-4D2B-9E19-A41E197B2D58}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F40C850B-1C4E-4D2B-9E19-A41E197B2D58}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F40C850B-1C4E-4D2B-9E19-A41E197B2D58}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F40C850B-1C4E-4D2B-9E19-A41E197B2D58}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9535AF5A-5275-41F6-820A-4109489AA715}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9535AF5A-5275-41F6-820A-4109489AA715}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9535AF5A-5275-41F6-820A-4109489AA715}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9535AF5A-5275-41F6-820A-4109489AA715}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

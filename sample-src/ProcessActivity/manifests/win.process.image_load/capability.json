@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.process.image_load",
+  "version": "0.1.0",
+  "display_name_zh": "加载镜像或动态库",
+  "display_name_en": "Image/Library Loaded",
+  "description": "Actor 触发受控 Target 动态加载系统 DLL，Controller 对加载后模块列表进行独立枚举。",
+  "platform": {
+    "os": "windows",
+    "minimum_version": "10.0.19041",
+    "architectures": ["x64"]
+  },
+  "risk_level": "L0",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "ImageLoad.Controller.exe" },
+  "participants": [
+    { "role": "actor", "executable": "ImageLoad.Actor.exe" },
+    { "role": "target", "executable": "ImageLoad.Target.exe" }
+  ],
+  "parameters": {
+    "library_name": {
+      "type": "string",
+      "required": true,
+      "default": "winhttp.dll",
+      "allowed_values": ["winhttp.dll", "dbghelp.dll", "version.dll"]
+    },
+    "post_load_hold_ms": {
+      "type": "integer",
+      "required": true,
+      "default": 2000,
+      "minimum": 500,
+      "maximum": 10000
+    }
+  },
+  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "process.image_load_succeeded",
+    "process.target_pid",
+    "process.image_path",
+    "process.image_sha256",
+    "correlation.nonce"
+  ]
+}

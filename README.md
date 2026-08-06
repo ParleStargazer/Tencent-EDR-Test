@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目已实现可运行的首版 Windows 框架：能力包发现与校验、Controller 串行调度、每轮独立 SQLite、确定性本地 JSON 导出、腾讯 `ProcEvents` 映射和 BASELINE 离线比较已经形成最小闭环。真实能力样本仍由后续开发并放入本地 `samples/`；当前前端控制面尚未直接启动 EXE。
+项目已实现可运行的首版 Windows 框架：能力包发现与校验、Controller 串行调度、每轮独立 SQLite、确定性本地 JSON 导出、云端日志映射和 BASELINE 离线比较已经形成闭环。Process Activity 六项真实能力样本均已实现；当前前端控制面尚未直接启动 EXE。
 
 - 中文前端控制面：[web/README.md](web/README.md)
 - 详细设计：[docs/DESIGN.md](docs/DESIGN.md)
@@ -16,6 +16,7 @@
 - 分类事件数据 Schema：[schemas/local-event-data.schema.json](schemas/local-event-data.schema.json)
 - 本地信息采集设计：[docs/LOCAL-OBSERVATION-DESIGN.md](docs/LOCAL-OBSERVATION-DESIGN.md)
 - 能力样本接入指南：[docs/SAMPLE-INTEGRATION.md](docs/SAMPLE-INTEGRATION.md)
+- Process Activity 六项能力样本：[docs/PROCESS-ACTIVITY-SAMPLES.md](docs/PROCESS-ACTIVITY-SAMPLES.md)
 - 能力包清单模板：[examples/capability-package/capability.json](examples/capability-package/capability.json)
 - 进程创建本地 JSON 示例：[examples/local-run.process-create.example.json](examples/local-run.process-create.example.json)
 - 验证结果 Schema：[schemas/validation-result.schema.json](schemas/validation-result.schema.json)
@@ -50,6 +51,10 @@ dotnet build EdrTest.sln
 
 dotnet run --project src/EdrTest -- capabilities --root samples
 
+pwsh -NoProfile -File scripts/Build-ProcessActivitySamples.ps1
+
+pwsh -NoProfile -File scripts/Test-ProcessActivitySamples.ps1
+
 dotnet run --project src/EdrTest -- run `
   --capability win.process.create `
   --samples-root samples `
@@ -73,6 +78,8 @@ configs/       非敏感环境配置模板
 docs/          架构、设计和决策记录
 mappings/      EDR 云端 JSON 到规范化事件的映射
 schemas/       BASELINE 与规范化事件数据契约
+sample-src/    可审计的能力样本源码与清单模板
+scripts/       样本构建和端到端测试脚本
 src/           自动化测试框架源码
 tests/         单元、契约、集成和端到端测试
 web/           中文前端控制面

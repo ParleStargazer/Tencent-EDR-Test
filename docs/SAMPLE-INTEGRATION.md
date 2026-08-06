@@ -2,7 +2,7 @@
 
 ## 1. 接入边界
 
-框架不追踪真实测试样本和编译产物。每个样本包放在本地 `samples/<capability-id>/` 中，由一个 Controller 和一个或多个 Behavior EXE 组成：
+框架不追踪编译后的测试样本包。每个样本包放在本地 `samples/<capability-id>/` 中，由一个 Controller 和一个或多个 Behavior EXE 组成：
 
 ```text
 samples/win.process.create/
@@ -13,7 +13,7 @@ samples/win.process.create/
   *.dll                         # EXE 的运行依赖，可选
 ```
 
-`samples/` 已被 `.gitignore` 排除。仓库中的 `examples/capability-package/capability.json` 是可复制的清单模板，不包含可执行样本。
+`samples/` 已被 `.gitignore` 排除。仓库中的 `examples/capability-package/capability.json` 是可复制的清单模板，不包含可执行样本；官方 Process Activity 样本的可审计源码位于 `sample-src/ProcessActivity/`，构建方式见 [PROCESS-ACTIVITY-SAMPLES.md](PROCESS-ACTIVITY-SAMPLES.md)。
 
 Runner 只启动 Controller。Controller 使用 `EdrTest` 程序集提供的 SDK 打开本轮数据库、启动和观察 Behavior、记录事实并执行清理；Actor、Target、Helper 不直接访问数据库。
 

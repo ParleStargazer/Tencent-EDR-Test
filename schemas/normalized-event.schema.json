@@ -35,6 +35,15 @@
     },
     "process": { "$ref": "#/$defs/process" },
     "parent_process": { "$ref": "#/$defs/process" },
+    "source_process": { "$ref": "#/$defs/process" },
+    "thread": {
+      "type": ["object", "null"],
+      "properties": {
+        "id": { "type": ["integer", "null"], "minimum": 0 },
+        "start_address": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
     "user": {
       "type": ["object", "null"],
       "properties": {

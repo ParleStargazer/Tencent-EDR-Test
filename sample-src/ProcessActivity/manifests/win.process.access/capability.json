@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.process.access",
+  "version": "0.1.0",
+  "display_name_zh": "进程访问",
+  "display_name_en": "Process Access",
+  "description": "Actor 使用可配置访问掩码打开受控 Target，并查询其完整映像路径。",
+  "platform": {
+    "os": "windows",
+    "minimum_version": "10.0.19041",
+    "architectures": ["x64"]
+  },
+  "risk_level": "L0",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "ProcessAccess.Controller.exe" },
+  "participants": [
+    { "role": "actor", "executable": "ProcessAccess.Actor.exe" },
+    { "role": "target", "executable": "ProcessAccess.Target.exe" }
+  ],
+  "parameters": {
+    "requested_access_mask": {
+      "type": "integer",
+      "required": true,
+      "default": 4096,
+      "minimum": 1,
+      "maximum": 4294967295
+    }
+  },
+  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "process.access_succeeded",
+    "process.target_pid",
+    "process.access_mask",
+    "correlation.nonce"
+  ]
+}
