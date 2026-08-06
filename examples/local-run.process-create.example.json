@@ -1,0 +1,352 @@
+{
+  "schema_version": "1.1",
+  "run": {
+    "run_id": "0198a401-7c51-7d84-a41b-5f8c7d1a2b30",
+    "database_schema_version": 2,
+    "tool_version": "0.1.0",
+    "suite_id": "windows-process-smoke",
+    "environment_id": "lab-win11-x64",
+    "status": "COMPLETED",
+    "started_at_utc": "2026-08-06T01:00:00.000Z",
+    "ended_at_utc": "2026-08-06T01:00:08.900Z",
+    "timezone": "Asia/Shanghai",
+    "utc_offset_minutes": 480,
+    "clock": {
+      "time_source": "Windows system clock",
+      "synchronized": true,
+      "monotonic_frequency_hz": 10000000
+    },
+    "host": {
+      "hostname": "EDR-LAB-WIN11-01",
+      "machine_id": "d9dfb6f0-7c33-49f3-a754-8c4abcfce7a1",
+      "os_family": "windows",
+      "os_version": "Windows 11 23H2",
+      "os_build": 22631,
+      "os_edition": "Windows 11 Enterprise",
+      "architecture": "x64",
+      "boot_id": "boot-0198a3f2-0b7a-77b1-9f62-000000000001",
+      "boot_time_utc": "2026-08-05T23:42:10.000Z",
+      "domain": "WORKGROUP",
+      "primary_user_sid": "S-1-5-21-111111111-222222222-333333333-1001",
+      "agent_id_hint": null,
+      "agent_version_hint": null
+    }
+  },
+  "capabilities": [
+    {
+      "case_run_id": "0198a401-80ca-7a37-9760-c8b7c0a0f101",
+      "capability_id": "win.process.create",
+      "display_name_zh": "进程创建",
+      "display_name_en": "Process Creation",
+      "category": "process",
+      "capability_version": "0.1.0",
+      "manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "baseline_id": "win.process.create",
+      "baseline_version": "0.1.0",
+      "sequence": 1,
+      "nonce": "EDRTEST-7A9F2D4C6B8E1A30",
+      "risk_level": "L0",
+      "required_privilege": "standard_user",
+      "status": "LOCAL_PASS",
+      "started_at_utc": "2026-08-06T01:00:01.000Z",
+      "ended_at_utc": "2026-08-06T01:00:07.200Z",
+      "duration_ms": 6200,
+      "parameters": {
+        "target_lifetime_ms": 1500
+      },
+      "preconditions": [
+        {
+          "name": "测试目录可写",
+          "satisfied": true,
+          "detail": "使用本轮专用 work 目录"
+        }
+      ],
+      "observation_window": {
+        "started_at_utc": "2026-08-06T01:00:00.700Z",
+        "ended_at_utc": "2026-08-06T01:00:07.000Z",
+        "sources": [
+          "controller",
+          "actor_createprocess_return",
+          "process_handle_query"
+        ],
+        "dropped_event_count": 0,
+        "warnings": []
+      },
+      "error_code": null,
+      "error_message": null
+    }
+  ],
+  "programs": [
+    {
+      "program_instance_id": "program-controller-00000001",
+      "case_run_id": "0198a401-80ca-7a37-9760-c8b7c0a0f101",
+      "role": "controller",
+      "instance_name": "process-create-controller",
+      "instance_index": 0,
+      "executable": "C:\\EDR-Test\\bin\\ProcessCreate.Controller.exe",
+      "file_name": "ProcessCreate.Controller.exe",
+      "file_size_bytes": 97280,
+      "file_created_at_utc": "2026-08-05T10:00:00.000Z",
+      "file_modified_at_utc": "2026-08-05T10:00:00.000Z",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "sha1": "2222222222222222222222222222222222222222",
+      "md5": "22222222222222222222222222222222",
+      "imphash": "22222222222222222222222222222222",
+      "signature": null,
+      "pid": 4100,
+      "parent_pid": 4000,
+      "session_id": 1,
+      "architecture": "x64",
+      "command_line": "\"C:\\EDR-Test\\bin\\ProcessCreate.Controller.exe\" --run-id 0198a401-7c51-7d84-a41b-5f8c7d1a2b30 --case-run-id 0198a401-80ca-7a37-9760-c8b7c0a0f101 --nonce EDRTEST-7A9F2D4C6B8E1A30",
+      "working_directory": "C:\\EDR-Test\\runs\\0198a401\\work\\win.process.create",
+      "user": {
+        "sid": "S-1-5-21-111111111-222222222-333333333-1001",
+        "name": "lab-user",
+        "domain": "EDR-LAB-WIN11-01"
+      },
+      "integrity_level": "medium",
+      "elevation_type": "limited",
+      "started_at_utc": "2026-08-06T01:00:00.800Z",
+      "ended_at_utc": "2026-08-06T01:00:07.300Z",
+      "exit_code": 0,
+      "startup_result": {
+        "attempted": true,
+        "succeeded": true,
+        "win32_error": null,
+        "message": null
+      }
+    },
+    {
+      "program_instance_id": "program-actor-0000000001",
+      "case_run_id": "0198a401-80ca-7a37-9760-c8b7c0a0f101",
+      "role": "actor",
+      "instance_name": "process-create-actor",
+      "instance_index": 0,
+      "executable": "C:\\EDR-Test\\bin\\ProcessCreate.Actor.exe",
+      "file_name": "ProcessCreate.Actor.exe",
+      "file_size_bytes": 65536,
+      "file_created_at_utc": "2026-08-05T10:00:00.000Z",
+      "file_modified_at_utc": "2026-08-05T10:00:00.000Z",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "sha1": "3333333333333333333333333333333333333333",
+      "md5": "33333333333333333333333333333333",
+      "imphash": "33333333333333333333333333333333",
+      "signature": null,
+      "pid": 4120,
+      "parent_pid": 4100,
+      "session_id": 1,
+      "architecture": "x64",
+      "command_line": "\"C:\\EDR-Test\\bin\\ProcessCreate.Actor.exe\" --nonce EDRTEST-7A9F2D4C6B8E1A30 --target C:\\EDR-Test\\bin\\ProcessCreate.Target.exe",
+      "working_directory": "C:\\EDR-Test\\runs\\0198a401\\work\\win.process.create",
+      "user": {
+        "sid": "S-1-5-21-111111111-222222222-333333333-1001",
+        "name": "lab-user",
+        "domain": "EDR-LAB-WIN11-01"
+      },
+      "integrity_level": "medium",
+      "elevation_type": "limited",
+      "started_at_utc": "2026-08-06T01:00:01.120Z",
+      "ended_at_utc": "2026-08-06T01:00:05.050Z",
+      "exit_code": 0,
+      "startup_result": {
+        "attempted": true,
+        "succeeded": true,
+        "win32_error": null,
+        "message": null
+      }
+    },
+    {
+      "program_instance_id": "program-target-000000001",
+      "case_run_id": "0198a401-80ca-7a37-9760-c8b7c0a0f101",
+      "role": "target",
+      "instance_name": "process-create-target",
+      "instance_index": 0,
+      "executable": "C:\\EDR-Test\\bin\\ProcessCreate.Target.exe",
+      "file_name": "ProcessCreate.Target.exe",
+      "file_size_bytes": 57344,
+      "file_created_at_utc": "2026-08-05T10:00:00.000Z",
+      "file_modified_at_utc": "2026-08-05T10:00:00.000Z",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "sha1": "4444444444444444444444444444444444444444",
+      "md5": "44444444444444444444444444444444",
+      "imphash": "44444444444444444444444444444444",
+      "signature": null,
+      "pid": 4188,
+      "parent_pid": 4120,
+      "session_id": 1,
+      "architecture": "x64",
+      "command_line": "\"C:\\EDR-Test\\bin\\ProcessCreate.Target.exe\" --nonce EDRTEST-7A9F2D4C6B8E1A30 --lifetime-ms 1500",
+      "working_directory": "C:\\EDR-Test\\runs\\0198a401\\work\\win.process.create",
+      "user": {
+        "sid": "S-1-5-21-111111111-222222222-333333333-1001",
+        "name": "lab-user",
+        "domain": "EDR-LAB-WIN11-01"
+      },
+      "integrity_level": "medium",
+      "elevation_type": "limited",
+      "started_at_utc": "2026-08-06T01:00:01.450Z",
+      "ended_at_utc": "2026-08-06T01:00:03.010Z",
+      "exit_code": 0,
+      "startup_result": {
+        "attempted": true,
+        "succeeded": true,
+        "win32_error": null,
+        "message": null
+      }
+    }
+  ],
+  "local_events": [
+    {
+      "local_event_id": "local-event-process-create-0001",
+      "case_run_id": "0198a401-80ca-7a37-9760-c8b7c0a0f101",
+      "sequence": 1,
+      "event_type": "process",
+      "event_action": "create",
+      "nonce": "EDRTEST-7A9F2D4C6B8E1A30",
+      "occurred_at_utc": "2026-08-06T01:00:01.450Z",
+      "observed_at_utc": "2026-08-06T01:00:01.458Z",
+      "monotonic_offset_ms": 1450,
+      "source": "ProcessCreate.Controller",
+      "collection_method": "actor_createprocess_return_and_process_handle_query",
+      "collector_version": "0.1.0",
+      "confidence": "high",
+      "actor_program_id": "program-actor-0000000001",
+      "target_program_id": "program-target-000000001",
+      "data": {
+        "kind": "process",
+        "operation": "create",
+        "actor": {
+          "program_instance_id": "program-actor-0000000001",
+          "pid": 4120,
+          "parent_pid": 4100,
+          "thread_id": null,
+          "started_at_utc": "2026-08-06T01:00:01.120Z",
+          "executable": "C:\\EDR-Test\\bin\\ProcessCreate.Actor.exe",
+          "command_line": "\"C:\\EDR-Test\\bin\\ProcessCreate.Actor.exe\" --nonce EDRTEST-7A9F2D4C6B8E1A30 --target C:\\EDR-Test\\bin\\ProcessCreate.Target.exe"
+        },
+        "target": {
+          "program_instance_id": "program-target-000000001",
+          "pid": 4188,
+          "parent_pid": 4120,
+          "thread_id": 4192,
+          "started_at_utc": "2026-08-06T01:00:01.450Z",
+          "executable": "C:\\EDR-Test\\bin\\ProcessCreate.Target.exe",
+          "command_line": "\"C:\\EDR-Test\\bin\\ProcessCreate.Target.exe\" --nonce EDRTEST-7A9F2D4C6B8E1A30 --lifetime-ms 1500"
+        },
+        "result": {
+          "attempted": true,
+          "succeeded": true,
+          "win32_error": null,
+          "ntstatus": null,
+          "message": null
+        },
+        "creation": {
+          "creation_flags": 0,
+          "inherit_handles": false,
+          "initial_thread_id": 4192
+        }
+      },
+      "evidence_refs": [
+        "artifact-process-create-evidence-01"
+      ]
+    }
+  ],
+  "local_facts": [
+    {
+      "local_fact_id": "fact-process-create-succeeded-01",
+      "case_run_id": "0198a401-80ca-7a37-9760-c8b7c0a0f101",
+      "local_event_id": "local-event-process-create-0001",
+      "key": "process.create_succeeded",
+      "value": true,
+      "value_type": "boolean",
+      "observed_at_utc": "2026-08-06T01:00:01.458Z",
+      "source": "process_handle_query",
+      "confidence": "high"
+    },
+    {
+      "local_fact_id": "fact-process-child-pid-000001",
+      "case_run_id": "0198a401-80ca-7a37-9760-c8b7c0a0f101",
+      "local_event_id": "local-event-process-create-0001",
+      "key": "process.child_pid",
+      "value": 4188,
+      "value_type": "integer",
+      "observed_at_utc": "2026-08-06T01:00:01.458Z",
+      "source": "process_handle_query",
+      "confidence": "high"
+    },
+    {
+      "local_fact_id": "fact-process-parent-pid-00001",
+      "case_run_id": "0198a401-80ca-7a37-9760-c8b7c0a0f101",
+      "local_event_id": "local-event-process-create-0001",
+      "key": "process.parent_pid",
+      "value": 4120,
+      "value_type": "integer",
+      "observed_at_utc": "2026-08-06T01:00:01.458Z",
+      "source": "process_handle_query",
+      "confidence": "high"
+    },
+    {
+      "local_fact_id": "fact-correlation-nonce-000001",
+      "case_run_id": "0198a401-80ca-7a37-9760-c8b7c0a0f101",
+      "local_event_id": "local-event-process-create-0001",
+      "key": "correlation.nonce",
+      "value": "EDRTEST-7A9F2D4C6B8E1A30",
+      "value_type": "string",
+      "observed_at_utc": "2026-08-06T01:00:01.458Z",
+      "source": "controller",
+      "confidence": "high"
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": "artifact-process-create-evidence-01",
+      "case_run_id": "0198a401-80ca-7a37-9760-c8b7c0a0f101",
+      "kind": "controller_evidence",
+      "relative_path": "evidence/process-create-0001.json",
+      "media_type": "application/json",
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "size_bytes": 2048,
+      "created_at_utc": "2026-08-06T01:00:01.500Z",
+      "sensitive": false,
+      "metadata": {
+        "description": "CreateProcess 返回值与进程句柄二次确认摘要"
+      }
+    }
+  ],
+  "cleanup_results": [
+    {
+      "cleanup_result_id": "cleanup-process-tree-00000001",
+      "case_run_id": "0198a401-80ca-7a37-9760-c8b7c0a0f101",
+      "sequence": 1,
+      "action": "确认 Actor 与 Target 均已退出",
+      "status": "succeeded",
+      "started_at_utc": "2026-08-06T01:00:05.100Z",
+      "ended_at_utc": "2026-08-06T01:00:05.300Z",
+      "before": {
+        "actor_running": false,
+        "target_running": false
+      },
+      "after": {
+        "actor_running": false,
+        "target_running": false
+      },
+      "error_message": null
+    }
+  ],
+  "integrity": {
+    "database_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "database_size_bytes": 131072,
+    "schema_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+    "exported_at_utc": "2026-08-06T01:00:09.000Z",
+    "exporter_version": "0.1.0",
+    "record_counts": {
+      "capabilities": 1,
+      "programs": 3,
+      "local_events": 1,
+      "local_facts": 4,
+      "artifacts": 1,
+      "cleanup_results": 1
+    },
+    "warnings": []
+  }
+}

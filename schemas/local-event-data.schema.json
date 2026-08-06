@@ -1,0 +1,798 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/edr-validation/local-event-data.schema.json",
+  "title": "EDR 本地观测事件数据",
+  "description": "本地 Controller 对 Windows 行为进行独立观测后保存的分类数据。地址一律使用十六进制字符串，避免 JSON 数字丢失 64 位精度。",
+  "oneOf": [
+    { "$ref": "#/$defs/process" },
+    { "$ref": "#/$defs/file" },
+    { "$ref": "#/$defs/account" },
+    { "$ref": "#/$defs/network" },
+    { "$ref": "#/$defs/hash" },
+    { "$ref": "#/$defs/registry" },
+    { "$ref": "#/$defs/scheduled_task" },
+    { "$ref": "#/$defs/service" },
+    { "$ref": "#/$defs/driver" },
+    { "$ref": "#/$defs/device" },
+    { "$ref": "#/$defs/group_policy" },
+    { "$ref": "#/$defs/named_pipe" },
+    { "$ref": "#/$defs/edr_sysops" },
+    { "$ref": "#/$defs/wmi" },
+    { "$ref": "#/$defs/bits" },
+    { "$ref": "#/$defs/powershell" }
+  ],
+  "$defs": {
+    "date_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "hex_address": {
+      "type": ["string", "null"],
+      "pattern": "^0x[0-9A-Fa-f]+$"
+    },
+    "hashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "md5": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{32}$" },
+        "sha1": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{40}$" },
+        "sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
+        "imphash": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{32}$" }
+      },
+      "minProperties": 1
+    },
+    "operation_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempted", "succeeded", "win32_error"],
+      "properties": {
+        "attempted": { "type": "boolean" },
+        "succeeded": { "type": "boolean" },
+        "win32_error": { "type": ["integer", "null"], "minimum": 0 },
+        "ntstatus": { "type": ["string", "null"], "pattern": "^0x[0-9A-Fa-f]{8}$" },
+        "message": { "type": ["string", "null"] }
+      }
+    },
+    "process_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pid"],
+      "properties": {
+        "program_instance_id": { "type": ["string", "null"] },
+        "pid": { "type": "integer", "minimum": 0 },
+        "parent_pid": { "type": ["integer", "null"], "minimum": 0 },
+        "thread_id": { "type": ["integer", "null"], "minimum": 0 },
+        "started_at_utc": {
+          "oneOf": [
+            { "$ref": "#/$defs/date_time" },
+            { "type": "null" }
+          ]
+        },
+        "executable": { "type": ["string", "null"] },
+        "command_line": { "type": ["string", "null"] }
+      }
+    },
+    "file_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exists"],
+      "properties": {
+        "exists": { "type": "boolean" },
+        "path": { "type": ["string", "null"] },
+        "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "created_at_utc": {
+          "oneOf": [{ "$ref": "#/$defs/date_time" }, { "type": "null" }]
+        },
+        "modified_at_utc": {
+          "oneOf": [{ "$ref": "#/$defs/date_time" }, { "type": "null" }]
+        },
+        "attributes": {
+          "type": ["array", "null"],
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "hashes": {
+          "oneOf": [{ "$ref": "#/$defs/hashes" }, { "type": "null" }]
+        }
+      }
+    },
+    "state_snapshot": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["exists"],
+      "properties": {
+        "exists": { "type": "boolean" }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "port", "family"],
+      "properties": {
+        "address": { "type": "string", "minLength": 1 },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "family": { "enum": ["ipv4", "ipv6", "unknown"] }
+      }
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "result"],
+      "properties": {
+        "kind": { "const": "process" },
+        "operation": {
+          "enum": ["create", "terminate", "access", "image_load", "remote_thread_create", "tamper"]
+        },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "target": { "$ref": "#/$defs/process_ref" },
+        "result": { "$ref": "#/$defs/operation_result" },
+        "creation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["creation_flags", "inherit_handles", "initial_thread_id"],
+          "properties": {
+            "creation_flags": { "type": ["integer", "null"], "minimum": 0 },
+            "inherit_handles": { "type": ["boolean", "null"] },
+            "initial_thread_id": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        },
+        "termination": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "requested_exit_code", "observed_exit_code", "observed_exit_at_utc"],
+          "properties": {
+            "method": { "type": ["string", "null"] },
+            "requested_exit_code": { "type": ["integer", "null"] },
+            "observed_exit_code": { "type": ["integer", "null"] },
+            "observed_exit_at_utc": {
+              "oneOf": [{ "$ref": "#/$defs/date_time" }, { "type": "null" }]
+            }
+          }
+        },
+        "access": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation_name", "requested_access_mask", "handle_obtained"],
+          "properties": {
+            "operation_name": { "type": "string", "minLength": 1 },
+            "requested_access_mask": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+            "granted_access_mask": { "type": ["integer", "null"], "minimum": 0, "maximum": 4294967295 },
+            "handle_obtained": { "type": "boolean" }
+          }
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "base_address", "size_bytes", "hashes", "before_loaded", "after_loaded"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "base_address": { "$ref": "#/$defs/hex_address" },
+            "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "hashes": {
+              "oneOf": [{ "$ref": "#/$defs/hashes" }, { "type": "null" }]
+            },
+            "before_loaded": { "type": ["boolean", "null"] },
+            "after_loaded": { "type": ["boolean", "null"] }
+          }
+        },
+        "thread": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["thread_id", "start_address", "parameter_address", "creation_flags"],
+          "properties": {
+            "thread_id": { "type": "integer", "minimum": 0 },
+            "start_address": { "$ref": "#/$defs/hex_address" },
+            "parameter_address": { "$ref": "#/$defs/hex_address" },
+            "creation_flags": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        },
+        "tamper": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["technique", "target_address", "size_bytes", "before_sha256", "after_sha256"],
+          "properties": {
+            "technique": { "type": "string", "minLength": 1 },
+            "target_address": { "$ref": "#/$defs/hex_address" },
+            "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "before_sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
+            "after_sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "create" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "actor": true, "target": true, "creation": true }, "required": ["actor", "target", "creation"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "terminate" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "target": true, "termination": true }, "required": ["target", "termination"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "access" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "actor": true, "target": true, "access": true }, "required": ["actor", "target", "access"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "image_load" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "target": true, "image": true }, "required": ["target", "image"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "remote_thread_create" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "actor": true, "target": true, "thread": true }, "required": ["actor", "target", "thread"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "tamper" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "actor": true, "target": true, "tamper": true }, "required": ["actor", "target", "tamper"] }
+        }
+      ]
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "actor", "result"],
+      "properties": {
+        "kind": { "const": "file" },
+        "operation": { "enum": ["create", "open", "delete", "modify", "rename"] },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "path": { "type": "string", "minLength": 1 },
+        "source_path": { "type": "string", "minLength": 1 },
+        "destination_path": { "type": "string", "minLength": 1 },
+        "before": { "$ref": "#/$defs/file_state" },
+        "after": { "$ref": "#/$defs/file_state" },
+        "open": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["desired_access", "share_mode", "creation_disposition"],
+          "properties": {
+            "desired_access": { "type": ["integer", "null"], "minimum": 0 },
+            "share_mode": { "type": ["integer", "null"], "minimum": 0 },
+            "creation_disposition": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        },
+        "write": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bytes_written", "offset"],
+          "properties": {
+            "bytes_written": { "type": ["integer", "null"], "minimum": 0 },
+            "offset": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        },
+        "result": { "$ref": "#/$defs/operation_result" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "rename" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "source_path": true, "destination_path": true, "before": true, "after": true }, "required": ["source_path", "destination_path", "before", "after"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "enum": ["create", "open", "delete", "modify"] } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "path": true, "before": true, "after": true }, "required": ["path", "before", "after"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "open" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "open": true }, "required": ["open"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "modify" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "write": true }, "required": ["write"] }
+        }
+      ]
+    },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "actor", "account", "result"],
+      "properties": {
+        "kind": { "const": "account" },
+        "operation": { "enum": ["local_create", "local_modify", "local_delete", "login", "logoff"] },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "account": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "sid", "domain", "account_type"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "sid": { "type": ["string", "null"] },
+            "domain": { "type": ["string", "null"] },
+            "account_type": { "type": ["string", "null"] }
+          }
+        },
+        "session": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["session_id", "logon_id", "logon_type", "authentication_package", "source_address"],
+          "properties": {
+            "session_id": { "type": ["integer", "null"], "minimum": 0 },
+            "logon_id": { "type": ["string", "null"] },
+            "logon_type": { "type": ["integer", "null"], "minimum": 0 },
+            "authentication_package": { "type": ["string", "null"] },
+            "source_address": { "type": ["string", "null"] }
+          }
+        },
+        "before": { "$ref": "#/$defs/state_snapshot" },
+        "after": { "$ref": "#/$defs/state_snapshot" },
+        "result": { "$ref": "#/$defs/operation_result" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "operation": { "enum": ["local_create", "local_modify", "local_delete"] } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "before": true, "after": true }, "required": ["before", "after"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "enum": ["login", "logoff"] } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "session": true }, "required": ["session"] }
+        }
+      ]
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "actor", "result"],
+      "properties": {
+        "kind": { "const": "network" },
+        "operation": { "enum": ["tcp_connect", "udp_connect", "url_access", "dns_query", "file_download"] },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "connection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["transport", "direction", "local", "remote"],
+          "properties": {
+            "transport": { "enum": ["tcp", "udp"] },
+            "direction": { "enum": ["outbound", "inbound"] },
+            "local": { "$ref": "#/$defs/endpoint" },
+            "remote": { "$ref": "#/$defs/endpoint" }
+          }
+        },
+        "dns": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["question", "query_type", "answers", "resolver"],
+          "properties": {
+            "question": { "type": "string", "minLength": 1 },
+            "query_type": { "type": "string", "minLength": 1 },
+            "answers": { "type": "array", "items": { "type": "string" } },
+            "resolver": { "type": ["string", "null"] }
+          }
+        },
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["url", "scheme", "host", "port", "path", "method", "status_code", "request_nonce"],
+          "properties": {
+            "url": { "type": "string", "minLength": 1 },
+            "scheme": { "type": ["string", "null"] },
+            "host": { "type": ["string", "null"] },
+            "port": { "type": ["integer", "null"], "minimum": 0, "maximum": 65535 },
+            "path": { "type": ["string", "null"] },
+            "method": { "type": "string", "minLength": 1 },
+            "status_code": { "type": ["integer", "null"], "minimum": 100, "maximum": 599 },
+            "request_nonce": { "type": ["string", "null"] }
+          }
+        },
+        "download": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["destination_path", "size_bytes", "hashes"],
+          "properties": {
+            "destination_path": { "type": "string", "minLength": 1 },
+            "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "hashes": {
+              "oneOf": [{ "$ref": "#/$defs/hashes" }, { "type": "null" }]
+            }
+          }
+        },
+        "result": { "$ref": "#/$defs/operation_result" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "operation": { "enum": ["tcp_connect", "udp_connect"] } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "connection": true }, "required": ["connection"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "tcp_connect" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "connection": { "type": "object", "properties": { "transport": { "const": "tcp" } } } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "udp_connect" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "connection": { "type": "object", "properties": { "transport": { "const": "udp" } } } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "dns_query" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "dns": true }, "required": ["dns"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "url_access" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "http": true }, "required": ["http"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "file_download" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "http": true, "download": true }, "required": ["http", "download"] }
+        }
+      ]
+    },
+    "hash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "file_path", "file_size_bytes", "algorithm", "digest", "result"],
+      "properties": {
+        "kind": { "const": "hash" },
+        "operation": { "enum": ["md5", "sha", "imphash"] },
+        "file_path": { "type": "string", "minLength": 1 },
+        "algorithm": { "enum": ["md5", "sha1", "sha256", "sha512", "imphash"] },
+        "digest": { "type": "string", "pattern": "^[A-Fa-f0-9]{32,128}$" },
+        "file_size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "result": { "$ref": "#/$defs/operation_result" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "md5" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "algorithm": { "const": "md5" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "sha" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "algorithm": { "enum": ["sha1", "sha256", "sha512"] } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "imphash" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "algorithm": { "const": "imphash" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "algorithm": { "enum": ["md5", "imphash"] } }, "required": ["algorithm"] },
+          "then": { "type": "object", "properties": { "digest": { "type": "string", "pattern": "^[A-Fa-f0-9]{32}$" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "algorithm": { "const": "sha1" } }, "required": ["algorithm"] },
+          "then": { "type": "object", "properties": { "digest": { "type": "string", "pattern": "^[A-Fa-f0-9]{40}$" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "algorithm": { "const": "sha256" } }, "required": ["algorithm"] },
+          "then": { "type": "object", "properties": { "digest": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "algorithm": { "const": "sha512" } }, "required": ["algorithm"] },
+          "then": { "type": "object", "properties": { "digest": { "type": "string", "pattern": "^[A-Fa-f0-9]{128}$" } } }
+        }
+      ]
+    },
+    "registry_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exists"],
+      "properties": {
+        "exists": { "type": "boolean" },
+        "type": { "type": ["string", "null"] },
+        "data": {},
+        "data_sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" }
+      }
+    },
+    "registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "actor", "hive", "key_path", "before", "after", "result"],
+      "properties": {
+        "kind": { "const": "registry" },
+        "operation": { "enum": ["create", "modify", "delete"] },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "hive": { "enum": ["HKCU", "HKLM", "HKCR", "HKU", "HKCC"] },
+        "key_path": { "type": "string", "minLength": 1 },
+        "value_name": { "type": ["string", "null"] },
+        "registry_view": { "enum": ["default", "32", "64"] },
+        "before": { "$ref": "#/$defs/registry_value" },
+        "after": { "$ref": "#/$defs/registry_value" },
+        "result": { "$ref": "#/$defs/operation_result" }
+      }
+    },
+    "task_definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exists"],
+      "properties": {
+        "exists": { "type": "boolean" },
+        "xml_sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
+        "principal": { "type": ["string", "null"] },
+        "enabled": { "type": ["boolean", "null"] },
+        "actions": { "type": ["array", "null"], "items": { "type": "string" } },
+        "triggers": { "type": ["array", "null"], "items": { "type": "string" } }
+      }
+    },
+    "scheduled_task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "actor", "task_path", "before", "after", "result"],
+      "properties": {
+        "kind": { "const": "scheduled_task" },
+        "operation": { "enum": ["create", "modify", "delete"] },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "task_path": { "type": "string", "minLength": 1 },
+        "before": { "$ref": "#/$defs/task_definition" },
+        "after": { "$ref": "#/$defs/task_definition" },
+        "result": { "$ref": "#/$defs/operation_result" }
+      }
+    },
+    "service_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exists"],
+      "properties": {
+        "exists": { "type": "boolean" },
+        "display_name": { "type": ["string", "null"] },
+        "binary_path": { "type": ["string", "null"] },
+        "start_type": { "type": ["string", "null"] },
+        "account": { "type": ["string", "null"] },
+        "service_type": { "type": ["string", "null"] },
+        "state": { "type": ["string", "null"] }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "actor", "service_name", "before", "after", "result"],
+      "properties": {
+        "kind": { "const": "service" },
+        "operation": { "enum": ["create", "modify", "delete"] },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "service_name": { "type": "string", "minLength": 1 },
+        "before": { "$ref": "#/$defs/service_state" },
+        "after": { "$ref": "#/$defs/service_state" },
+        "result": { "$ref": "#/$defs/operation_result" }
+      }
+    },
+    "driver_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["loaded"],
+      "properties": {
+        "loaded": { "type": "boolean" },
+        "service_name": { "type": ["string", "null"] },
+        "image_path": { "type": ["string", "null"] },
+        "base_address": { "$ref": "#/$defs/hex_address" },
+        "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "hashes": {
+          "oneOf": [{ "$ref": "#/$defs/hashes" }, { "type": "null" }]
+        },
+        "signer": { "type": ["string", "null"] },
+        "signature_valid": { "type": ["boolean", "null"] }
+      }
+    },
+    "driver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "actor", "driver_name", "before", "after", "result"],
+      "properties": {
+        "kind": { "const": "driver" },
+        "operation": { "enum": ["load", "modify", "unload"] },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "driver_name": { "type": "string", "minLength": 1 },
+        "before": { "$ref": "#/$defs/driver_state" },
+        "after": { "$ref": "#/$defs/driver_state" },
+        "result": { "$ref": "#/$defs/operation_result" }
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "device", "before", "after", "result"],
+      "properties": {
+        "kind": { "const": "device" },
+        "operation": { "enum": ["virtual_disk_mount", "usb_unmount", "usb_mount"] },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "device": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["instance_id"],
+          "properties": {
+            "instance_id": { "type": "string", "minLength": 1 },
+            "class_guid": { "type": ["string", "null"] },
+            "vendor_id": { "type": ["string", "null"] },
+            "product_id": { "type": ["string", "null"] },
+            "serial_number": { "type": ["string", "null"] },
+            "volume_guid": { "type": ["string", "null"] },
+            "drive_letter": { "type": ["string", "null"] },
+            "mount_point": { "type": ["string", "null"] },
+            "image_path": { "type": ["string", "null"] }
+          }
+        },
+        "before": { "$ref": "#/$defs/state_snapshot" },
+        "after": { "$ref": "#/$defs/state_snapshot" },
+        "result": { "$ref": "#/$defs/operation_result" }
+      }
+    },
+    "group_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "actor", "scope", "policy_path", "before", "after", "result"],
+      "properties": {
+        "kind": { "const": "group_policy" },
+        "operation": { "const": "modify" },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "scope": { "enum": ["computer", "user"] },
+        "policy_path": { "type": "string", "minLength": 1 },
+        "policy_name": { "type": ["string", "null"] },
+        "backing_registry_path": { "type": ["string", "null"] },
+        "before": { "$ref": "#/$defs/state_snapshot" },
+        "after": { "$ref": "#/$defs/state_snapshot" },
+        "result": { "$ref": "#/$defs/operation_result" }
+      }
+    },
+    "named_pipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "pipe_name", "server", "direction", "result"],
+      "properties": {
+        "kind": { "const": "named_pipe" },
+        "operation": { "enum": ["create", "connect"] },
+        "pipe_name": { "type": "string", "pattern": "^\\\\\\\\[.][\\\\]pipe[\\\\].+" },
+        "server": { "$ref": "#/$defs/process_ref" },
+        "client": { "$ref": "#/$defs/process_ref" },
+        "direction": { "enum": ["inbound", "outbound", "duplex"] },
+        "impersonation_level": { "type": ["string", "null"] },
+        "result": { "$ref": "#/$defs/operation_result" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "connect" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "client": true }, "required": ["client"] }
+        }
+      ]
+    },
+    "edr_sysops": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "product", "before", "after", "result"],
+      "properties": {
+        "kind": { "const": "edr_sysops" },
+        "operation": { "enum": ["agent_start", "agent_stop", "agent_install", "agent_uninstall", "agent_keep_alive", "agent_error"] },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "product": { "type": "string", "minLength": 1 },
+        "agent_version": { "type": ["string", "null"] },
+        "service_name": { "type": ["string", "null"] },
+        "process": { "$ref": "#/$defs/process_ref" },
+        "installer_path": { "type": ["string", "null"] },
+        "installer_hashes": {
+          "oneOf": [{ "$ref": "#/$defs/hashes" }, { "type": "null" }]
+        },
+        "heartbeat_sequence": { "type": ["integer", "null"], "minimum": 0 },
+        "error_code": { "type": ["string", "null"] },
+        "before": { "$ref": "#/$defs/state_snapshot" },
+        "after": { "$ref": "#/$defs/state_snapshot" },
+        "result": { "$ref": "#/$defs/operation_result" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "operation": { "enum": ["agent_start", "agent_stop"] } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "agent_version": true, "service_name": true, "process": true }, "required": ["agent_version", "service_name", "process"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "agent_install" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "agent_version": true, "installer_path": true, "installer_hashes": true }, "required": ["agent_version", "installer_path", "installer_hashes"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "agent_uninstall" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "agent_version": true }, "required": ["agent_version"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "agent_keep_alive" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "process": true, "heartbeat_sequence": true }, "required": ["process", "heartbeat_sequence"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "agent_error" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "process": true, "error_code": true }, "required": ["process", "error_code"] }
+        }
+      ]
+    },
+    "wmi": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "actor", "namespace", "object_name", "before", "after", "result"],
+      "properties": {
+        "kind": { "const": "wmi" },
+        "operation": { "enum": ["consumer_filter_bind", "consumer", "filter"] },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "namespace": { "type": "string", "minLength": 1 },
+        "object_name": { "type": "string", "minLength": 1 },
+        "consumer_class": { "type": ["string", "null"] },
+        "query": { "type": ["string", "null"] },
+        "command_line_template": { "type": ["string", "null"] },
+        "script_text_sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
+        "filter_path": { "type": ["string", "null"] },
+        "consumer_path": { "type": ["string", "null"] },
+        "before": { "$ref": "#/$defs/state_snapshot" },
+        "after": { "$ref": "#/$defs/state_snapshot" },
+        "result": { "$ref": "#/$defs/operation_result" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "consumer_filter_bind" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "filter_path": true, "consumer_path": true }, "required": ["filter_path", "consumer_path"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "consumer" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "consumer_class": true, "command_line_template": true, "script_text_sha256": true }, "required": ["consumer_class", "command_line_template", "script_text_sha256"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "operation": { "const": "filter" } }, "required": ["operation"] },
+          "then": { "type": "object", "properties": { "query": true }, "required": ["query"] }
+        }
+      ]
+    },
+    "bits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "actor", "job", "before", "after", "result"],
+      "properties": {
+        "kind": { "const": "bits" },
+        "operation": { "const": "job" },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "job": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "job_id",
+            "display_name",
+            "job_type",
+            "state",
+            "owner_sid",
+            "remote_url",
+            "local_path",
+            "bytes_total",
+            "bytes_transferred",
+            "notification_command"
+          ],
+          "properties": {
+            "job_id": { "type": "string", "minLength": 1 },
+            "display_name": { "type": "string", "minLength": 1 },
+            "job_type": { "type": ["string", "null"] },
+            "state": { "type": ["string", "null"] },
+            "owner_sid": { "type": ["string", "null"] },
+            "remote_url": { "type": ["string", "null"] },
+            "local_path": { "type": ["string", "null"] },
+            "bytes_total": { "type": ["integer", "null"], "minimum": 0 },
+            "bytes_transferred": { "type": ["integer", "null"], "minimum": 0 },
+            "notification_command": { "type": ["string", "null"] }
+          }
+        },
+        "before": { "$ref": "#/$defs/state_snapshot" },
+        "after": { "$ref": "#/$defs/state_snapshot" },
+        "result": { "$ref": "#/$defs/operation_result" }
+      }
+    },
+    "powershell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operation", "actor", "script_block", "result"],
+      "properties": {
+        "kind": { "const": "powershell" },
+        "operation": { "const": "script_block" },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "script_block": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "script_block_id",
+            "runspace_id",
+            "pipeline_id",
+            "engine_version",
+            "host_name",
+            "script_path",
+            "script_text_sha256",
+            "script_text",
+            "command_line"
+          ],
+          "properties": {
+            "script_block_id": { "type": ["string", "null"] },
+            "runspace_id": { "type": ["string", "null"] },
+            "pipeline_id": { "type": ["string", "null"] },
+            "engine_version": { "type": ["string", "null"] },
+            "host_name": { "type": ["string", "null"] },
+            "script_path": { "type": ["string", "null"] },
+            "script_text_sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+            "script_text": { "type": ["string", "null"] },
+            "command_line": { "type": ["string", "null"] }
+          }
+        },
+        "result": { "$ref": "#/$defs/operation_result" }
+      }
+    }
+  }
+}

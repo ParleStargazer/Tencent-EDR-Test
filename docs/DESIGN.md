@@ -243,6 +243,11 @@ sequenceDiagram
 - Controller 通过进程句柄独立确认的 Target 身份；
 - nonce、测试开始/结束、超时和退出码。
 
+各能力的完整采集字段、参考云端字段对应关系和 JSON 路径见
+`docs/LOCAL-OBSERVATION-DESIGN.md`。轮次导出使用
+`schemas/run-export.schema.json`，分类事件的 `data` 使用
+`schemas/local-event-data.schema.json`。
+
 ## 8. 测试轮次与状态机
 
 ### 8.1 一轮测试
@@ -342,13 +347,14 @@ EdrTest.Export.exe --db .\runs\...\<run-id>.db --out .\local-run.json
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "run": {},
   "capabilities": [],
   "programs": [],
   "local_events": [],
   "local_facts": [],
   "artifacts": [],
+  "cleanup_results": [],
   "integrity": {}
 }
 ```
