@@ -16,13 +16,15 @@
     "timeouts"
   ],
   "properties": {
-    "schema_version": { "const": "1.0" },
+    "schema_version": { "enum": ["1.0", "1.1"] },
     "capability_id": {
       "type": "string",
       "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)+$"
     },
     "version": { "$ref": "#/$defs/semver" },
     "display_name": { "type": "string", "minLength": 1 },
+    "display_name_zh": { "type": "string", "minLength": 1 },
+    "display_name_en": { "type": "string", "minLength": 1 },
     "description": { "type": "string" },
     "platform": {
       "type": "object",
@@ -110,7 +112,10 @@
       "additionalProperties": false,
       "required": ["executable"],
       "properties": {
-        "executable": { "type": "string", "pattern": "^[^:/]+(?:[\\\\/][^:/]+)*\\.exe$" },
+        "executable": {
+          "type": "string",
+          "pattern": "^(?!.*(?:^|[\\\\/])\\.\\.?(?:[\\\\/]|$))[^:/]+(?:[\\\\/][^:/]+)*\\.exe$"
+        },
         "sha256": { "$ref": "#/$defs/sha256" },
         "arguments": {
           "type": "array",
@@ -125,7 +130,10 @@
       "properties": {
         "role": { "enum": ["actor", "target", "helper"] },
         "instance_name": { "type": "string", "minLength": 1 },
-        "executable": { "type": "string", "pattern": "^[^:/]+(?:[\\\\/][^:/]+)*\\.exe$" },
+        "executable": {
+          "type": "string",
+          "pattern": "^(?!.*(?:^|[\\\\/])\\.\\.?(?:[\\\\/]|$))[^:/]+(?:[\\\\/][^:/]+)*\\.exe$"
+        },
         "sha256": { "$ref": "#/$defs/sha256" },
         "arguments": {
           "type": "array",

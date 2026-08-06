@@ -12,3 +12,12 @@
 ```powershell
 node --test tests/contract/local-run-contract.test.mjs
 ```
+
+框架构建与端到端测试：
+
+```powershell
+dotnet build EdrTest.sln
+dotnet run --project tests/EdrTest.Tests/EdrTest.Tests.csproj --no-build
+```
+
+端到端测试会在系统临时目录组装一个受控能力包，真实启动独立 Controller 子进程，并验证 `Runner → SQLite → Export → Mapping → BASELINE → PASS`。测试结束后自动删除临时制品。

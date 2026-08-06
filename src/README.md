@@ -1,15 +1,22 @@
-# 框架源码占位
+# 框架源码
 
-实现阶段采用 C# / .NET 8，按可执行程序和公共库组织：
+首版实现刻意保持为一个 .NET 8 可执行项目 `EdrTest`，通过子命令划分职责，避免在功能稳定前拆成多个空壳程序集：
 
-- `EdrTest.Runner`：创建独立 Run DB，调度一个或多个能力 Controller；
-- `EdrTest.Export`：把已封存 SQLite 数据库确定性导出为本地 JSON；
-- `EdrTest.Compare`：导入用户提供的 EDR JSON，执行离线规范化和 BASELINE 比较；
-- `EdrTest.Core`：Run、Capability、BASELINE、状态机和断言模型；
-- `EdrTest.Storage.Sqlite`：SQLite Schema、事务和迁移；
-- `EdrTest.CloudImport`：流式 JSON 读取与 Mapping Profile；
-- `EdrTest.Reporting`：验证结果 JSON，以及后续可选 HTML/JUnit。
+- `capabilities`：发现并校验 `samples/**/capability.json`；
+- `run`：创建轮次、串行启动 Controller、执行风险门禁、封存 SQLite 并自动导出；
+- `export`：只读导出已经封存的运行数据库；
+- `compare`：读取用户导入的云端 JSON，执行 YAML Mapping 和 BASELINE；
+- `inspect`：只读查看轮次和能力终态。
 
-每项能力必须提供专属 Controller EXE 和至少一个 Actor EXE；需要被执行对象时再提供 Target EXE。能力包存放在被 Git 忽略的本地 `samples/` 工作区或独立制品库。
+主要文件：
 
-本文件只用于保留设计阶段的仓库骨架，不代表框架已经实现。
+| 文件 | 职责 |
+| --- | --- |
+| `CapabilityModels.cs` | 能力清单、程序路径/hash 和参数校验 |
+| `RunnerService.cs` | 轮次目录、Controller 调度、超时和风险门禁 |
+| `RunDatabase.cs` | SQLite v2 以及提供给 Controller 的写入 SDK |
+| `ExportService.cs` | `local-run.json` 确定性业务数据导出 |
+| `CompareService.cs` | 云端 Mapping、关联、断言和验证结果 |
+| `Program.cs` | 中文 CLI 入口 |
+
+每项能力必须提供专属 Controller EXE 和至少一个 Actor EXE；需要被执行对象时再提供 Target EXE。接入方式见 `docs/SAMPLE-INTEGRATION.md`。

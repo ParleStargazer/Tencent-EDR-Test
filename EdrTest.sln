@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EdrTest", "src\EdrTest\EdrTest.csproj", "{7D6A9D5B-24F1-42E0-8FB4-3AFD01295856}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EdrTest.Tests", "tests\EdrTest.Tests\EdrTest.Tests.csproj", "{7E8606D6-B93A-48C4-AD02-29C6DE07318D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7D6A9D5B-24F1-42E0-8FB4-3AFD01295856}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7D6A9D5B-24F1-42E0-8FB4-3AFD01295856}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7D6A9D5B-24F1-42E0-8FB4-3AFD01295856}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7D6A9D5B-24F1-42E0-8FB4-3AFD01295856}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7E8606D6-B93A-48C4-AD02-29C6DE07318D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7E8606D6-B93A-48C4-AD02-29C6DE07318D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7E8606D6-B93A-48C4-AD02-29C6DE07318D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7E8606D6-B93A-48C4-AD02-29C6DE07318D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

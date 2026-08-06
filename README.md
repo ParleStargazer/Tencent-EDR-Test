@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目已完成总体设计与首版中文前端控制面。Windows Runner、SQLite 导出器及完整能力样本仍在开发中，当前页面中的轮次进度用于验证编排交互，不会直接启动 EXE。
+项目已实现可运行的首版 Windows 框架：能力包发现与校验、Controller 串行调度、每轮独立 SQLite、确定性本地 JSON 导出、腾讯 `ProcEvents` 映射和 BASELINE 离线比较已经形成最小闭环。真实能力样本仍由后续开发并放入本地 `samples/`；当前前端控制面尚未直接启动 EXE。
 
 - 中文前端控制面：[web/README.md](web/README.md)
 - 详细设计：[docs/DESIGN.md](docs/DESIGN.md)
@@ -15,6 +15,8 @@
 - 本地导出 Schema：[schemas/run-export.schema.json](schemas/run-export.schema.json)
 - 分类事件数据 Schema：[schemas/local-event-data.schema.json](schemas/local-event-data.schema.json)
 - 本地信息采集设计：[docs/LOCAL-OBSERVATION-DESIGN.md](docs/LOCAL-OBSERVATION-DESIGN.md)
+- 能力样本接入指南：[docs/SAMPLE-INTEGRATION.md](docs/SAMPLE-INTEGRATION.md)
+- 能力包清单模板：[examples/capability-package/capability.json](examples/capability-package/capability.json)
 - 进程创建本地 JSON 示例：[examples/local-run.process-create.example.json](examples/local-run.process-create.example.json)
 - 验证结果 Schema：[schemas/validation-result.schema.json](schemas/validation-result.schema.json)
 - 规范化事件 Schema：[schemas/normalized-event.schema.json](schemas/normalized-event.schema.json)
@@ -40,15 +42,28 @@ pnpm dev
 
 访问 `http://localhost:3000/`。当前运行环境使用 Node.js 22.13 或更高版本。
 
-## 规划中的命令行运行方式
+## 命令行框架
 
-```text
-EdrTest.Runner.exe run --suite windows-smoke --environment lab
-EdrTest.Export.exe --db <run-id>.db --out local-run.json
-EdrTest.Compare.exe compare --local local-run.json --cloud cloud-events.json --out validation-result.json
+```powershell
+dotnet restore EdrTest.sln
+dotnet build EdrTest.sln
+
+dotnet run --project src/EdrTest -- capabilities --root samples
+
+dotnet run --project src/EdrTest -- run `
+  --capability win.process.create `
+  --samples-root samples `
+  --runs-dir runs
+
+dotnet run --project src/EdrTest -- compare `
+  --local .\runs\<date>\<run-id>\export\local-run.json `
+  --cloud .\cloud-events.json `
+  --mapping .\mappings\tencent-edr-proc-events-v1.yaml `
+  --baseline .\baselines\windows\process_create.yaml `
+  --out .\validation-result.json
 ```
 
-命令仅用于表达目标接口，当前尚未实现。
+同一个 `EdrTest.exe` 还提供 `export` 和 `inspect` 子命令。运行 `dotnet run --project src/EdrTest -- help` 可查看完整参数。
 
 ## 仓库约定
 

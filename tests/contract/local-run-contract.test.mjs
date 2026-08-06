@@ -50,6 +50,22 @@ test("轮次 Schema 与分类事件 Schema 使用 1.1 数据契约", async () =>
   assert.equal(dataSchema.$schema, "https://json-schema.org/draft/2020-12/schema");
   assert.ok(runSchema.required.includes("cleanup_results"));
   assert.equal(dataSchema.oneOf.length, 16);
+  assert.equal(runSchema.properties.programs.minItems, undefined);
+});
+
+test("能力包 1.1 模板具备中英名称、Actor 和安全相对 EXE 路径", async () => {
+  const schema = await readJson("schemas/capability-manifest.schema.json");
+  const template = await readJson("examples/capability-package/capability.json");
+  const executablePattern = new RegExp(schema.$defs.program.properties.executable.pattern);
+
+  assert.ok(schema.properties.schema_version.enum.includes("1.1"));
+  assert.equal(template.schema_version, "1.1");
+  assert.ok(template.display_name_zh.length > 0);
+  assert.ok(template.display_name_en.length > 0);
+  assert.ok(template.participants.some((participant) => participant.role === "actor"));
+  assert.ok(executablePattern.test(template.controller.executable));
+  assert.equal(executablePattern.test("..\\outside.exe"), false);
+  assert.equal(executablePattern.test("C:\\outside.exe"), false);
 });
 
 test("16 个能力域定义了 53 项且 envelope 与 data 动作一致", async () => {

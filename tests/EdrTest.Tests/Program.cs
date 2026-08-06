@@ -1,0 +1,407 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using EdrTest;
+
+namespace EdrTest.Tests;
+
+public static class Program
+{
+    public static async Task<int> Main(string[] args)
+    {
+        if (args.FirstOrDefault() == "--fixture-controller")
+        {
+            return RunFixtureController(args.Skip(1).ToArray());
+        }
+        if (args.FirstOrDefault() == "--fixture-hang")
+        {
+            Thread.Sleep(TimeSpan.FromSeconds(30));
+            return 0;
+        }
+
+        var failures = new List<string>();
+        await RunTest("能力包路径和参数校验", TestManifestValidation, failures);
+        await RunTest("L2/L3 默认风险门禁", TestHighRiskGate, failures);
+        await RunTest("同一轮按顺序执行多个能力", TestMultipleCapabilities, failures);
+        await RunTest("Controller 超时封存为 SAMPLE_ERROR", TestControllerTimeout, failures);
+        await RunTest("取消轮次会终止进程树并封存 ABORTED", TestCancellation, failures);
+        await RunTest("Runner → SQLite → Export → Compare 最小闭环", TestEndToEnd, failures);
+        if (failures.Count == 0)
+        {
+            Console.WriteLine("全部框架测试通过。");
+            return 0;
+        }
+
+        Console.Error.WriteLine($"失败 {failures.Count} 项：");
+        failures.ForEach(Console.Error.WriteLine);
+        return 1;
+    }
+
+    private static async Task RunTest(string name, Func<Task> test, ICollection<string> failures)
+    {
+        try
+        {
+            await test();
+            Console.WriteLine($"[PASS] {name}");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"[FAIL] {name}: {exception}");
+        }
+    }
+
+    private static Task TestManifestValidation()
+    {
+        using var fixture = TestDirectory.Create();
+        var manifest = CreateManifest("..\\outside.exe", "L0");
+        var path = Path.Combine(fixture.Path, "capability.json");
+        File.WriteAllText(path, manifest.ToJsonString(JsonDefaults.Options));
+        AssertThrows<InvalidDataException>(() => CapabilityCatalog.Load(path));
+        return Task.CompletedTask;
+    }
+
+    private static async Task TestEndToEnd()
+    {
+        using var fixture = TestDirectory.Create();
+        var packageDirectory = Path.Combine(fixture.Path, "package");
+        CopyDirectory(AppContext.BaseDirectory, packageDirectory);
+        var executableName = Path.GetFileName(Environment.ProcessPath) ?? "EdrTest.Tests.exe";
+        var manifestPath = Path.Combine(packageDirectory, "capability.json");
+        File.WriteAllText(manifestPath, CreateManifest(executableName, "L0").ToJsonString(JsonDefaults.Options));
+
+        var result = await new RunnerService().RunAsync(new RunRequest([manifestPath], Path.Combine(fixture.Path, "runs"), null, false, "framework-e2e"));
+        Assert(result.Status == "COMPLETED", "轮次应完成。");
+        Assert(File.Exists(result.DatabasePath), "应生成 SQLite 数据库。");
+        Assert(File.Exists(result.LocalExportPath), "应自动生成 local-run.json。");
+
+        var local = JsonNode.Parse(File.ReadAllText(result.LocalExportPath))!.AsObject();
+        Assert(local["schema_version"]?.GetValue<string>() == "1.1", "导出 Schema 应为 1.1。");
+        Assert(local["capabilities"]?.AsArray().Count == 1, "应有一个能力结果。");
+        Assert(local["programs"]?.AsArray().Count == 3, "应记录 Controller/Actor/Target。");
+        Assert(local["local_events"]?.AsArray().Count == 1, "应记录一个进程创建事件。");
+        Assert(local["cleanup_results"]?.AsArray().Count == 1, "应记录清理结果。");
+
+        var cloudPath = Path.Combine(fixture.Path, "cloud.json");
+        File.WriteAllText(cloudPath, CreateCloudExport(local).ToJsonString(JsonDefaults.Options));
+        var repository = FindRepositoryRoot();
+        var validationPath = Path.Combine(fixture.Path, "validation-result.json");
+        var validation = CompareService.Compare(new CompareRequest(
+            result.LocalExportPath,
+            [cloudPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"),
+            [Path.Combine(repository, "baselines", "windows", "process_create.yaml")],
+            validationPath));
+        Assert(validation["summary"]?["pass"]?.GetValue<int>() == 1, $"合成云端事件应通过比较：{validation.ToJsonString(JsonDefaults.Options)}");
+        Assert(validation["summary"]?["fail"]?.GetValue<int>() == 0, "不应出现 FAIL。");
+        Assert(File.Exists(validationPath), "应写出 validation-result.json。");
+
+        var inspect = InspectService.Inspect(result.DatabasePath);
+        Assert(inspect["status"]?.GetValue<string>() == "COMPLETED", "Inspect 应看到封存终态。");
+        var secondExport = Path.Combine(fixture.Path, "second-local-run.json");
+        ExportService.Export(result.DatabasePath, secondExport);
+        var second = JsonNode.Parse(File.ReadAllText(secondExport))!.AsObject();
+        Assert(second["integrity"]?["database_sha256"]?.GetValue<string>() == local["integrity"]?["database_sha256"]?.GetValue<string>(), "重复导出数据库 hash 应稳定。");
+        Assert(second["local_events"]!.ToJsonString() == local["local_events"]!.ToJsonString(), "重复导出业务事件应稳定。");
+    }
+
+    private static async Task TestHighRiskGate()
+    {
+        using var fixture = TestDirectory.Create();
+        var manifestPath = PreparePackage(fixture.Path, "L2", "--fixture-controller");
+        var result = await new RunnerService().RunAsync(new RunRequest([manifestPath], Path.Combine(fixture.Path, "runs"), null, false));
+        var local = JsonNode.Parse(File.ReadAllText(result.LocalExportPath))!.AsObject();
+        Assert(result.Status == "COMPLETED", "安全跳过不应使整轮报错。");
+        Assert(local["capabilities"]?[0]?["status"]?.GetValue<string>() == "SKIPPED", "L2 能力默认应跳过。");
+        Assert(local["capabilities"]?[0]?["error_code"]?.GetValue<string>() == "RISK_APPROVAL_REQUIRED", "应记录风险授权原因。");
+        Assert(local["programs"]?.AsArray().Count == 0, "跳过能力不应伪造程序实例。");
+    }
+
+    private static async Task TestControllerTimeout()
+    {
+        using var fixture = TestDirectory.Create();
+        var manifestPath = PreparePackage(fixture.Path, "L0", "--fixture-hang", executeSeconds: 1, cleanupSeconds: 1);
+        var result = await new RunnerService().RunAsync(new RunRequest([manifestPath], Path.Combine(fixture.Path, "runs"), null, false));
+        var local = JsonNode.Parse(File.ReadAllText(result.LocalExportPath))!.AsObject();
+        Assert(result.Status == "COMPLETED_WITH_ERRORS", "Controller 超时应使轮次带错误完成。");
+        Assert(local["capabilities"]?[0]?["status"]?.GetValue<string>() == "SAMPLE_ERROR", "超时能力应为 SAMPLE_ERROR。");
+        Assert(local["capabilities"]?[0]?["error_code"]?.GetValue<string>() == "CONTROLLER_TIMEOUT", "应保留超时错误码。");
+    }
+
+    private static async Task TestMultipleCapabilities()
+    {
+        using var fixture = TestDirectory.Create();
+        var firstManifest = PreparePackage(fixture.Path, "L0", "--fixture-controller");
+        var secondManifest = Path.Combine(Path.GetDirectoryName(firstManifest)!, "capability-second.json");
+        var second = JsonNode.Parse(File.ReadAllText(firstManifest))!.AsObject();
+        second["capability_id"] = "win.process.terminate";
+        second["display_name_zh"] = "进程终止测试夹具";
+        second["display_name_en"] = "Process Termination Fixture";
+        File.WriteAllText(secondManifest, second.ToJsonString(JsonDefaults.Options));
+        var result = await new RunnerService().RunAsync(new RunRequest([firstManifest, secondManifest], Path.Combine(fixture.Path, "runs"), null, false));
+        var local = JsonNode.Parse(File.ReadAllText(result.LocalExportPath))!.AsObject();
+        Assert(local["capabilities"]?.AsArray().Count == 2, "一轮应保存两个能力。");
+        Assert(local["programs"]?.AsArray().Count == 6, "两个能力应分别保存三个程序实例。");
+        Assert(local["local_events"]?.AsArray().Count == 2, "两个能力应分别保存本地事件。");
+        Assert(local["capabilities"]?[0]?["sequence"]?.GetValue<int>() == 1, "首个能力顺序应为 1。");
+        Assert(local["capabilities"]?[1]?["sequence"]?.GetValue<int>() == 2, "第二个能力顺序应为 2。");
+    }
+
+    private static async Task TestCancellation()
+    {
+        using var fixture = TestDirectory.Create();
+        var manifestPath = PreparePackage(fixture.Path, "L0", "--fixture-hang", executeSeconds: 20, cleanupSeconds: 5);
+        var runs = Path.Combine(fixture.Path, "runs");
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+        await AssertThrowsAsync<OperationCanceledException>(() =>
+            new RunnerService().RunAsync(new RunRequest([manifestPath], runs, null, false), cancellation.Token));
+        var databasePath = Directory.EnumerateFiles(runs, "*.db", SearchOption.AllDirectories).Single();
+        var inspect = InspectService.Inspect(databasePath);
+        Assert(inspect["status"]?.GetValue<string>() == "ABORTED", "取消后的数据库应封存为 ABORTED。");
+        Assert(inspect["capabilities"]?[0]?["status"]?.GetValue<string>() == "ABORTED", "当前能力应封存为 ABORTED。");
+    }
+
+    private static int RunFixtureController(string[] args)
+    {
+        try
+        {
+            var invocation = ControllerInvocation.Parse(args);
+            using var database = RunDatabase.OpenReadWrite(invocation.RunDb);
+            var observedAt = DateTimeOffset.UtcNow;
+            var controller = ProgramObservation.CaptureCurrent(invocation.CaseRunId, "controller");
+            var executable = controller.ExecutablePath;
+            var actor = CreateProgram(invocation.CaseRunId, "actor", 0, executable, Environment.ProcessId + 100, Environment.ProcessId, $"\"{executable}\" --fixture-actor --nonce {invocation.Nonce}", observedAt);
+            var target = CreateProgram(invocation.CaseRunId, "target", 0, executable, Environment.ProcessId + 101, actor.Pid, $"\"{executable}\" --fixture-target --nonce {invocation.Nonce}", observedAt.AddMilliseconds(10));
+            database.AddProgram(controller);
+            database.AddProgram(actor);
+            database.AddProgram(target);
+
+            var localEvent = new LocalEventObservation
+            {
+                CaseRunId = invocation.CaseRunId,
+                EventType = "process",
+                EventAction = "create",
+                Nonce = invocation.Nonce,
+                OccurredAtUtc = observedAt.AddMilliseconds(10),
+                ObservedAtUtc = observedAt.AddMilliseconds(15),
+                MonotonicOffsetMs = 15,
+                Source = "fixture_controller",
+                CollectionMethod = "process_handle_query",
+                Confidence = "high",
+                ActorProgramId = actor.ProgramInstanceId,
+                TargetProgramId = target.ProgramInstanceId,
+                Data = new JsonObject
+                {
+                    ["kind"] = "process",
+                    ["operation"] = "create",
+                    ["actor"] = ProcessReference(actor),
+                    ["target"] = ProcessReference(target),
+                    ["result"] = new JsonObject { ["attempted"] = true, ["succeeded"] = true, ["win32_error"] = 0 },
+                    ["creation"] = new JsonObject { ["creation_flags"] = 0, ["inherit_handles"] = false, ["initial_thread_id"] = 42 },
+                },
+            };
+            database.AddEvent(localEvent);
+            database.AddFact(new LocalFactObservation
+            {
+                CaseRunId = invocation.CaseRunId,
+                LocalEventId = localEvent.LocalEventId,
+                Key = "process.create_succeeded",
+                Value = JsonValue.Create(true),
+                ObservedAtUtc = observedAt,
+                Source = "fixture_controller",
+            });
+            database.AddCleanup(new CleanupObservation
+            {
+                CaseRunId = invocation.CaseRunId,
+                Action = "wait_fixture_target_exit",
+                Status = "succeeded",
+                StartedAtUtc = observedAt.AddMilliseconds(20),
+                EndedAtUtc = observedAt.AddMilliseconds(21),
+                Before = new JsonObject { ["exists"] = true },
+                After = new JsonObject { ["exists"] = false },
+            });
+            database.CompleteCapability(invocation.CaseRunId, "LOCAL_PASS", observedAt.AddMilliseconds(25), 25);
+            Console.WriteLine("{\"schema_version\":\"1.0\",\"status\":\"LOCAL_PASS\"}");
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception);
+            return 20;
+        }
+    }
+
+    private static ProgramObservation CreateProgram(string caseRunId, string role, int index, string executable, int pid, int parentPid, string commandLine, DateTimeOffset startedAt) => new()
+    {
+        CaseRunId = caseRunId,
+        Role = role,
+        InstanceIndex = index,
+        ExecutablePath = executable,
+        Sha256 = Hashing.FileSha256(executable),
+        Pid = pid,
+        ParentPid = parentPid,
+        Architecture = "x64",
+        CommandLine = commandLine,
+        WorkingDirectory = Environment.CurrentDirectory,
+        StartedAtUtc = startedAt,
+        StartupAttempted = true,
+        StartupSucceeded = true,
+    };
+
+    private static JsonObject ProcessReference(ProgramObservation program) => new()
+    {
+        ["program_instance_id"] = program.ProgramInstanceId,
+        ["pid"] = program.Pid,
+        ["parent_pid"] = program.ParentPid,
+        ["started_at_utc"] = Values.Utc(program.StartedAtUtc),
+        ["executable"] = program.ExecutablePath,
+        ["command_line"] = program.CommandLine,
+    };
+
+    private static string PreparePackage(string root, string riskLevel, string controllerArgument, int executeSeconds = 10, int cleanupSeconds = 5)
+    {
+        var packageDirectory = Path.Combine(root, "package");
+        CopyDirectory(AppContext.BaseDirectory, packageDirectory);
+        var executableName = Path.GetFileName(Environment.ProcessPath) ?? "EdrTest.Tests.exe";
+        var manifestPath = Path.Combine(packageDirectory, "capability.json");
+        File.WriteAllText(manifestPath, CreateManifest(executableName, riskLevel, controllerArgument, executeSeconds, cleanupSeconds).ToJsonString(JsonDefaults.Options));
+        return manifestPath;
+    }
+
+    private static JsonObject CreateManifest(string executable, string riskLevel, string controllerArgument = "--fixture-controller", int executeSeconds = 10, int cleanupSeconds = 5) => new()
+    {
+        ["schema_version"] = "1.1",
+        ["capability_id"] = "win.process.create",
+        ["version"] = "0.1.0",
+        ["display_name_zh"] = "进程创建",
+        ["display_name_en"] = "Process Creation",
+        ["platform"] = new JsonObject { ["os"] = "windows", ["architectures"] = new JsonArray("x64") },
+        ["risk_level"] = riskLevel,
+        ["required_privilege"] = "standard_user",
+        ["controller"] = new JsonObject { ["executable"] = executable, ["arguments"] = new JsonArray(controllerArgument) },
+        ["participants"] = new JsonArray(
+            new JsonObject { ["role"] = "actor", ["executable"] = executable, ["arguments"] = new JsonArray("--fixture-actor") },
+            new JsonObject { ["role"] = "target", ["executable"] = executable, ["arguments"] = new JsonArray("--fixture-target") }),
+        ["parameters"] = new JsonObject
+        {
+            ["target_lifetime_ms"] = new JsonObject { ["type"] = "integer", ["required"] = true, ["default"] = 100 },
+        },
+        ["timeouts"] = new JsonObject { ["execute_seconds"] = executeSeconds, ["cleanup_seconds"] = cleanupSeconds },
+        ["network"] = new JsonObject { ["required"] = false },
+        ["expected_fact_keys"] = new JsonArray("process.create_succeeded"),
+    };
+
+    private static JsonArray CreateCloudExport(JsonObject local)
+    {
+        var capability = local["capabilities"]!.AsArray()[0]!.AsObject();
+        var programs = local["programs"]!.AsArray().Select(x => x!.AsObject()).ToArray();
+        var actor = programs.Single(x => x["role"]!.GetValue<string>() == "actor");
+        var target = programs.Single(x => x["role"]!.GetValue<string>() == "target");
+        var host = local["run"]!["host"]!.AsObject();
+        var eventTime = DateTimeOffset.Parse(capability["started_at_utc"]!.GetValue<string>()).AddMilliseconds(20).ToUnixTimeMilliseconds();
+        return new JsonArray(new JsonObject
+        {
+            ["@table"] = "ProcEvents",
+            ["@collection"] = Values.Utc(DateTimeOffset.UtcNow),
+            ["Action.Type"] = "Proc",
+            ["Action.Name"] = "ProcessCreate",
+            ["Common.EventUUId"] = Ids.NewUuid7(),
+            ["Common.EventTime"] = eventTime,
+            ["Common.Mid"] = "fixture-mid",
+            ["Common.Guid"] = "fixture-agent",
+            ["Common.ClientVer"] = "fixture-1",
+            ["Environment.HostName"] = host["hostname"]!.GetValue<string>(),
+            ["Environment.OsVersion"] = host["os_version"]!.GetValue<string>(),
+            ["Child.ProcPid"] = target["pid"]!.GetValue<int>(),
+            ["Child.ProcGuid"] = Ids.NewUuid7(),
+            ["Child.FileName"] = target["file_name"]!.GetValue<string>(),
+            ["Child.FilePath"] = target["executable"]!.GetValue<string>(),
+            ["Child.ProcCmdline"] = target["command_line"]!.GetValue<string>(),
+            ["Child.ProcCreateTime"] = DateTimeOffset.Parse(target["started_at_utc"]!.GetValue<string>()).ToUnixTimeMilliseconds(),
+            ["Child.FileMd5"] = target["md5"]?.GetValue<string>() ?? string.Empty,
+            ["Child.ProcUserName"] = "fixture",
+            ["Child.ProcDomainName"] = "TEST",
+            ["Parent.ProcPid"] = actor["pid"]!.GetValue<int>(),
+            ["Parent.ProcGuid"] = Ids.NewUuid7(),
+            ["Parent.FileName"] = actor["file_name"]!.GetValue<string>(),
+            ["Parent.FilePath"] = actor["executable"]!.GetValue<string>(),
+            ["Parent.ProcCmdline"] = actor["command_line"]!.GetValue<string>(),
+            ["Parent.ProcCreateTime"] = DateTimeOffset.Parse(actor["started_at_utc"]!.GetValue<string>()).ToUnixTimeMilliseconds(),
+        });
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(Environment.CurrentDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "schemas", "run-db.sql"))) return directory.FullName;
+            directory = directory.Parent;
+        }
+        throw new DirectoryNotFoundException("无法定位仓库根目录。");
+    }
+
+    private static void CopyDirectory(string source, string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (var file in Directory.EnumerateFiles(source)) File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), true);
+        foreach (var directory in Directory.EnumerateDirectories(source)) CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)));
+    }
+
+    private static void Assert(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private static void AssertThrows<T>(Action action) where T : Exception
+    {
+        try
+        {
+            action();
+        }
+        catch (T)
+        {
+            return;
+        }
+        throw new InvalidOperationException($"预期抛出 {typeof(T).Name}。");
+    }
+
+    private static async Task AssertThrowsAsync<T>(Func<Task> action) where T : Exception
+    {
+        try
+        {
+            await action();
+        }
+        catch (T)
+        {
+            return;
+        }
+        throw new InvalidOperationException($"预期抛出 {typeof(T).Name}。");
+    }
+}
+
+internal sealed class TestDirectory : IDisposable
+{
+    private readonly bool preserve;
+
+    private TestDirectory(string path, bool preserve)
+    {
+        Path = path;
+        this.preserve = preserve;
+    }
+
+    public string Path { get; }
+
+    public static TestDirectory Create()
+    {
+        var preservedRoot = Environment.GetEnvironmentVariable("EDRTEST_TEST_OUTPUT");
+        var preserve = !string.IsNullOrWhiteSpace(preservedRoot);
+        var root = preserve ? System.IO.Path.GetFullPath(preservedRoot!) : System.IO.Path.GetTempPath();
+        var path = System.IO.Path.Combine(root, "edrtest-framework-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        return new TestDirectory(path, preserve);
+    }
+
+    public void Dispose()
+    {
+        if (!preserve && Directory.Exists(Path)) Directory.Delete(Path, recursive: true);
+    }
+}

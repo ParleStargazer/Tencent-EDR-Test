@@ -22,7 +22,7 @@
 核心技术决策：
 
 - 全部平台工具和首期 Windows 程序优先采用 C# / .NET 8；
-- `EdrTest.Runner.exe` 只负责编排一轮测试，不直接产生被测能力行为；
+- `EdrTest.exe run` 只负责编排一轮测试，不直接产生被测能力行为；
 - 每项能力必须有独立的 `*.Controller.exe`；
 - 行为侧至少一个 `*.Actor.exe`，按能力需要增加 `*.Target.exe` 或 `*.Helper.exe`；
 - Controller 是能力记录的唯一责任者，Actor/Target 不直接写数据库；
@@ -101,7 +101,7 @@ ProcessCreate.Controller.exe
 
 ```mermaid
 flowchart TB
-    U["用户 / 测试脚本"] --> R["EdrTest.Runner.exe"]
+    U["用户 / 测试脚本"] --> R["EdrTest.exe run"]
     R --> DB[("本轮 run-id.db")]
     R --> C1["Capability A Controller.exe"]
     R --> C2["Capability B Controller.exe"]
@@ -110,10 +110,10 @@ flowchart TB
     C2 --> A2["Actor.exe"]
     C1 --> DB
     C2 --> DB
-    DB --> X["EdrTest.Export.exe"]
+    DB --> X["EdrTest.exe export"]
     X --> LJ["local-run.json"]
     E["用户从 EDR 平台导出"] --> CJ["cloud-events.json"]
-    LJ --> P["EdrTest.Compare.exe"]
+    LJ --> P["EdrTest.exe compare"]
     CJ --> P
     M["Mapping Profile"] --> P
     B["BASELINE"] --> P
@@ -131,10 +131,14 @@ flowchart TB
 
 | 程序 | 职责 |
 | --- | --- |
-| `EdrTest.Runner.exe` | 创建 Test Run、选择能力、生成 Run ID、调度 Controller、封存数据库 |
-| `EdrTest.Export.exe` | 读取已封存 `.db`，校验结构并导出本地 JSON |
-| `EdrTest.Compare.exe` | 检查云端导出范围、规范化云端事件、执行 BASELINE、输出结果 JSON |
-| `EdrTest.Inspect.exe`（可选） | 查看数据库摘要、能力状态和清理情况，不修改数据库 |
+首版使用一个 `EdrTest.exe` 和多个子命令，降低发布、版本和依赖管理成本；逻辑职责仍然隔离：
+
+| 命令 | 职责 |
+| --- | --- |
+| `EdrTest.exe run` | 创建 Test Run、选择能力、生成 Run ID、调度 Controller、封存数据库 |
+| `EdrTest.exe export` | 读取已封存 `.db`，校验结构并导出本地 JSON |
+| `EdrTest.exe compare` | 规范化用户导入的云端事件、执行 BASELINE、输出结果 JSON |
+| `EdrTest.exe inspect` | 查看数据库摘要、能力状态和清理情况，不修改数据库 |
 
 ### 6.2 每项能力的两类程序
 
@@ -168,6 +172,9 @@ Controller 接收 Runner 下发的固定参数：
 --nonce <128-bit marker>
 --run-db <absolute-path>
 --work-dir <absolute-path>
+--manifest <absolute-capability-json-path>
+--package-dir <absolute-package-path>
+--parameters <absolute-json-path>
 --timeout-ms <integer>
 ```
 
@@ -327,10 +334,10 @@ stateDiagram-v2
 
 ## 10. 本地 JSON 导出
 
-`EdrTest.Export.exe` 的输入是已封存数据库，输出是版本化 JSON。示例命令：
+`EdrTest.exe export` 的输入是已封存数据库，输出是版本化 JSON。示例命令：
 
 ```powershell
-EdrTest.Export.exe --db .\runs\...\<run-id>.db --out .\local-run.json
+EdrTest.exe export --db .\runs\...\<run-id>.db --out .\local-run.json
 ```
 
 导出要求：
@@ -429,7 +436,7 @@ Normalizer 不得静默丢弃未知字段；报告记录未映射字段数，但
 示例：
 
 ```powershell
-EdrTest.Compare.exe compare `
+EdrTest.exe compare `
   --local .\local-run.json `
   --cloud .\EDR事件导出.json `
   --cloud-manifest .\cloud-export-manifest.json `
@@ -559,9 +566,9 @@ BASELINE 不包含腾讯字段名；腾讯字段只出现在 Mapping Profile 中
 | JSON | `System.Text.Json` 流式 API |
 | YAML | `YamlDotNet` |
 | Schema | JSON Schema Draft 2020-12 |
-| CLI | `System.CommandLine` |
-| 日志 | `Microsoft.Extensions.Logging`，结构化 JSON sink |
-| 测试 | xUnit + FluentAssertions |
+| CLI | 轻量内置参数解析，无额外依赖 |
+| 日志 | SQLite `execution_log` 结构化记录 |
+| 测试 | 无测试框架依赖的端到端测试程序 + Node 契约测试 |
 
 发布以 `win-x64` 为首个 Runtime Identifier。开发构建可 framework-dependent；测试机分发包可 self-contained，是否启用 single-file 由体积和 EDR 行为影响测试决定。
 
@@ -575,14 +582,9 @@ BASELINE 不包含腾讯字段名；腾讯字段只出现在 Mapping Profile 中
 ├─ mappings/                 云端导出格式映射
 ├─ schemas/                  DB、Manifest、导出和事件 Schema
 ├─ src/
-│  ├─ EdrTest.Runner/
-│  ├─ EdrTest.Export/
-│  ├─ EdrTest.Compare/
-│  ├─ EdrTest.Core/
-│  ├─ EdrTest.Storage.Sqlite/
-│  └─ EdrTest.CloudImport/
+│  └─ EdrTest/               单一 CLI 与可供 Controller 引用的 SDK
 └─ tests/
-   ├─ unit/
+   ├─ EdrTest.Tests/         外部 Controller + 完整离线闭环
    ├─ contract/
    ├─ integration/
    └─ e2e/

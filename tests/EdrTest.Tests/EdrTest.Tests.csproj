@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>EdrTest.Tests</AssemblyName>
+    <RootNamespace>EdrTest.Tests</RootNamespace>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\EdrTest\EdrTest.csproj" />
+  </ItemGroup>
+</Project>

@@ -28,6 +28,11 @@ venv/
 # Build and package output
 build/
 dist/
+**/bin/
+**/obj/
+TestResults/
+*.user
+*.suo
 
 # Run artifacts and imported EDR data
 /artifacts/
