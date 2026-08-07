@@ -208,7 +208,7 @@ Controller 是能力数据的唯一写入者。Actor、Target、Helper 通过匿
 
 Runner 负责“轮次”，Controller 负责“能力”。Runner 不替代能力 Controller。
 
-默认按用户选择顺序串行执行能力，原因是：
+默认按用户选择顺序串行执行能力，相邻能力默认等待 3 秒（可配置为 0–300 秒），原因是：
 
 - 降低 EDR 背景噪声和能力间相互影响；
 - 避免多个进程写 SQLite 的竞争；

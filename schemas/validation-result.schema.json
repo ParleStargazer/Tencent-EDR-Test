@@ -163,6 +163,35 @@
               }
             }
           },
+          "baseline_requirements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "requirement_id",
+                "scope",
+                "title_zh",
+                "field",
+                "operator",
+                "severity",
+                "status"
+              ],
+              "properties": {
+                "requirement_id": { "type": "string", "minLength": 1 },
+                "scope": { "enum": ["local", "cloud"] },
+                "title_zh": { "type": "string", "minLength": 1 },
+                "expectation_id": { "type": ["string", "null"] },
+                "field": { "type": "string", "minLength": 1 },
+                "operator": { "type": "string", "minLength": 1 },
+                "severity": { "enum": ["required", "recommended", "informational"] },
+                "status": { "enum": ["passed", "failed", "not_evaluated"] },
+                "expected": {},
+                "actual": {},
+                "message": { "type": ["string", "null"] }
+              }
+            }
+          },
           "warnings": {
             "type": "array",
             "items": { "type": "string" }

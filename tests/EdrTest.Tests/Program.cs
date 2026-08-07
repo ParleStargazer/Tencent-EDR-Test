@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using EdrTest;
@@ -95,6 +97,9 @@ public static class Program
         Assert(validation["schema_version"]?.GetValue<string>() == "1.1", "验证结果 Schema 应为 1.1。");
         Assert(validation["conclusion"]?["verdict"]?.GetValue<string>() == "PASS", "单项能力通过时总体结论应为 PASS。");
         Assert(validation["conclusion"]?["pass_rate"]?.GetValue<double>() == 1, "单项能力通过率应为 100%。");
+        var requirements = validation["capabilities"]?[0]?["baseline_requirements"]?.AsArray() ?? throw new InvalidOperationException("结果应包含 BASELINE 要求。");
+        Assert(requirements.Count == 13, "进程创建应展示 5 项本地要求、1 项事件数量要求和 7 项云端字段要求。");
+        Assert(requirements.Where(value => value?["severity"]?.GetValue<string>() == "required").All(value => value?["status"]?.GetValue<string>() == "passed"), "所有必需 BASELINE 要求都应通过。");
         Assert(File.Exists(validationPath), "应写出 validation-result.json。");
         var conclusionPath = ConclusionExportService.DefaultOutputPath(validationPath);
         Assert(File.Exists(conclusionPath), "应同时写出中文 Markdown 结论。");
@@ -110,6 +115,7 @@ public static class Program
             Path.Combine(fixture.Path, "insufficient-result.json")));
         Assert(insufficient["summary"]?["inconclusive"]?.GetValue<int>() == 1, "无法证明导出范围时，未命中应为 INCONCLUSIVE。");
         Assert(insufficient["capabilities"]?[0]?["export_coverage"]?.GetValue<string>() == "insufficient", "空日志的覆盖状态应为 insufficient。");
+        Assert(insufficient["capabilities"]?[0]?["baseline_requirements"]?.AsArray().Any(value => value?["scope"]?.GetValue<string>() == "cloud" && value?["status"]?.GetValue<string>() == "not_evaluated") == true, "没有云端候选时应明确标记未检查的云端要求。");
 
         var unmatchedCloudPath = Path.Combine(fixture.Path, "unmatched-cloud.json");
         File.WriteAllText(unmatchedCloudPath, CreateUnmatchedCloudExport(local).ToJsonString(JsonDefaults.Options));
@@ -121,6 +127,8 @@ public static class Program
             Path.Combine(fixture.Path, "inferred-miss-result.json")));
         Assert(inferredMiss["summary"]?["fail"]?.GetValue<int>() == 1, "同主机日志包住能力时间窗时，未命中应形成 FAIL。");
         Assert(inferredMiss["capabilities"]?[0]?["export_coverage"]?.GetValue<string>() == "inferred", "时间窗证据应标记为 inferred。");
+        var missingEventRequirement = inferredMiss["capabilities"]?[0]?["baseline_requirements"]?.AsArray().Single(value => value?["field"]?.GetValue<string>() == "event.count");
+        Assert(missingEventRequirement?["status"]?.GetValue<string>() == "failed" && missingEventRequirement["actual"]?.GetValue<int>() == 0, "事件缺失应显示为“至少 1 条，实际 0 条”。");
 
         var inspect = InspectService.Inspect(result.DatabasePath);
         Assert(inspect["status"]?.GetValue<string>() == "COMPLETED", "Inspect 应看到封存终态。");
@@ -164,13 +172,27 @@ public static class Program
         second["display_name_zh"] = "进程终止测试夹具";
         second["display_name_en"] = "Process Termination Fixture";
         File.WriteAllText(secondManifest, second.ToJsonString(JsonDefaults.Options));
-        var result = await new RunnerService().RunAsync(new RunRequest([firstManifest, secondManifest], Path.Combine(fixture.Path, "runs"), null, false));
+        var updates = new ConcurrentQueue<RunProgressUpdate>();
+        var stopwatch = Stopwatch.StartNew();
+        var result = await new RunnerService().RunAsync(new RunRequest(
+            [firstManifest, secondManifest],
+            Path.Combine(fixture.Path, "runs"),
+            null,
+            false,
+            InterCapabilityDelaySeconds: 1,
+            ProgressCallback: updates.Enqueue));
+        stopwatch.Stop();
         var local = JsonNode.Parse(File.ReadAllText(result.LocalExportPath))!.AsObject();
         Assert(local["capabilities"]?.AsArray().Count == 2, "一轮应保存两个能力。");
         Assert(local["programs"]?.AsArray().Count == 6, "两个能力应分别保存三个程序实例。");
         Assert(local["local_events"]?.AsArray().Count == 2, "两个能力应分别保存本地事件。");
         Assert(local["capabilities"]?[0]?["sequence"]?.GetValue<int>() == 1, "首个能力顺序应为 1。");
         Assert(local["capabilities"]?[1]?["sequence"]?.GetValue<int>() == 2, "第二个能力顺序应为 2。");
+        Assert(stopwatch.Elapsed >= TimeSpan.FromMilliseconds(900), "能力之间应执行配置的等待时间。");
+        Assert(updates.Any(value => value.Kind == "waiting_next" && value.WaitRemainingSeconds == 1), "进度流应包含下一项能力倒计时。");
+        var starts = updates.Where(value => value.Kind == "capability_started").Select(value => value.CapabilityId).ToArray();
+        Assert(starts.SequenceEqual(new[] { "win.process.create", "win.process.terminate" }), "能力开始事件必须保持用户选择顺序。");
+        Assert(new RunRequest([], "runs", null, false).InterCapabilityDelaySeconds == 3, "能力间默认等待时间应为 3 秒。");
     }
 
     private static async Task TestCancellation()

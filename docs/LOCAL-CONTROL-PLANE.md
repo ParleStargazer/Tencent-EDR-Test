@@ -64,6 +64,8 @@ pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -SkipBuild
 
 `POST /api/compare` 必须提供 `cloud_file`，并在 `operation_id` 与 `local_file` 中二选一。可选字段包括 `cloud_manifest`、`mapping_id` 和一个或多个 `baseline_id`；未指定 BASELINE 时，API 按本地导出中的能力 ID 自动选择。
 
+`POST /api/runs` 的 `inter_capability_delay_seconds` 用于设置相邻能力之间的等待时间，范围为 0–300 秒，默认 3 秒。Runner 始终按 `capability_ids` 顺序串行执行；轮次快照同时返回逐能力 `steps`、整体 `progress`、等待倒计时、最近详细 `logs` 和重点 `highlights`。
+
 ## 4. 安全边界
 
 - 服务只允许绑定 `localhost`、`127.0.0.1` 或 `::1`；
@@ -76,4 +78,4 @@ pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -SkipBuild
 
 ## 5. 前端行为
 
-前端始终展示规范化的 16 个活动域和 53 项能力。只有 API 实际发现的能力包可勾选，其余项目显示“样本待实现”。包含 L2/L3 能力时必须在页面显式确认高风险执行。页面轮询真实轮次状态，不再使用计时器模拟进度；比较完成后展示总体结论、能力明细，并支持分别下载标准 `validation-result.json` 与中文 `validation-conclusion.md`。
+前端始终展示规范化的 16 个活动域和 53 项能力，并拆分为工作台 `/`、进行测试 `/test` 和离线比较 `/compare` 三个路由。只有 API 实际发现的能力包可勾选，其余项目显示“样本待实现”。包含 L2/L3 能力时必须在页面显式确认高风险执行。测试页轮询真实逐能力进度，显示串行步骤、等待倒计时、重点日志和 Controller stdout/stderr；比较页展示总体结论及每条 BASELINE 要求的期望值、实际值和满足状态。

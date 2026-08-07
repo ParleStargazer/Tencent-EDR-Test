@@ -13,9 +13,25 @@ public sealed record RunRequest(
     string? ParametersJson,
     bool AllowHighRisk,
     string? SuiteId = null,
-    string? EnvironmentId = null);
+    string? EnvironmentId = null,
+    int InterCapabilityDelaySeconds = 3,
+    Action<RunProgressUpdate>? ProgressCallback = null);
 
 public sealed record RunResult(string RunId, string RunDirectory, string DatabasePath, string LocalExportPath, string Status);
+
+public sealed record RunProgressUpdate(
+    DateTimeOffset TimestampUtc,
+    string Kind,
+    string Level,
+    string Message,
+    int Progress,
+    int TotalCapabilities,
+    string? CapabilityId = null,
+    string? CapabilityName = null,
+    int? CapabilityIndex = null,
+    string? CapabilityStatus = null,
+    int? WaitRemainingSeconds = null,
+    bool Important = false);
 
 public sealed class RunnerService
 {
@@ -24,6 +40,7 @@ public sealed class RunnerService
     public async Task<RunResult> RunAsync(RunRequest request, CancellationToken cancellationToken = default)
     {
         if (request.ManifestPaths.Count == 0) throw new ArgumentException("至少需要一个能力清单。");
+        if (request.InterCapabilityDelaySeconds is < 0 or > 300) throw new ArgumentOutOfRangeException(nameof(request), "能力间等待时间必须在 0..300 秒内。");
         var packages = request.ManifestPaths.Select(CapabilityCatalog.Load).ToArray();
         if (packages.Select(x => x.Manifest.CapabilityId).Distinct(StringComparer.Ordinal).Count() != packages.Length)
         {
@@ -44,10 +61,25 @@ public sealed class RunnerService
             try
             {
                 database.AddLog(null, "info", "run", "测试轮次已创建。", properties: new JsonObject { ["run_id"] = runId });
+                Report(request, new RunProgressUpdate(started, "run_started", "info", $"测试轮次已创建，共 {packages.Length} 项能力，将严格串行执行。", 3, packages.Length, Important: true));
                 for (var index = 0; index < packages.Length; index++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var package = packages[index];
+                    var capabilityName = package.Manifest.DisplayNameZh ?? package.Manifest.DisplayName ?? package.Manifest.CapabilityId;
+                    var startProgress = 5 + (int)Math.Floor(index * 90d / packages.Length);
+                    Report(request, new RunProgressUpdate(
+                        DateTimeOffset.UtcNow,
+                        "capability_started",
+                        "info",
+                        $"开始第 {index + 1}/{packages.Length} 项：{capabilityName}。",
+                        startProgress,
+                        packages.Length,
+                        package.Manifest.CapabilityId,
+                        capabilityName,
+                        index + 1,
+                        "running",
+                        Important: true));
                     var caseRunId = Ids.NewUuid7();
                     var nonce = Ids.NewNonce();
                     var parameters = CapabilityCatalog.BuildParameters(package.Manifest, request.ParametersJson);
@@ -60,34 +92,44 @@ public sealed class RunnerService
                     if (Precheck(package.Manifest) is { } failure)
                     {
                         SkipCapability(database, caseRunId, failure.Code, failure.Message);
+                        ReportCapabilityCompleted(request, package, index, packages.Length, "SKIPPED", failure.Message);
+                        await WaitBeforeNextAsync(request, package, index, packages.Length, cancellationToken);
                         continue;
                     }
                     if (package.Manifest.RiskLevel is "L2" or "L3" && !request.AllowHighRisk)
                     {
                         SkipCapability(database, caseRunId, "RISK_APPROVAL_REQUIRED", "L2/L3 能力需要 --allow-high-risk。");
+                        ReportCapabilityCompleted(request, package, index, packages.Length, "SKIPPED", "未确认高风险执行，能力已跳过。");
+                        await WaitBeforeNextAsync(request, package, index, packages.Length, cancellationToken);
                         continue;
                     }
 
-                    var capabilityStatus = await ExecuteControllerAsync(database, package, runId, caseRunId, nonce, databasePath, caseDirectory, parameterPath, cancellationToken);
+                    var capabilityStatus = await ExecuteControllerAsync(database, package, runId, caseRunId, nonce, databasePath, caseDirectory, parameterPath, request, index, packages.Length, cancellationToken);
                     if (capabilityStatus is not ("LOCAL_PASS" or "SKIPPED")) runStatus = "COMPLETED_WITH_ERRORS";
+                    ReportCapabilityCompleted(request, package, index, packages.Length, capabilityStatus, CapabilityStatusMessage(capabilityStatus));
                     if (capabilityStatus == "CLEANUP_ERROR") break;
+                    await WaitBeforeNextAsync(request, package, index, packages.Length, cancellationToken);
                 }
                 database.Seal(runStatus, DateTimeOffset.UtcNow);
+                Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "run_completed", runStatus == "COMPLETED" ? "info" : "warning", runStatus == "COMPLETED" ? "全部能力执行完成，本地数据库已封存。" : "测试轮次已结束，但有能力未通过本地自验证。", 97, packages.Length, Important: true));
             }
             catch (OperationCanceledException)
             {
                 TryAbort(database, "RUN_CANCELLED", "用户取消了测试轮次。");
+                Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "run_cancelled", "warning", "用户取消了测试轮次，正在保留已产生的证据。", 100, packages.Length, Important: true));
                 throw;
             }
             catch (Exception exception)
             {
                 TryAbort(database, "RUN_ABORTED", exception.Message);
+                Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "run_failed", "error", $"测试轮次异常结束：{exception.Message}", 100, packages.Length, Important: true));
                 throw;
             }
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(exportPath)!);
         ExportService.Export(databasePath, exportPath);
+        Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "export_completed", "info", "本地运行结果 JSON 已生成，可以进入离线比较。", 100, packages.Length, Important: true));
         return new RunResult(runId, runDirectory, databasePath, exportPath, runStatus);
     }
 
@@ -100,6 +142,9 @@ public sealed class RunnerService
         string databasePath,
         string workDirectory,
         string parameterPath,
+        RunRequest request,
+        int capabilityIndex,
+        int totalCapabilities,
         CancellationToken cancellationToken)
     {
         var startedAt = DateTimeOffset.UtcNow;
@@ -129,8 +174,10 @@ public sealed class RunnerService
         try
         {
             using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Controller 启动返回空进程。");
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            var capabilityName = package.Manifest.DisplayNameZh ?? package.Manifest.DisplayName ?? package.Manifest.CapabilityId;
+            Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "controller_started", "info", $"控制程序已启动（PID {process.Id}）。", 8 + (int)Math.Floor(capabilityIndex * 90d / totalCapabilities), totalCapabilities, package.Manifest.CapabilityId, capabilityName, capabilityIndex + 1));
+            var stdoutTask = CaptureOutputAsync(process.StandardOutput, line => Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "controller_stdout", "info", line, 8 + (int)Math.Floor(capabilityIndex * 90d / totalCapabilities), totalCapabilities, package.Manifest.CapabilityId, capabilityName, capabilityIndex + 1)));
+            var stderrTask = CaptureOutputAsync(process.StandardError, line => Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "controller_stderr", "warning", line, 8 + (int)Math.Floor(capabilityIndex * 90d / totalCapabilities), totalCapabilities, package.Manifest.CapabilityId, capabilityName, capabilityIndex + 1, Important: true)));
             var timeout = TimeSpan.FromSeconds(package.Manifest.Timeouts.ExecuteSeconds + package.Manifest.Timeouts.CleanupSeconds);
             using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutSource.CancelAfter(timeout);
@@ -180,6 +227,61 @@ public sealed class RunnerService
         }
 
         return database.GetCapabilityStatus(caseRunId);
+    }
+
+    private static async Task<string> CaptureOutputAsync(StreamReader reader, Action<string> onLine)
+    {
+        var builder = new StringBuilder();
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            onLine(TruncateLine(line));
+            if (builder.Length < 16_384) builder.AppendLine(line);
+        }
+        return Truncate(builder.ToString());
+    }
+
+    private static string TruncateLine(string value) => value.Length <= 1_000 ? value : value[..1_000] + "…";
+
+    private static void ReportCapabilityCompleted(RunRequest request, CapabilityPackage package, int index, int total, string status, string message)
+    {
+        var name = package.Manifest.DisplayNameZh ?? package.Manifest.DisplayName ?? package.Manifest.CapabilityId;
+        var level = status is "LOCAL_PASS" or "SKIPPED" ? "info" : "warning";
+        var progress = 5 + (int)Math.Floor((index + 1) * 90d / total);
+        Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "capability_completed", level, $"{name}：{message}", progress, total, package.Manifest.CapabilityId, name, index + 1, status, Important: true));
+    }
+
+    private static async Task WaitBeforeNextAsync(RunRequest request, CapabilityPackage current, int index, int total, CancellationToken cancellationToken)
+    {
+        if (index >= total - 1 || request.InterCapabilityDelaySeconds == 0) return;
+        var name = current.Manifest.DisplayNameZh ?? current.Manifest.DisplayName ?? current.Manifest.CapabilityId;
+        var progress = 5 + (int)Math.Floor((index + 1) * 90d / total);
+        for (var remaining = request.InterCapabilityDelaySeconds; remaining > 0; remaining--)
+        {
+            Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "waiting_next", "info", $"{remaining} 秒后开始下一项能力。", progress, total, current.Manifest.CapabilityId, name, index + 1, "waiting", remaining));
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+        }
+    }
+
+    private static string CapabilityStatusMessage(string status) => status switch
+    {
+        "LOCAL_PASS" => "本地行为和清理均已验证通过。",
+        "SKIPPED" => "因前置条件不满足而跳过。",
+        "CLEANUP_ERROR" => "行为已发生，但清理失败，后续能力已停止。",
+        "ABORTED" => "执行被中止。",
+        _ => "本地行为未通过自验证。",
+    };
+
+    private static void Report(RunRequest request, RunProgressUpdate update)
+    {
+        try
+        {
+            request.ProgressCallback?.Invoke(update);
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"进度回调失败：{exception.Message}");
+        }
     }
 
     private static void AddArgument(ProcessStartInfo info, string name, string value)

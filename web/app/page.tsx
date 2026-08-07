@@ -1,5 +1,5 @@
 import { LiveControlPlane } from "./live-control-plane";
 
 export default function Home() {
-  return <LiveControlPlane />;
+  return <LiveControlPlane view="overview" />;
 }

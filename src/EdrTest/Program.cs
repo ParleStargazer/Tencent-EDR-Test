@@ -68,13 +68,19 @@ public static class Program
         }
         if (manifests.Count == 0) throw new ArgumentException("请使用 --manifest 或 --capability 选择能力。");
         var parameters = ReadInlineOrFile(options.Get("parameters"));
+        var delayText = options.Get("next-delay-seconds") ?? "3";
+        if (!int.TryParse(delayText, out var interCapabilityDelaySeconds) || interCapabilityDelaySeconds is < 0 or > 300)
+        {
+            throw new ArgumentException("--next-delay-seconds 必须是 0..300 的整数。");
+        }
         var request = new RunRequest(
             manifests,
             options.Get("runs-dir") ?? "runs",
             parameters,
             options.HasFlag("allow-high-risk"),
             options.Get("suite-id"),
-            options.Get("environment-id"));
+            options.Get("environment-id"),
+            interCapabilityDelaySeconds);
         var result = await new RunnerService().RunAsync(request);
         Console.WriteLine($"轮次：{result.RunId}");
         Console.WriteLine($"状态：{result.Status}");
@@ -162,7 +168,7 @@ public static class Program
             命令：
               capabilities --root samples
               run --manifest <capability.json> [--manifest <...>] [--runs-dir runs]
-                  [--parameters <json|@file>] [--allow-high-risk]
+                  [--parameters <json|@file>] [--allow-high-risk] [--next-delay-seconds 3]
               run --capability <id> [--samples-root samples]
               export --db <run.db> --out <local-run.json>
               compare --local <local-run.json> --cloud <cloud.json> [--cloud <...>]

@@ -31,6 +31,7 @@ public sealed class ApiRunStartRequest
     public string? Name { get; init; }
     public string? EnvironmentId { get; init; }
     public bool AllowHighRisk { get; init; }
+    public int InterCapabilityDelaySeconds { get; init; } = 3;
 }
 
 public sealed record ApiCapability(
@@ -42,9 +43,38 @@ public sealed record ApiCapability(
     string RequiredPrivilege,
     IReadOnlyList<string> Programs);
 
-public sealed record ApiBaseline(string BaselineId, string CapabilityId, string Title, string RiskLevel);
+public sealed record ApiBaselineRequirement(
+    string RequirementId,
+    string Scope,
+    string TitleZh,
+    string Field,
+    string Operator,
+    string Severity);
+
+public sealed record ApiBaseline(
+    string BaselineId,
+    string CapabilityId,
+    string Title,
+    string RiskLevel,
+    string Version,
+    IReadOnlyList<ApiBaselineRequirement> Requirements);
 
 public sealed record ApiMapping(string ProfileId, string Vendor, string Product, string Description);
+
+public sealed record ApiRunCapabilityStep(
+    string CapabilityId,
+    string NameZh,
+    int Sequence,
+    string Status,
+    string StatusLabel);
+
+public sealed record ApiRunLogEntry(
+    DateTimeOffset TimestampUtc,
+    string Level,
+    string Source,
+    string Message,
+    string? CapabilityId,
+    bool Important);
 
 public sealed record ApiRunSnapshot(
     string OperationId,
@@ -55,6 +85,13 @@ public sealed record ApiRunSnapshot(
     string Phase,
     IReadOnlyList<string> CapabilityIds,
     bool AllowHighRisk,
+    int InterCapabilityDelaySeconds,
+    int CompletedCapabilities,
+    string? CurrentCapabilityId,
+    int? WaitRemainingSeconds,
+    IReadOnlyList<ApiRunCapabilityStep> Steps,
+    IReadOnlyList<ApiRunLogEntry> Logs,
+    IReadOnlyList<ApiRunLogEntry> Highlights,
     DateTimeOffset StartedAtUtc,
     DateTimeOffset? EndedAtUtc,
     string? DatabaseName,
@@ -383,7 +420,13 @@ internal sealed class LocalApiCatalog
                 .Where(value => value.Value is not null)
                 .ToDictionary(
                     value => value.Value.BaselineId,
-                    value => (new ApiBaseline(value.Value.BaselineId, value.Value.Capability.Id, value.Value.Title ?? value.Value.BaselineId, value.Value.RiskLevel ?? "L0"), value.Path),
+                    value => (new ApiBaseline(
+                        value.Value.BaselineId,
+                        value.Value.Capability.Id,
+                        value.Value.Title ?? value.Value.BaselineId,
+                        value.Value.RiskLevel ?? "L0",
+                        value.Value.Version,
+                        BuildRequirements(value.Value)), value.Path),
                     StringComparer.Ordinal)
             : new Dictionary<string, (ApiBaseline, string)>(StringComparer.Ordinal);
         Baselines = baselines.Values.Select(value => value.Value).OrderBy(value => value.BaselineId, StringComparer.Ordinal).ToArray();
@@ -422,6 +465,35 @@ internal sealed class LocalApiCatalog
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
+
+    private static IReadOnlyList<ApiBaselineRequirement> BuildRequirements(BaselineDefinition baseline)
+    {
+        var requirements = baseline.LocalRequirements.Select((item, index) => new ApiBaselineRequirement(
+            $"local-{index + 1}",
+            "local",
+            CompareService.RequirementTitle(item.Field, item.Operator),
+            item.Field,
+            item.Operator,
+            item.Severity));
+        var cloud = baseline.CloudExpectations.SelectMany(expectation =>
+            new[]
+            {
+                new ApiBaselineRequirement(
+                    $"{expectation.Id}-cardinality",
+                    "cloud",
+                    $"必须找到至少 {expectation.Cardinality.Min} 条 {CompareService.EventActionTitle(expectation.EventActions)} EDR 事件",
+                    "event.count",
+                    "range",
+                    "required"),
+            }.Concat(expectation.Assertions.Select((item, index) => new ApiBaselineRequirement(
+                $"{expectation.Id}-{index + 1}",
+                "cloud",
+                CompareService.RequirementTitle(item.Field, item.Operator),
+                item.Field,
+                item.Operator,
+                item.Severity))));
+        return requirements.Concat(cloud).ToArray();
+    }
 }
 
 internal sealed class ApiRunCoordinator
@@ -441,6 +513,7 @@ internal sealed class ApiRunCoordinator
         var capabilityIds = request.CapabilityIds.Distinct(StringComparer.Ordinal).ToArray();
         if (capabilityIds.Length == 0) throw new ApiRequestException(400, "至少选择一个能力。");
         if (capabilityIds.Length != request.CapabilityIds.Count) throw new ApiRequestException(400, "capability_ids 不能重复。");
+        if (request.InterCapabilityDelaySeconds is < 0 or > 300) throw new ApiRequestException(400, "能力间等待时间必须在 0..300 秒内。");
         var packages = capabilityIds.Select(id => catalog.ResolvePackage(id) ?? throw new ApiRequestException(400, $"能力样本不可用：{id}")).ToArray();
         if (!request.AllowHighRisk && packages.Any(value => value.Manifest.RiskLevel is "L2" or "L3"))
         {
@@ -450,8 +523,9 @@ internal sealed class ApiRunCoordinator
         var state = new ApiRunState(
             Ids.NewUuid7(),
             request.Name?.Trim() is { Length: > 0 } name ? name : "未命名验证轮次",
-            capabilityIds,
+            packages,
             request.AllowHighRisk,
+            request.InterCapabilityDelaySeconds,
             DateTimeOffset.UtcNow);
         if (!states.TryAdd(state.OperationId, state)) throw new InvalidOperationException("无法创建唯一操作 ID。");
         _ = Task.Run(() => ExecuteAsync(state, packages, request.EnvironmentId));
@@ -498,7 +572,9 @@ internal sealed class ApiRunCoordinator
                 null,
                 state.AllowHighRisk,
                 state.Name,
-                environmentId), state.CancellationToken);
+                environmentId,
+                state.InterCapabilityDelaySeconds,
+                state.ApplyProgress), state.CancellationToken);
             state.Complete(result);
         }
         catch (OperationCanceledException)
@@ -528,9 +604,18 @@ internal sealed class ApiRunCoordinator
                 var runId = run?["run_id"]?.GetValue<string>();
                 if (string.IsNullOrWhiteSpace(runId)) continue;
                 var status = run?["status"]?.GetValue<string>() ?? "UNKNOWN";
-                var capabilityIds = root?["capabilities"]?.AsArray()
-                    .Select(value => value?["capability_id"]?.GetValue<string>())
-                    .Where(value => value is not null).Cast<string>().ToArray() ?? [];
+                var capabilityNodes = root?["capabilities"]?.AsArray().Select(value => value?.AsObject()).Where(value => value is not null).Cast<JsonObject>().ToArray() ?? [];
+                var capabilityIds = capabilityNodes.Select(value => value["capability_id"]?.GetValue<string>()).Where(value => value is not null).Cast<string>().ToArray();
+                var steps = capabilityNodes.Select((value, index) =>
+                {
+                    var capabilityStatus = value["status"]?.GetValue<string>() ?? "UNKNOWN";
+                    return new ApiRunCapabilityStep(
+                        value["capability_id"]?.GetValue<string>() ?? $"unknown-{index + 1}",
+                        value["display_name_zh"]?.GetValue<string>() ?? value["capability_id"]?.GetValue<string>() ?? "未知能力",
+                        index + 1,
+                        StepStatus(capabilityStatus),
+                        StepStatusLabel(capabilityStatus));
+                }).ToArray();
                 var started = DateTimeOffset.Parse(run?["started_at_utc"]?.GetValue<string>() ?? throw new InvalidDataException());
                 var endedText = run?["ended_at_utc"]?.GetValue<string>();
                 var runDirectory = Directory.GetParent(Path.GetDirectoryName(path)!)!.FullName;
@@ -544,6 +629,13 @@ internal sealed class ApiRunCoordinator
                     status == "COMPLETED" ? "本地轮次已完成" : "本地轮次带错误完成",
                     capabilityIds,
                     false,
+                    3,
+                    steps.Count(value => value.Status is "passed" or "error" or "skipped" or "cancelled"),
+                    null,
+                    null,
+                    steps,
+                    [],
+                    [],
                     started,
                     endedText is null ? null : DateTimeOffset.Parse(endedText),
                     File.Exists(databasePath) ? Path.GetFileName(databasePath) : null,
@@ -559,6 +651,25 @@ internal sealed class ApiRunCoordinator
         return results;
     }
 
+    private static string StepStatus(string capabilityStatus) => capabilityStatus switch
+    {
+        "LOCAL_PASS" => "passed",
+        "SKIPPED" => "skipped",
+        "ABORTED" => "cancelled",
+        "SAMPLE_ERROR" or "CLEANUP_ERROR" => "error",
+        _ => "pending",
+    };
+
+    private static string StepStatusLabel(string capabilityStatus) => capabilityStatus switch
+    {
+        "LOCAL_PASS" => "本地验证通过",
+        "SKIPPED" => "已跳过",
+        "ABORTED" => "已取消",
+        "SAMPLE_ERROR" => "本地验证失败",
+        "CLEANUP_ERROR" => "清理失败",
+        _ => "状态未知",
+    };
+
     private sealed record HistoricalRun(string RunId, string ExportPath, ApiRunSnapshot Snapshot);
 }
 
@@ -566,28 +677,42 @@ internal sealed class ApiRunState
 {
     private readonly object sync = new();
     private readonly CancellationTokenSource cancellation = new();
+    private readonly List<ApiRunCapabilityStep> steps;
+    private readonly List<ApiRunLogEntry> logs = [];
     private string? runId;
     private string status = "queued";
     private int progress = 5;
     private string phase = "等待 Runner 调度";
+    private int completedCapabilities;
+    private string? currentCapabilityId;
+    private int? waitRemainingSeconds;
     private DateTimeOffset? endedAt;
     private string? databaseName;
     private string? localExportPath;
     private string? error;
 
-    public ApiRunState(string operationId, string name, IReadOnlyList<string> capabilityIds, bool allowHighRisk, DateTimeOffset startedAt)
+    public ApiRunState(string operationId, string name, IReadOnlyList<CapabilityPackage> packages, bool allowHighRisk, int interCapabilityDelaySeconds, DateTimeOffset startedAt)
     {
         OperationId = operationId;
         Name = name;
-        CapabilityIds = capabilityIds;
+        CapabilityIds = packages.Select(value => value.Manifest.CapabilityId).ToArray();
         AllowHighRisk = allowHighRisk;
+        InterCapabilityDelaySeconds = interCapabilityDelaySeconds;
         StartedAt = startedAt;
+        steps = packages.Select((value, index) => new ApiRunCapabilityStep(
+            value.Manifest.CapabilityId,
+            value.Manifest.DisplayNameZh ?? value.Manifest.DisplayName ?? value.Manifest.CapabilityId,
+            index + 1,
+            "pending",
+            "等待执行")).ToList();
+        AddLog(new ApiRunLogEntry(startedAt, "info", "queue", $"轮次已进入队列，共 {steps.Count} 项能力。", null, true));
     }
 
     public string OperationId { get; }
     public string Name { get; }
     public IReadOnlyList<string> CapabilityIds { get; }
     public bool AllowHighRisk { get; }
+    public int InterCapabilityDelaySeconds { get; }
     public DateTimeOffset StartedAt { get; }
     public CancellationToken CancellationToken => cancellation.Token;
     public string? LocalExportPath { get { lock (sync) return localExportPath; } }
@@ -597,8 +722,43 @@ internal sealed class ApiRunState
         lock (sync)
         {
             status = "running";
-            progress = 15;
-            phase = "Runner 正在串行执行 Controller";
+            progress = 3;
+            phase = "Runner 已启动，准备串行执行";
+            AddLog(new ApiRunLogEntry(DateTimeOffset.UtcNow, "info", "runner", "Runner 已启动，能力之间不会并行执行。", null, true));
+        }
+    }
+
+    public void ApplyProgress(RunProgressUpdate update)
+    {
+        lock (sync)
+        {
+            progress = Math.Clamp(update.Progress, progress, 100);
+            phase = update.Message;
+            currentCapabilityId = update.Kind is "run_completed" or "export_completed" ? null : update.CapabilityId ?? currentCapabilityId;
+            waitRemainingSeconds = update.Kind == "waiting_next" ? update.WaitRemainingSeconds : null;
+            if (update.CapabilityId is { } capabilityId)
+            {
+                var index = steps.FindIndex(value => value.CapabilityId == capabilityId);
+                if (index >= 0)
+                {
+                    var step = steps[index];
+                    if (update.Kind == "capability_started") steps[index] = step with { Status = "running", StatusLabel = "正在执行" };
+                    else if (update.Kind == "capability_completed")
+                    {
+                        var mapped = update.CapabilityStatus switch
+                        {
+                            "LOCAL_PASS" => ("passed", "本地验证通过"),
+                            "SKIPPED" => ("skipped", "已跳过"),
+                            "ABORTED" => ("cancelled", "已取消"),
+                            "CLEANUP_ERROR" => ("error", "清理失败"),
+                            _ => ("error", "本地验证失败"),
+                        };
+                        steps[index] = step with { Status = mapped.Item1, StatusLabel = mapped.Item2 };
+                        completedCapabilities = steps.Count(value => value.Status is "passed" or "error" or "skipped" or "cancelled");
+                    }
+                }
+            }
+            AddLog(new ApiRunLogEntry(update.TimestampUtc, update.Level, update.Kind, update.Message, update.CapabilityId, update.Important));
         }
     }
 
@@ -614,6 +774,8 @@ internal sealed class ApiRunState
             databaseName = Path.GetFileName(result.DatabasePath);
             localExportPath = result.LocalExportPath;
             error = result.Status == "COMPLETED" ? null : result.Status;
+            currentCapabilityId = null;
+            waitRemainingSeconds = null;
         }
     }
 
@@ -624,6 +786,7 @@ internal sealed class ApiRunState
             if (status is not ("queued" or "running")) return false;
             status = "cancelling";
             phase = "正在取消并清理进程树";
+            AddLog(new ApiRunLogEntry(DateTimeOffset.UtcNow, "warning", "cancel", "已收到取消请求，正在终止进程树并保留证据。", currentCapabilityId, true));
             cancellation.Cancel();
             return true;
         }
@@ -637,6 +800,14 @@ internal sealed class ApiRunState
             phase = "轮次已取消，数据库已封存为 ABORTED";
             endedAt = DateTimeOffset.UtcNow;
             error = "RUN_CANCELLED";
+            if (currentCapabilityId is { } capabilityId)
+            {
+                var index = steps.FindIndex(value => value.CapabilityId == capabilityId && value.Status == "running");
+                if (index >= 0) steps[index] = steps[index] with { Status = "cancelled", StatusLabel = "已取消" };
+            }
+            completedCapabilities = steps.Count(value => value.Status is "passed" or "error" or "skipped" or "cancelled");
+            currentCapabilityId = null;
+            waitRemainingSeconds = null;
         }
     }
 
@@ -648,6 +819,13 @@ internal sealed class ApiRunState
             phase = "Runner 执行失败";
             endedAt = DateTimeOffset.UtcNow;
             error = message;
+            if (currentCapabilityId is { } capabilityId)
+            {
+                var index = steps.FindIndex(value => value.CapabilityId == capabilityId && value.Status == "running");
+                if (index >= 0) steps[index] = steps[index] with { Status = "error", StatusLabel = "Runner 异常" };
+            }
+            completedCapabilities = steps.Count(value => value.Status is "passed" or "error" or "skipped" or "cancelled");
+            AddLog(new ApiRunLogEntry(DateTimeOffset.UtcNow, "error", "runner", message, currentCapabilityId, true));
         }
     }
 
@@ -664,12 +842,25 @@ internal sealed class ApiRunState
                 phase,
                 CapabilityIds,
                 AllowHighRisk,
+                InterCapabilityDelaySeconds,
+                completedCapabilities,
+                currentCapabilityId,
+                waitRemainingSeconds,
+                steps.ToArray(),
+                logs.TakeLast(300).ToArray(),
+                logs.Where(value => value.Important || value.Level is "warning" or "error").TakeLast(12).ToArray(),
                 StartedAt,
                 endedAt,
                 databaseName,
                 localExportPath is not null && File.Exists(localExportPath),
                 error);
         }
+    }
+
+    private void AddLog(ApiRunLogEntry entry)
+    {
+        logs.Add(entry);
+        if (logs.Count > 500) logs.RemoveRange(0, logs.Count - 500);
     }
 }
 

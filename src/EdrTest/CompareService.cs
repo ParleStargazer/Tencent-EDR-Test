@@ -273,17 +273,30 @@ public static class CompareService
         var caseRunId = RequiredString(capability, "case_run_id");
         var localStatus = RequiredString(capability, "status");
         var warnings = new JsonArray();
-        if (localStatus != "LOCAL_PASS") return NotCompared(capabilityId, caseRunId, localStatus, "本地能力未达到 LOCAL_PASS。");
-
         var resolver = new LocalResolver(localRoot, capability);
-        var failedLocal = baseline.LocalRequirements
-            .Select(requirement => Evaluate(requirement, resolver.Resolve(requirement.Field), resolver))
+        var outputRequirements = new JsonArray();
+        var localEvaluations = baseline.LocalRequirements
+            .Select((requirement, index) => (Requirement: requirement, Index: index, Evaluation: Evaluate(requirement, resolver.Resolve(requirement.Field), resolver)))
+            .ToArray();
+        foreach (var item in localEvaluations)
+        {
+            outputRequirements.Add(RequirementJson($"local-{item.Index + 1}", "local", null, item.Evaluation));
+        }
+        if (localStatus != "LOCAL_PASS")
+        {
+            AddUnevaluatedCloudRequirements(outputRequirements, baseline, resolver, "本地能力未通过，因此未检查云端要求。");
+            return CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", "insufficient", 0, null, new JsonArray(), outputRequirements, new JsonArray("本地能力未达到 LOCAL_PASS。"));
+        }
+
+        var failedLocal = localEvaluations
+            .Select(value => value.Evaluation)
             .Where(x => x.Status != "passed")
             .ToArray();
         if (failedLocal.Length > 0)
         {
             foreach (var assertion in failedLocal) warnings.Add($"本地前置断言未通过：{assertion.Field}");
-            return CapabilityResult(caseRunId, capabilityId, localStatus, "INCONCLUSIVE", "insufficient", 0, null, new JsonArray(), warnings);
+            AddUnevaluatedCloudRequirements(outputRequirements, baseline, resolver, "本地前置要求未满足，因此未检查云端要求。");
+            return CapabilityResult(caseRunId, capabilityId, localStatus, "INCONCLUSIVE", "insufficient", 0, null, new JsonArray(), outputRequirements, warnings);
         }
 
         var start = DateTimeOffset.Parse(RequiredString(capability, "started_at_utc"), CultureInfo.InvariantCulture);
@@ -304,8 +317,22 @@ public static class CompareService
                 .ThenBy(item => item.Event.RawRef, StringComparer.Ordinal)
                 .ToArray();
             totalCandidates += candidates.Length;
+            var cardinalityStatus = candidates.Length < expectation.Cardinality.Min
+                ? exportCoverage is "verified" or "inferred" or "assumed" ? "failed" : "not_evaluated"
+                : expectation.Cardinality.Max is { } cardinalityMaximum && candidates.Length > cardinalityMaximum
+                    ? "not_evaluated"
+                    : "passed";
+            var cardinalityMessage = cardinalityStatus switch
+            {
+                "failed" => "EDR 日志范围足以形成判断，但没有找到要求数量的事件。",
+                "not_evaluated" when candidates.Length < expectation.Cardinality.Min => "日志范围不足，无法确认事件是否真的缺失。",
+                "not_evaluated" => "候选事件过多，无法唯一关联。",
+                _ => null,
+            };
+            outputRequirements.Add(CardinalityRequirementJson(expectation, candidates.Length, cardinalityStatus, cardinalityMessage));
             if (candidates.Length < expectation.Cardinality.Min)
             {
+                AddUnevaluatedExpectationRequirements(outputRequirements, expectation, resolver, "没有找到可关联的 EDR 事件，无法检查该项。", includeCardinality: false);
                 if (exportCoverage is "verified" or "inferred" or "assumed")
                 {
                     warnings.Add($"未找到满足“{baseline.Title ?? capabilityId}”基准的 EDR 云端事件（{expectation.Id}：找到 {candidates.Length} 条，至少需要 {expectation.Cardinality.Min} 条；导出覆盖状态：{exportCoverage}）。");
@@ -328,6 +355,7 @@ public static class CompareService
             {
                 warnings.Add($"“{baseline.Title ?? capabilityId}”存在多个同分候选事件，无法唯一关联（{expectation.Id}）。");
                 overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+                AddUnevaluatedExpectationRequirements(outputRequirements, expectation, resolver, "存在多个同分候选事件，无法确定应检查哪一条。", includeCardinality: false);
                 continue;
             }
 
@@ -344,6 +372,7 @@ public static class CompareService
                 var evaluated = Evaluate(assertion, selected.Event.Get(assertion.Field), resolver);
                 var fieldName = baseline.CloudExpectations.Count == 1 ? evaluated.Field : $"{expectation.Id}:{evaluated.Field}";
                 outputAssertions.Add(evaluated.ToJson(fieldName));
+                outputRequirements.Add(RequirementJson($"{expectation.Id}-{expectation.Assertions.IndexOf(assertion) + 1}", "cloud", expectation.Id, evaluated));
                 if (evaluated.Status == "not_evaluated") overallStatus = Worse(overallStatus, "INCONCLUSIVE");
                 else if (evaluated.Status == "failed" && assertion.Severity == "required") overallStatus = Worse(overallStatus, "FAIL");
                 else if (evaluated.Status == "failed" && assertion.Severity == "recommended") overallStatus = Worse(overallStatus, "PARTIAL");
@@ -355,8 +384,102 @@ public static class CompareService
             warnings.Add("BASELINE 没有 cloud_expectations。");
             overallStatus = "INCONCLUSIVE";
         }
-        return CapabilityResult(caseRunId, capabilityId, localStatus, overallStatus, exportCoverage, totalCandidates, firstSelected, outputAssertions, warnings);
+        return CapabilityResult(caseRunId, capabilityId, localStatus, overallStatus, exportCoverage, totalCandidates, firstSelected, outputAssertions, outputRequirements, warnings);
     }
+
+    private static void AddUnevaluatedCloudRequirements(JsonArray output, BaselineDefinition baseline, LocalResolver resolver, string message)
+    {
+        foreach (var expectation in baseline.CloudExpectations)
+        {
+            AddUnevaluatedExpectationRequirements(output, expectation, resolver, message);
+        }
+    }
+
+    private static void AddUnevaluatedExpectationRequirements(JsonArray output, CloudExpectation expectation, LocalResolver resolver, string message, bool includeCardinality = true)
+    {
+        if (includeCardinality) output.Add(CardinalityRequirementJson(expectation, null, "not_evaluated", message));
+        for (var index = 0; index < expectation.Assertions.Count; index++)
+        {
+            var definition = expectation.Assertions[index];
+            var evaluated = Evaluate(definition, null, resolver) with { Status = "not_evaluated", Actual = null, Message = message };
+            output.Add(RequirementJson($"{expectation.Id}-{index + 1}", "cloud", expectation.Id, evaluated));
+        }
+    }
+
+    private static JsonObject CardinalityRequirementJson(CloudExpectation expectation, int? actual, string status, string? message) => new()
+    {
+        ["requirement_id"] = $"{expectation.Id}-cardinality",
+        ["scope"] = "cloud",
+        ["title_zh"] = $"必须找到至少 {expectation.Cardinality.Min} 条 {EventActionTitle(expectation.EventActions)} EDR 事件",
+        ["expectation_id"] = expectation.Id,
+        ["field"] = "event.count",
+        ["operator"] = "range",
+        ["severity"] = "required",
+        ["status"] = status,
+        ["expected"] = new JsonObject { ["min"] = expectation.Cardinality.Min, ["max"] = expectation.Cardinality.Max },
+        ["actual"] = actual,
+        ["message"] = message,
+    };
+
+    private static JsonObject RequirementJson(string requirementId, string scope, string? expectationId, AssertionEvaluation evaluation)
+    {
+        var result = evaluation.ToJson();
+        result["requirement_id"] = requirementId;
+        result["scope"] = scope;
+        result["title_zh"] = RequirementTitle(evaluation.Field, evaluation.Operator);
+        result["expectation_id"] = expectationId;
+        return result;
+    }
+
+    internal static string RequirementTitle(string field, string @operator)
+    {
+        var subject = field switch
+        {
+            "facts.process.create_succeeded" => "本地进程创建行为",
+            "programs.actor.pid" => "行为执行程序 PID",
+            "programs.actor.command_line" => "行为执行程序命令行",
+            "programs.actor.executable" => "行为执行程序路径",
+            "programs.target.pid" => "被测目标进程 PID",
+            "programs.target.command_line" => "被测目标进程命令行",
+            "programs.target.executable" => "被测目标程序路径",
+            "process.pid" => "EDR 记录的目标进程 PID",
+            "process.executable" => "EDR 记录的目标程序路径",
+            "process.command_line" => "EDR 记录的目标进程命令行",
+            "process.entity_id" => "EDR 进程唯一标识",
+            "process.hash.md5" => "EDR 记录的进程 MD5",
+            "parent_process.pid" or "source_process.pid" => "EDR 记录的发起进程 PID",
+            "parent_process.executable" or "source_process.executable" => "EDR 记录的发起程序路径",
+            "file.path" => "EDR 记录的文件路径",
+            "file.name" => "EDR 记录的文件名",
+            "thread.id" => "EDR 记录的线程 ID",
+            _ when field.StartsWith("facts.", StringComparison.Ordinal) => "本地行为证据",
+            _ => $"字段 {field}",
+        };
+        var requirement = @operator switch
+        {
+            "present" => "必须有值",
+            "absent" => "必须为空",
+            "equals" or "ref_equals" => "必须与本地事实一致",
+            "not_equals" => "必须与禁用值不同",
+            "contains" => "必须包含本轮测试标记",
+            "one_of" => "必须属于允许值",
+            "range" => "必须在允许范围内",
+            "timestamp_between" => "必须落在测试时间窗内",
+            _ => $"必须满足 {@operator}",
+        };
+        return $"{subject}{requirement}";
+    }
+
+    internal static string EventActionTitle(IReadOnlyList<string> actions) => string.Join("/", actions.Select(action => action switch
+    {
+        "create" => "进程创建",
+        "terminate" => "进程终止",
+        "access" => "进程访问",
+        "image_load" => "镜像或动态库加载",
+        "remote_thread_create" => "远程线程创建",
+        "tamper" => "进程篡改",
+        _ => action,
+    }));
 
     private static string DetermineExportCoverage(
         JsonObject localRoot,
@@ -691,7 +814,7 @@ public static class CompareService
         return false;
     }
 
-    private static JsonObject CapabilityResult(string caseRunId, string capabilityId, string localStatus, string validationStatus, string exportCoverage, int candidateCount, JsonObject? selected, JsonArray assertions, JsonArray warnings) => new()
+    private static JsonObject CapabilityResult(string caseRunId, string capabilityId, string localStatus, string validationStatus, string exportCoverage, int candidateCount, JsonObject? selected, JsonArray assertions, JsonArray requirements, JsonArray warnings) => new()
     {
         ["case_run_id"] = caseRunId,
         ["capability_id"] = capabilityId,
@@ -701,11 +824,12 @@ public static class CompareService
         ["candidate_count"] = candidateCount,
         ["selected_event"] = selected,
         ["assertions"] = assertions,
+        ["baseline_requirements"] = requirements,
         ["warnings"] = warnings,
     };
 
     private static JsonObject NotCompared(string capabilityId, string caseRunId, string localStatus, string warning) =>
-        CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", "insufficient", 0, null, new JsonArray(), new JsonArray(warning));
+        CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", "insufficient", 0, null, new JsonArray(), new JsonArray(), new JsonArray(warning));
 
     private static string Worse(string current, string candidate)
     {
