@@ -94,6 +94,10 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /127\.0\.0\.1:4317\/api/);
   assert.match(livePage, /apiRequest<ApiRun>\("\/runs"/);
   assert.match(livePage, /apiRequest<ValidationResult>\("\/compare"/);
+  assert.match(livePage, /总体结论/);
+  assert.match(livePage, /下载验证结果 JSON/);
+  assert.match(livePage, /\/reports\/\$\{comparison\.comparison_id\}\/conclusion/);
+  assert.match(livePage, /下载中文结论 Markdown/);
   assert.doesNotMatch(livePage, /当前为控制面阶段|真实 EXE 调度将在/);
 
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));

@@ -2,7 +2,7 @@ schema_version: "1.0"
 profile_id: tencent-edr-proc-events-v1
 vendor: Tencent
 product: Tencent EDR
-description: 将控制台导出的扁平 ProcEvents JSON 数组映射为平台 Canonical Event。
+description: 将控制台导出的 Windows 进程、注入与模块事件映射为平台 Canonical Event。
 
 input:
   containers:
@@ -11,10 +11,10 @@ input:
   encoding: utf-8
   record_selector:
     all:
-      "@table": ProcEvents
-      "Action.Type": Proc
+      "OS": Windows
   event_id_field: "Common.EventUUId"
   host_id_field: "Common.Mid"
+  host_name_field: "Environment.HostName"
   event_time:
     field: "Common.EventTime"
     format: unix_ms
@@ -22,6 +22,7 @@ input:
 routes:
   - route_id: process-create
     when:
+      "Action.Type": Proc
       "Action.Name": ProcessCreate
     canonical:
       "event.type":
@@ -37,7 +38,7 @@ routes:
         transform:
           - unix_ms_to_utc
       "event.observed":
-        source: "@collection"
+        source: "@timestamp"
         transform:
           - parse_datetime_to_utc
         on_error: null
@@ -95,6 +96,200 @@ routes:
       "user.domain":
         source: "Child.ProcDomainName"
         on_empty: null
+
+  - route_id: process-access
+    when:
+      "Action.Type": InjectHook
+      "Action.Name": NtOpenProcess
+    canonical:
+      "event.type":
+        constant: process
+      "event.action":
+        constant: access
+      "event.category":
+        constant: process
+      "event.id":
+        source: "Common.EventUUId"
+      "event.created":
+        source: "Common.EventTime"
+        transform: [unix_ms_to_utc]
+      "event.observed":
+        source: "@timestamp"
+        transform: [parse_datetime_to_utc]
+        on_error: null
+      "host.id":
+        source: "Common.Mid"
+      "host.hostname":
+        source: "Environment.HostName"
+      "process.pid":
+        source: "Child.ProcPid"
+      "process.entity_id":
+        source: "Child.ProcGuid"
+      "process.name":
+        source: "Child.FileName"
+      "process.executable":
+        source: "Child.FilePath"
+        transform: [windows_path]
+      "process.command_line":
+        source: "Child.ProcCmdline"
+      "source_process.pid":
+        source: "Parent.ProcPid"
+      "source_process.entity_id":
+        source: "Parent.ProcGuid"
+      "source_process.name":
+        source: "Parent.FileName"
+      "source_process.executable":
+        source: "Parent.FilePath"
+        transform: [windows_path]
+      "source_process.command_line":
+        source: "Parent.ProcCmdline"
+
+  - route_id: image-load
+    when:
+      "Action.Type": Module
+      "Action.Name": LoadDll
+    canonical:
+      "event.type":
+        constant: process
+      "event.action":
+        constant: image_load
+      "event.category":
+        constant: process
+      "event.id":
+        source: "Common.EventUUId"
+      "event.created":
+        source: "Common.EventTime"
+        transform: [unix_ms_to_utc]
+      "event.observed":
+        source: "@timestamp"
+        transform: [parse_datetime_to_utc]
+        on_error: null
+      "host.id":
+        source: "Common.Mid"
+      "host.hostname":
+        source: "Environment.HostName"
+      "process.pid":
+        source: "Parent.ProcPid"
+      "process.entity_id":
+        source: "Parent.ProcGuid"
+      "process.name":
+        source: "Parent.FileName"
+      "process.executable":
+        source: "Parent.FilePath"
+        transform: [windows_path]
+      "process.command_line":
+        source: "Parent.ProcCmdline"
+      "file.name":
+        source: "Child.FileName"
+      "file.path":
+        source: "Child.FilePath"
+        transform: [windows_path]
+      "file.hash.md5":
+        source: "Child.FileMd5"
+        transform: [lowercase]
+        on_empty: null
+      "image.base_address":
+        source: "Child.ModuleBase"
+      "image.size_bytes":
+        source: "Child.ModuleSize"
+
+  - route_id: remote-thread
+    when:
+      "Action.Type": Proc
+      "Action.Name": RemoteThread
+    canonical:
+      "event.type":
+        constant: process
+      "event.action":
+        constant: remote_thread_create
+      "event.category":
+        constant: process
+      "event.id":
+        source: "Common.EventUUId"
+      "event.created":
+        source: "Common.EventTime"
+        transform: [unix_ms_to_utc]
+      "event.observed":
+        source: "@timestamp"
+        transform: [parse_datetime_to_utc]
+        on_error: null
+      "host.id":
+        source: "Common.Mid"
+      "host.hostname":
+        source: "Environment.HostName"
+      "process.pid":
+        source: "Child.ProcPid"
+      "process.entity_id":
+        source: "Child.ProcGuid"
+      "process.name":
+        source: "Child.FileName"
+      "process.executable":
+        source: "Child.FilePath"
+        transform: [windows_path]
+      "process.command_line":
+        source: "Child.ProcCmdline"
+      "source_process.pid":
+        source: "Parent.ProcPid"
+      "source_process.entity_id":
+        source: "Parent.ProcGuid"
+      "source_process.name":
+        source: "Parent.FileName"
+      "source_process.executable":
+        source: "Parent.FilePath"
+        transform: [windows_path]
+      "source_process.command_line":
+        source: "Parent.ProcCmdline"
+      "thread.id":
+        source: "Child.ThreadId"
+      "thread.start_address":
+        source: "Child.ThreadStartAddr"
+
+  - route_id: process-tampering
+    when:
+      "Action.Type": InjectHook
+      "Action.Name": WriteProcessMemory
+    canonical:
+      "event.type":
+        constant: process
+      "event.action":
+        constant: tamper
+      "event.category":
+        constant: process
+      "event.id":
+        source: "Common.EventUUId"
+      "event.created":
+        source: "Common.EventTime"
+        transform: [unix_ms_to_utc]
+      "event.observed":
+        source: "@timestamp"
+        transform: [parse_datetime_to_utc]
+        on_error: null
+      "host.id":
+        source: "Common.Mid"
+      "host.hostname":
+        source: "Environment.HostName"
+      "process.pid":
+        source: "Child.ProcPid"
+      "process.entity_id":
+        source: "Child.ProcGuid"
+      "process.name":
+        source: "Child.FileName"
+      "process.executable":
+        source: "Child.FilePath"
+        transform: [windows_path]
+      "process.command_line":
+        source: "Child.ProcCmdline"
+      "source_process.pid":
+        source: "Parent.ProcPid"
+      "source_process.entity_id":
+        source: "Parent.ProcGuid"
+      "source_process.name":
+        source: "Parent.FileName"
+      "source_process.executable":
+        source: "Parent.FilePath"
+        transform: [windows_path]
+      "source_process.command_line":
+        source: "Parent.ProcCmdline"
 
 raw_reference:
   id_field: "Common.EventUUId"

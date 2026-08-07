@@ -55,6 +55,17 @@ type ValidationResult = {
   comparison_id: string;
   compared_at_utc: string;
   summary: Record<Lowercase<ValidationStatus>, number>;
+  conclusion: {
+    verdict: Exclude<ValidationStatus, "NOT_COMPARED">;
+    label_zh: string;
+    statement_zh: string;
+    total_capabilities: number;
+    compared_capabilities: number;
+    pass_rate: number | null;
+    passed_capability_ids: string[];
+    gap_capability_ids: string[];
+    uncertain_capability_ids: string[];
+  };
   capabilities: ValidationEntry[];
 };
 
@@ -92,6 +103,21 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(message);
   }
   return (await response.json()) as T;
+}
+
+async function apiDownload(path: string): Promise<Blob> {
+  const response = await fetch(`${apiRoot}${path}`, { headers: apiHeaders() });
+  if (!response.ok) {
+    let message = `报告下载失败（HTTP ${response.status}）`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) message = payload.error;
+    } catch {
+      // 非 JSON 错误响应保留状态码。
+    }
+    throw new Error(message);
+  }
+  return response.blob();
 }
 
 function isActive(status: RunStatus): boolean {
@@ -319,6 +345,17 @@ export function LiveControlPlane() {
     }
   }
 
+  async function downloadConclusion() {
+    if (!comparison) return;
+    try {
+      const blob = await apiDownload(`/reports/${comparison.comparison_id}/conclusion`);
+      downloadBlob(`validation-${comparison.comparison_id}-conclusion.md`, blob);
+      setNotice("中文验证结论已导出。");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "下载中文结论失败。");
+    }
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="主导航">
@@ -409,9 +446,13 @@ export function LiveControlPlane() {
           </div>
           <div className="comparison-result" aria-live="polite">
             {comparison ? <>
+              <div className={`conclusion-card ${comparison.conclusion.verdict.toLowerCase()}`}>
+                <div><span>总体结论</span><strong>{comparison.conclusion.label_zh}</strong><em>{comparison.conclusion.pass_rate === null ? "通过率不可计算" : `完整通过率 ${(comparison.conclusion.pass_rate * 100).toFixed(1)}%`}</em></div>
+                <p>{comparison.conclusion.statement_zh}</p>
+              </div>
               <div className="result-summary"><div><span>通过</span><strong className="pass-text">{comparison.summary.pass}</strong></div><div><span>部分通过</span><strong>{comparison.summary.partial}</strong></div><div><span>失败</span><strong className="fail-text">{comparison.summary.fail}</strong></div><div><span>无法判定</span><strong>{comparison.summary.inconclusive}</strong></div></div>
               <div className="result-list">{comparison.capabilities.map((entry) => { const definition = allCapabilities.find((item) => item.id === entry.capability_id); return <div className="result-row" key={entry.case_run_id}><span className={`result-status ${entry.validation_status.toLowerCase()}`}>{validationStatusLabel(entry.validation_status)}</span><div><strong>{definition?.nameZh ?? entry.capability_id}</strong><p>{entry.warnings?.join("；") || `导出覆盖：${entry.export_coverage}`}</p></div><span className="candidate-count">{entry.candidate_count} 候选</span></div>; })}</div>
-              <button className="secondary-button" type="button" onClick={() => downloadJson(`validation-${comparison.comparison_id}.json`, comparison)}>下载验证结果 JSON</button>
+              <div className="result-actions"><button className="secondary-button" type="button" onClick={() => downloadJson(`validation-${comparison.comparison_id}.json`, comparison)}>下载验证结果 JSON</button><button className="secondary-button" type="button" onClick={() => void downloadConclusion()}>下载中文结论 Markdown</button></div>
             </> : <div className="result-placeholder"><span className="bracket" aria-hidden="true">[ ]</span><div><strong>等待比较</strong><p>完成本地轮次并导入云端 JSON 后，系统将按 BASELINE 关联本地事实与云端事件。</p></div></div>}
           </div>
         </section>

@@ -16,7 +16,9 @@ public sealed record CompareRequest(
     string MappingPath,
     IReadOnlyList<string> BaselinePaths,
     string OutputPath,
-    string? CloudManifestPath = null);
+    string? CloudManifestPath = null,
+    string? ConclusionOutputPath = null,
+    string? ComparisonId = null);
 
 public sealed class MappingProfile
 {
@@ -32,6 +34,16 @@ public sealed class MappingProfile
 public sealed class MappingInput
 {
     public required MappingRecordSelector RecordSelector { get; init; }
+    public string? EventIdField { get; init; }
+    public string? HostIdField { get; init; }
+    public string? HostNameField { get; init; }
+    public MappingEventTime? EventTime { get; init; }
+}
+
+public sealed class MappingEventTime
+{
+    public required string Field { get; init; }
+    public required string Format { get; init; }
 }
 
 public sealed class MappingRecordSelector
@@ -160,6 +172,8 @@ internal sealed record CanonicalEvent(string RawRef, Dictionary<string, object?>
 }
 
 internal sealed record Candidate(CanonicalEvent Event, double Score, IReadOnlyList<string> MatchedAnchors);
+internal sealed record CloudRecordObservation(DateTimeOffset? EventTime, string? HostId, string? HostName);
+internal sealed record CloudLoadResult(IReadOnlyList<CanonicalEvent> Events, IReadOnlyList<CloudRecordObservation> Observations);
 
 public static class CompareService
 {
@@ -179,7 +193,13 @@ public static class CompareService
         var baselines = request.BaselinePaths.Select(path => (Path: Path.GetFullPath(path), Value: ReadYaml<BaselineDefinition>(path))).ToArray();
         foreach (var baseline in baselines) ValidateBaseline(baseline.Value);
         var baselineByCapability = baselines.ToDictionary(x => x.Value.Capability.Id, x => x, StringComparer.Ordinal);
-        var cloudEvents = LoadCloud(request.CloudPaths, mapping);
+        var cloud = LoadCloud(request.CloudPaths, mapping);
+        var cloudManifest = request.CloudManifestPath is null
+            ? null
+            : JsonNode.Parse(File.ReadAllText(request.CloudManifestPath)) as JsonObject
+                ?? throw new InvalidDataException("云端导出清单必须是 JSON 对象。");
+        var manifestFilesVerified = cloudManifest is not null
+            && ManifestFilesMatch(cloudManifest, request.CloudManifestPath!, request.CloudPaths);
         var results = new JsonArray();
 
         foreach (var capabilityNode in localRoot["capabilities"]?.AsArray() ?? throw new InvalidDataException("本地导出缺少 capabilities。"))
@@ -188,20 +208,26 @@ public static class CompareService
             var capabilityId = RequiredString(capability, "capability_id");
             var caseRunId = RequiredString(capability, "case_run_id");
             var localStatus = RequiredString(capability, "status");
+            JsonObject result;
             if (!baselineByCapability.TryGetValue(capabilityId, out var baselineEntry))
             {
-                results.Add(NotCompared(capabilityId, caseRunId, localStatus, "没有匹配的 BASELINE。"));
-                continue;
+                result = NotCompared(capabilityId, caseRunId, localStatus, "没有匹配的 BASELINE。");
+                DecorateCapabilityResult(result, capability, null);
             }
-
-            results.Add(CompareCapability(localRoot, capability, baselineEntry.Value, cloudEvents));
+            else
+            {
+                result = CompareCapability(localRoot, capability, baselineEntry.Value, cloud, cloudManifest, manifestFilesVerified);
+                DecorateCapabilityResult(result, capability, baselineEntry.Value);
+            }
+            results.Add(result);
         }
 
         var summary = Summarize(results);
+        var conclusion = BuildConclusion(results, summary);
         var root = new JsonObject
         {
-            ["schema_version"] = "1.0",
-            ["comparison_id"] = Ids.NewUuid7(),
+            ["schema_version"] = "1.1",
+            ["comparison_id"] = request.ComparisonId ?? Ids.NewUuid7(),
             ["compared_at_utc"] = Values.Utc(DateTimeOffset.UtcNow),
             ["comparator_version"] = EdrTestVersion.Current,
             ["inputs"] = new JsonObject
@@ -223,16 +249,25 @@ public static class CompareService
                 }).ToArray()),
             },
             ["summary"] = summary,
+            ["conclusion"] = conclusion,
             ["capabilities"] = results,
         };
 
         var output = Path.GetFullPath(request.OutputPath);
+        var conclusionOutput = Path.GetFullPath(request.ConclusionOutputPath ?? ConclusionExportService.DefaultOutputPath(output));
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         File.WriteAllText(output, root.ToJsonString(JsonDefaults.Options) + Environment.NewLine, new UTF8Encoding(false));
+        ConclusionExportService.Export(root, conclusionOutput);
         return root;
     }
 
-    private static JsonObject CompareCapability(JsonObject localRoot, JsonObject capability, BaselineDefinition baseline, IReadOnlyList<CanonicalEvent> cloudEvents)
+    private static JsonObject CompareCapability(
+        JsonObject localRoot,
+        JsonObject capability,
+        BaselineDefinition baseline,
+        CloudLoadResult cloud,
+        JsonObject? cloudManifest,
+        bool manifestFilesVerified)
     {
         var capabilityId = RequiredString(capability, "capability_id");
         var caseRunId = RequiredString(capability, "case_run_id");
@@ -248,11 +283,12 @@ public static class CompareService
         if (failedLocal.Length > 0)
         {
             foreach (var assertion in failedLocal) warnings.Add($"本地前置断言未通过：{assertion.Field}");
-            return CapabilityResult(caseRunId, capabilityId, localStatus, "INCONCLUSIVE", 0, null, new JsonArray(), warnings);
+            return CapabilityResult(caseRunId, capabilityId, localStatus, "INCONCLUSIVE", "insufficient", 0, null, new JsonArray(), warnings);
         }
 
         var start = DateTimeOffset.Parse(RequiredString(capability, "started_at_utc"), CultureInfo.InvariantCulture);
         var end = DateTimeOffset.Parse(RequiredString(capability, "ended_at_utc"), CultureInfo.InvariantCulture);
+        var exportCoverage = DetermineExportCoverage(localRoot, start, end, cloud.Observations, cloudManifest, manifestFilesVerified);
         var totalCandidates = 0;
         var outputAssertions = new JsonArray();
         JsonObject? firstSelected = null;
@@ -260,7 +296,7 @@ public static class CompareService
 
         foreach (var expectation in baseline.CloudExpectations)
         {
-            var candidates = cloudEvents
+            var candidates = cloud.Events
                 .Where(item => EventMatches(item, expectation, start, end, baseline.Correlation))
                 .Select(item => Score(item, baseline.Correlation.Anchors, resolver))
                 .Where(item => item.Score > 0)
@@ -270,19 +306,27 @@ public static class CompareService
             totalCandidates += candidates.Length;
             if (candidates.Length < expectation.Cardinality.Min)
             {
-                warnings.Add($"{expectation.Id} 候选数 {candidates.Length} 小于最小值 {expectation.Cardinality.Min}。");
-                overallStatus = Worse(overallStatus, "FAIL");
+                if (exportCoverage is "verified" or "inferred" or "assumed")
+                {
+                    warnings.Add($"未找到满足“{baseline.Title ?? capabilityId}”基准的 EDR 云端事件（{expectation.Id}：找到 {candidates.Length} 条，至少需要 {expectation.Cardinality.Min} 条；导出覆盖状态：{exportCoverage}）。");
+                    overallStatus = Worse(overallStatus, "FAIL");
+                }
+                else
+                {
+                    warnings.Add($"未找到满足“{baseline.Title ?? capabilityId}”基准的 EDR 云端事件，但当前日志不足以证明导出范围完整（{expectation.Id}：找到 {candidates.Length} 条，至少需要 {expectation.Cardinality.Min} 条）。");
+                    overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+                }
                 continue;
             }
             if (expectation.Cardinality.Max is { } maximum && candidates.Length > maximum)
             {
-                warnings.Add($"{expectation.Id} 候选数 {candidates.Length} 超过最大值 {maximum}。");
+                warnings.Add($"“{baseline.Title ?? capabilityId}”的候选事件过多，无法唯一判定（{expectation.Id}：找到 {candidates.Length} 条，最多允许 {maximum} 条）。");
                 overallStatus = Worse(overallStatus, "INCONCLUSIVE");
             }
             if (candidates.Length == 0) continue;
             if (candidates.Length > 1 && candidates[0].Score == candidates[1].Score)
             {
-                warnings.Add($"{expectation.Id} 最高分候选不唯一。");
+                warnings.Add($"“{baseline.Title ?? capabilityId}”存在多个同分候选事件，无法唯一关联（{expectation.Id}）。");
                 overallStatus = Worse(overallStatus, "INCONCLUSIVE");
                 continue;
             }
@@ -311,8 +355,58 @@ public static class CompareService
             warnings.Add("BASELINE 没有 cloud_expectations。");
             overallStatus = "INCONCLUSIVE";
         }
-        return CapabilityResult(caseRunId, capabilityId, localStatus, overallStatus, totalCandidates, firstSelected, outputAssertions, warnings);
+        return CapabilityResult(caseRunId, capabilityId, localStatus, overallStatus, exportCoverage, totalCandidates, firstSelected, outputAssertions, warnings);
     }
+
+    private static string DetermineExportCoverage(
+        JsonObject localRoot,
+        DateTimeOffset start,
+        DateTimeOffset end,
+        IReadOnlyList<CloudRecordObservation> observations,
+        JsonObject? manifest,
+        bool manifestFilesVerified)
+    {
+        var localHost = localRoot["run"]?["host"] as JsonObject;
+        var localHostname = localHost?["hostname"]?.GetValue<string>();
+        var localIds = new[]
+        {
+            localHost?["machine_id"]?.GetValue<string>(),
+            localHost?["agent_id_hint"]?.GetValue<string>(),
+        }.Where(value => !string.IsNullOrWhiteSpace(value)).Cast<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (manifest is not null)
+        {
+            var queryWindow = manifest["query_window"] as JsonObject;
+            var hostFilter = manifest["host_filter"] as JsonObject;
+            var windowVerified = DateTimeOffset.TryParse(queryWindow?["start_utc"]?.GetValue<string>(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var queryStart)
+                && DateTimeOffset.TryParse(queryWindow?["end_utc"]?.GetValue<string>(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var queryEnd)
+                && queryStart <= start
+                && queryEnd >= end;
+            var manifestHostname = hostFilter?["hostname"]?.GetValue<string>();
+            var manifestHostId = hostFilter?["host_id"]?.GetValue<string>();
+            var hostVerified = (!string.IsNullOrWhiteSpace(localHostname)
+                    && !string.IsNullOrWhiteSpace(manifestHostname)
+                    && string.Equals(localHostname, manifestHostname, StringComparison.OrdinalIgnoreCase))
+                || (!string.IsNullOrWhiteSpace(manifestHostId) && localIds.Contains(manifestHostId));
+            return windowVerified && hostVerified && manifestFilesVerified ? "verified" : "insufficient";
+        }
+
+        var matchingTimes = observations
+            .Where(item => HostMatches(item, localHostname, localIds))
+            .Select(item => item.EventTime)
+            .Where(value => value.HasValue)
+            .Select(value => value!.Value)
+            .ToArray();
+        return matchingTimes.Length > 1 && matchingTimes.Min() <= start && matchingTimes.Max() >= end
+            ? "inferred"
+            : "insufficient";
+    }
+
+    private static bool HostMatches(CloudRecordObservation observation, string? localHostname, IReadOnlySet<string> localIds) =>
+        (!string.IsNullOrWhiteSpace(localHostname)
+            && !string.IsNullOrWhiteSpace(observation.HostName)
+            && string.Equals(localHostname, observation.HostName, StringComparison.OrdinalIgnoreCase))
+        || (!string.IsNullOrWhiteSpace(observation.HostId) && localIds.Contains(observation.HostId));
 
     private static Candidate Score(CanonicalEvent item, IReadOnlyList<CorrelationAnchor> anchors, LocalResolver resolver)
     {
@@ -364,9 +458,10 @@ public static class CompareService
             passed is null ? $"尚未实现操作符：{definition.Operator}" : passed.Value ? null : "实际值不满足期望。");
     }
 
-    private static IReadOnlyList<CanonicalEvent> LoadCloud(IReadOnlyList<string> paths, MappingProfile mapping)
+    private static CloudLoadResult LoadCloud(IReadOnlyList<string> paths, MappingProfile mapping)
     {
         var events = new List<CanonicalEvent>();
+        var observations = new List<CloudRecordObservation>();
         foreach (var input in paths)
         {
             var path = Path.GetFullPath(input);
@@ -378,7 +473,7 @@ public static class CompareService
                 var index = 0;
                 foreach (var item in document.RootElement.EnumerateArray())
                 {
-                    if (item.ValueKind == JsonValueKind.Object) MapRecord(item, $"{path}#/{index}", mapping, events);
+                    if (item.ValueKind == JsonValueKind.Object) MapRecord(item, $"{path}#/{index}", mapping, events, observations);
                     index++;
                 }
             }
@@ -389,17 +484,26 @@ public static class CompareService
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     using var document = JsonDocument.Parse(line);
-                    if (document.RootElement.ValueKind == JsonValueKind.Object) MapRecord(document.RootElement, $"{path}#/{index}", mapping, events);
+                    if (document.RootElement.ValueKind == JsonValueKind.Object) MapRecord(document.RootElement, $"{path}#/{index}", mapping, events, observations);
                     index++;
                 }
             }
         }
-        return events;
+        return new CloudLoadResult(events, observations);
     }
 
-    private static void MapRecord(JsonElement record, string rawRef, MappingProfile mapping, ICollection<CanonicalEvent> output)
+    private static void MapRecord(
+        JsonElement record,
+        string rawRef,
+        MappingProfile mapping,
+        ICollection<CanonicalEvent> output,
+        ICollection<CloudRecordObservation> observations)
     {
         if (!Matches(record, mapping.Input.RecordSelector.All)) return;
+        observations.Add(new CloudRecordObservation(
+            ReadEventTime(record, mapping.Input.EventTime),
+            ReadString(record, mapping.Input.HostIdField),
+            ReadString(record, mapping.Input.HostNameField)));
         foreach (var route in mapping.Routes)
         {
             if (!Matches(record, route.When)) continue;
@@ -423,6 +527,24 @@ public static class CompareService
             output.Add(new CanonicalEvent(rawRef, fields));
         }
     }
+
+    private static DateTimeOffset? ReadEventTime(JsonElement record, MappingEventTime? definition)
+    {
+        if (definition is null || !record.TryGetProperty(definition.Field, out var value)) return null;
+        var scalar = Scalar(value);
+        return definition.Format switch
+        {
+            "unix_ms" when TryInt64(scalar, out var milliseconds) => DateTimeOffset.FromUnixTimeMilliseconds(milliseconds),
+            "unix_s" when TryInt64(scalar, out var seconds) => DateTimeOffset.FromUnixTimeSeconds(seconds),
+            "datetime" when DateTimeOffset.TryParse(scalar?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var timestamp) => timestamp,
+            _ => null,
+        };
+    }
+
+    private static string? ReadString(JsonElement record, string? field) =>
+        !string.IsNullOrWhiteSpace(field) && record.TryGetProperty(field, out var value)
+            ? Scalar(value)?.ToString()
+            : null;
 
     private static bool Matches(JsonElement record, IReadOnlyDictionary<string, object?> conditions)
     {
@@ -569,13 +691,13 @@ public static class CompareService
         return false;
     }
 
-    private static JsonObject CapabilityResult(string caseRunId, string capabilityId, string localStatus, string validationStatus, int candidateCount, JsonObject? selected, JsonArray assertions, JsonArray warnings) => new()
+    private static JsonObject CapabilityResult(string caseRunId, string capabilityId, string localStatus, string validationStatus, string exportCoverage, int candidateCount, JsonObject? selected, JsonArray assertions, JsonArray warnings) => new()
     {
         ["case_run_id"] = caseRunId,
         ["capability_id"] = capabilityId,
         ["local_status"] = localStatus,
         ["validation_status"] = validationStatus,
-        ["export_coverage"] = "assumed",
+        ["export_coverage"] = exportCoverage,
         ["candidate_count"] = candidateCount,
         ["selected_event"] = selected,
         ["assertions"] = assertions,
@@ -583,7 +705,7 @@ public static class CompareService
     };
 
     private static JsonObject NotCompared(string capabilityId, string caseRunId, string localStatus, string warning) =>
-        CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", 0, null, new JsonArray(), new JsonArray(warning));
+        CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", "insufficient", 0, null, new JsonArray(), new JsonArray(warning));
 
     private static string Worse(string current, string candidate)
     {
@@ -612,6 +734,117 @@ public static class CompareService
         };
     }
 
+    private static void DecorateCapabilityResult(JsonObject result, JsonObject capability, BaselineDefinition? baseline)
+    {
+        result["display_name_zh"] = capability["display_name_zh"]?.GetValue<string>();
+        result["display_name_en"] = capability["display_name_en"]?.GetValue<string>();
+        result["baseline_id"] = baseline?.BaselineId;
+        result["baseline_version"] = baseline?.Version;
+        result["baseline_title"] = baseline?.Title;
+    }
+
+    private static JsonObject BuildConclusion(JsonArray results, JsonObject summary)
+    {
+        var pass = summary["pass"]!.GetValue<int>();
+        var partial = summary["partial"]!.GetValue<int>();
+        var fail = summary["fail"]!.GetValue<int>();
+        var inconclusive = summary["inconclusive"]!.GetValue<int>();
+        var notCompared = summary["not_compared"]!.GetValue<int>();
+        var compared = pass + partial + fail + inconclusive;
+        var total = compared + notCompared;
+        var verdict = fail > 0
+            ? "FAIL"
+            : inconclusive > 0 || notCompared > 0 || compared == 0
+                ? "INCONCLUSIVE"
+                : partial > 0
+                    ? "PARTIAL"
+                    : "PASS";
+        var label = verdict switch
+        {
+            "PASS" => "全部能力满足验证基准",
+            "PARTIAL" => "部分能力仅满足部分基准",
+            "FAIL" => "发现 EDR 遥测能力缺口",
+            _ => "当前证据不足以形成完整结论",
+        };
+        var statement = compared == 0
+            ? $"本轮共有 {total} 项本地能力，但没有可形成判定的比较结果。"
+            : $"本轮共纳入 {total} 项本地能力，其中 {compared} 项完成比较：{pass} 项通过、{partial} 项部分通过、{fail} 项失败、{inconclusive} 项无法判定；另有 {notCompared} 项未比较。总体结论：{label}。";
+
+        static JsonArray CapabilityIds(JsonArray values, params string[] statuses)
+        {
+            var accepted = statuses.ToHashSet(StringComparer.Ordinal);
+            return new JsonArray(values
+                .Select(value => value?.AsObject())
+                .Where(value => value is not null && accepted.Contains(value["validation_status"]?.GetValue<string>() ?? string.Empty))
+                .Select(value => (JsonNode)(value!["capability_id"]?.GetValue<string>() ?? string.Empty))
+                .ToArray());
+        }
+
+        var gapNames = results
+            .Select(value => value?.AsObject())
+            .Where(value => value?["validation_status"]?.GetValue<string>() == "FAIL")
+            .Select(value => value?["display_name_zh"]?.GetValue<string>() ?? value?["capability_id"]?.GetValue<string>())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+        if (gapNames.Length > 0) statement += $" 未通过能力：{string.Join("、", gapNames)}。";
+
+        return new JsonObject
+        {
+            ["verdict"] = verdict,
+            ["label_zh"] = label,
+            ["statement_zh"] = statement,
+            ["total_capabilities"] = total,
+            ["compared_capabilities"] = compared,
+            ["pass_rate"] = compared == 0 ? null : Math.Round((double)pass / compared, 4),
+            ["passed_capability_ids"] = CapabilityIds(results, "PASS"),
+            ["gap_capability_ids"] = CapabilityIds(results, "FAIL"),
+            ["uncertain_capability_ids"] = CapabilityIds(results, "PARTIAL", "INCONCLUSIVE", "NOT_COMPARED"),
+        };
+    }
+
+    private static bool ManifestFilesMatch(JsonObject manifest, string manifestPath, IReadOnlyList<string> cloudPaths)
+    {
+        if (manifest["source_files"] is not JsonArray sourceFiles || sourceFiles.Count != cloudPaths.Count) return false;
+        var manifestDirectory = Path.GetDirectoryName(Path.GetFullPath(manifestPath))!;
+        var unmatched = sourceFiles.Select(node => node as JsonObject).Where(node => node is not null).Cast<JsonObject>().ToList();
+        if (unmatched.Count != sourceFiles.Count) return false;
+
+        foreach (var cloudPathValue in cloudPaths)
+        {
+            var cloudPath = Path.GetFullPath(cloudPathValue);
+            var cloudName = Path.GetFileName(cloudPath);
+            var cloudHash = Hashing.FileSha256(cloudPath);
+            var cloudSize = new FileInfo(cloudPath).Length;
+            var match = unmatched.FirstOrDefault(entry =>
+            {
+                var declaredPath = entry["path"]?.GetValue<string>();
+                var declaredHash = entry["sha256"]?.GetValue<string>();
+                var declaredSize = entry["size_bytes"]?.GetValue<long>();
+                if (string.IsNullOrWhiteSpace(declaredPath)
+                    || !string.Equals(declaredHash, cloudHash, StringComparison.OrdinalIgnoreCase)
+                    || declaredSize != cloudSize)
+                {
+                    return false;
+                }
+
+                string? resolvedPath = null;
+                try
+                {
+                    resolvedPath = Path.GetFullPath(declaredPath, manifestDirectory);
+                }
+                catch (Exception) when (declaredPath.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
+                {
+                    // 文件名仍可与实际导入文件匹配；hash 和大小用于确认内容。
+                }
+                return string.Equals(resolvedPath, cloudPath, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(Path.GetFileName(declaredPath), cloudName, StringComparison.OrdinalIgnoreCase);
+            });
+            if (match is null) return false;
+            unmatched.Remove(match);
+        }
+        return unmatched.Count == 0;
+    }
+
     private static JsonObject FileReference(string path) => new()
     {
         ["path"] = path,
@@ -632,7 +865,9 @@ public static class CompareService
         if (!File.Exists(request.MappingPath)) throw new FileNotFoundException("找不到 Mapping Profile。", request.MappingPath);
         if (request.BaselinePaths.Count == 0) throw new ArgumentException("至少需要一个 BASELINE。");
         foreach (var path in request.BaselinePaths) if (!File.Exists(path)) throw new FileNotFoundException("找不到 BASELINE。", path);
+        if (request.ComparisonId is not null && !Guid.TryParse(request.ComparisonId, out _)) throw new ArgumentException("comparison_id 必须是 UUID。");
         var output = Path.GetFullPath(request.OutputPath);
+        var conclusionOutput = Path.GetFullPath(request.ConclusionOutputPath ?? ConclusionExportService.DefaultOutputPath(output));
         var inputs = request.CloudPaths
             .Append(request.LocalExportPath)
             .Append(request.MappingPath)
@@ -642,6 +877,11 @@ public static class CompareService
         if (inputs.Any(path => string.Equals(path, output, StringComparison.OrdinalIgnoreCase)))
         {
             throw new ArgumentException("比较结果路径不能覆盖任何输入文件。");
+        }
+        if (string.Equals(output, conclusionOutput, StringComparison.OrdinalIgnoreCase)
+            || inputs.Any(path => string.Equals(path, conclusionOutput, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new ArgumentException("结论报告路径不能覆盖比较结果或任何输入文件。");
         }
     }
 

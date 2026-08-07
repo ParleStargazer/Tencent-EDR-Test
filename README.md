@@ -72,10 +72,11 @@ dotnet run --project src/EdrTest -- compare `
   --cloud .\cloud-events.json `
   --mapping .\mappings\tencent-edr-proc-events-v1.yaml `
   --baseline .\baselines\windows\process_create.yaml `
-  --out .\validation-result.json
+  --out .\validation-result.json `
+  --conclusion-out .\validation-conclusion.md
 ```
 
-同一个 `EdrTest.exe` 还提供 `export` 和 `inspect` 子命令。运行 `dotnet run --project src/EdrTest -- help` 可查看完整参数。
+比较命令会同时生成结构化 `validation-result.json` 和中文 `validation-conclusion.md`；未指定 `--conclusion-out` 时，Markdown 结论自动写入 JSON 同目录。同一个 `EdrTest.exe` 还提供 `export` 和 `inspect` 子命令。运行 `dotnet run --project src/EdrTest -- help` 可查看完整参数。
 
 ## 仓库约定
 

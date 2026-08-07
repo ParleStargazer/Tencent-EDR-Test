@@ -92,7 +92,35 @@ public static class Program
             validationPath));
         Assert(validation["summary"]?["pass"]?.GetValue<int>() == 1, $"合成云端事件应通过比较：{validation.ToJsonString(JsonDefaults.Options)}");
         Assert(validation["summary"]?["fail"]?.GetValue<int>() == 0, "不应出现 FAIL。");
+        Assert(validation["schema_version"]?.GetValue<string>() == "1.1", "验证结果 Schema 应为 1.1。");
+        Assert(validation["conclusion"]?["verdict"]?.GetValue<string>() == "PASS", "单项能力通过时总体结论应为 PASS。");
+        Assert(validation["conclusion"]?["pass_rate"]?.GetValue<double>() == 1, "单项能力通过率应为 100%。");
         Assert(File.Exists(validationPath), "应写出 validation-result.json。");
+        var conclusionPath = ConclusionExportService.DefaultOutputPath(validationPath);
+        Assert(File.Exists(conclusionPath), "应同时写出中文 Markdown 结论。");
+        Assert(File.ReadAllText(conclusionPath).Contains("全部能力满足验证基准", StringComparison.Ordinal), "Markdown 应包含中文总体结论。");
+
+        var emptyCloudPath = Path.Combine(fixture.Path, "empty-cloud.json");
+        File.WriteAllText(emptyCloudPath, "[]");
+        var insufficient = CompareService.Compare(new CompareRequest(
+            result.LocalExportPath,
+            [emptyCloudPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"),
+            [Path.Combine(repository, "baselines", "windows", "process_create.yaml")],
+            Path.Combine(fixture.Path, "insufficient-result.json")));
+        Assert(insufficient["summary"]?["inconclusive"]?.GetValue<int>() == 1, "无法证明导出范围时，未命中应为 INCONCLUSIVE。");
+        Assert(insufficient["capabilities"]?[0]?["export_coverage"]?.GetValue<string>() == "insufficient", "空日志的覆盖状态应为 insufficient。");
+
+        var unmatchedCloudPath = Path.Combine(fixture.Path, "unmatched-cloud.json");
+        File.WriteAllText(unmatchedCloudPath, CreateUnmatchedCloudExport(local).ToJsonString(JsonDefaults.Options));
+        var inferredMiss = CompareService.Compare(new CompareRequest(
+            result.LocalExportPath,
+            [unmatchedCloudPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"),
+            [Path.Combine(repository, "baselines", "windows", "process_create.yaml")],
+            Path.Combine(fixture.Path, "inferred-miss-result.json")));
+        Assert(inferredMiss["summary"]?["fail"]?.GetValue<int>() == 1, "同主机日志包住能力时间窗时，未命中应形成 FAIL。");
+        Assert(inferredMiss["capabilities"]?[0]?["export_coverage"]?.GetValue<string>() == "inferred", "时间窗证据应标记为 inferred。");
 
         var inspect = InspectService.Inspect(result.DatabasePath);
         Assert(inspect["status"]?.GetValue<string>() == "COMPLETED", "Inspect 应看到封存终态。");
@@ -301,6 +329,7 @@ public static class Program
         {
             ["@table"] = "ProcEvents",
             ["@collection"] = Values.Utc(DateTimeOffset.UtcNow),
+            ["OS"] = "Windows",
             ["Action.Type"] = "Proc",
             ["Action.Name"] = "ProcessCreate",
             ["Common.EventUUId"] = Ids.NewUuid7(),
@@ -326,6 +355,23 @@ public static class Program
             ["Parent.ProcCmdline"] = actor["command_line"]!.GetValue<string>(),
             ["Parent.ProcCreateTime"] = DateTimeOffset.Parse(actor["started_at_utc"]!.GetValue<string>()).ToUnixTimeMilliseconds(),
         });
+    }
+
+    private static JsonArray CreateUnmatchedCloudExport(JsonObject local)
+    {
+        var capability = local["capabilities"]!.AsArray()[0]!.AsObject();
+        var start = DateTimeOffset.Parse(capability["started_at_utc"]!.GetValue<string>());
+        var end = DateTimeOffset.Parse(capability["ended_at_utc"]!.GetValue<string>());
+        var first = CreateCloudExport(local)[0]!.DeepClone().AsObject();
+        first["Common.EventTime"] = start.AddSeconds(-1).ToUnixTimeMilliseconds();
+        first["Child.FilePath"] = @"C:\unrelated\first.exe";
+        first["Child.ProcCmdline"] = @"C:\unrelated\first.exe --noise";
+        first["Parent.FilePath"] = @"C:\unrelated\parent.exe";
+        first["Parent.ProcCmdline"] = @"C:\unrelated\parent.exe --noise";
+        var second = first.DeepClone().AsObject();
+        second["Common.EventUUId"] = Ids.NewUuid7();
+        second["Common.EventTime"] = end.AddSeconds(1).ToUnixTimeMilliseconds();
+        return new JsonArray(first, second);
     }
 
     private static string FindRepositoryRoot()

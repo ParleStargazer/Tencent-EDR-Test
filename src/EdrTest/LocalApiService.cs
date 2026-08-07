@@ -139,6 +139,10 @@ public static class LocalApiService
         });
 
         app.MapPost("/api/compare", (Func<HttpContext, Task<IResult>>)(context => CompareAsync(context, options, catalog, coordinator)));
+        app.MapGet("/api/reports/{comparisonId}/result", (string comparisonId) =>
+            DownloadReport(options, comparisonId, "validation-result.json", "application/json; charset=utf-8", $"validation-{comparisonId}.json"));
+        app.MapGet("/api/reports/{comparisonId}/conclusion", (string comparisonId) =>
+            DownloadReport(options, comparisonId, "validation-conclusion.md", "text/markdown; charset=utf-8", $"validation-{comparisonId}-conclusion.md"));
 
         Console.WriteLine($"EdrTest 本地 API 已启动：http://{options.Host}:{options.Port}");
         await app.StartAsync(cancellationToken);
@@ -278,6 +282,7 @@ public static class LocalApiService
         if (baselinePaths.Count == 0) return ApiError(400, "本地导出中的能力没有可用 BASELINE。");
 
         var outputPath = Path.Combine(reportRoot, "validation-result.json");
+        var conclusionPath = Path.Combine(reportRoot, "validation-conclusion.md");
         try
         {
             var result = CompareService.Compare(new CompareRequest(
@@ -286,7 +291,9 @@ public static class LocalApiService
                 mappingPath,
                 baselinePaths,
                 outputPath,
-                manifestPath));
+                manifestPath,
+                conclusionPath,
+                comparisonId));
             return Results.Json(result, ApiJson);
         }
         catch (Exception exception) when (exception is InvalidDataException or JsonException or ArgumentException)
@@ -300,6 +307,13 @@ public static class LocalApiService
         await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65_536, FileOptions.Asynchronous);
         await file.CopyToAsync(stream, cancellationToken);
         await stream.FlushAsync(cancellationToken);
+    }
+
+    private static IResult DownloadReport(LocalApiOptions options, string comparisonId, string fileName, string contentType, string downloadName)
+    {
+        if (!Guid.TryParse(comparisonId, out _)) return ApiError(400, "comparison_id 必须是 UUID。");
+        var path = Path.Combine(options.ReportsDirectory, comparisonId, fileName);
+        return File.Exists(path) ? Results.File(path, contentType, downloadName) : ApiError(404, "找不到比较报告。");
     }
 
     private static IResult ApiError(int statusCode, string message) => Results.Json(new { error = message }, ApiJson, statusCode: statusCode);

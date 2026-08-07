@@ -15,7 +15,7 @@
 
 1. **能力执行**：每个能力包标配一个控制/观察程序和一个或多个行为参与程序。控制程序生成唯一测试信息、启动行为、监控结果并写入本轮 SQLite 数据库。
 2. **结果导出**：每轮测试使用独立 `.db` 文件，一轮可顺序执行一个或多个能力；导出工具把本地事实转换为稳定、可审计的 JSON。
-3. **离线验证**：用户从 EDR 平台手工导出对应主机和时间窗口的 JSON 日志；比较工具按版本化映射将云端日志规范化，再与本地 JSON 和 BASELINE 比较，输出 JSON 验证报告。
+3. **离线验证**：用户从 EDR 平台手工导出对应主机和时间窗口的 JSON 日志；比较工具按版本化映射将云端日志规范化，再与本地 JSON 和 BASELINE 比较，同时输出结构化 JSON 验证结果和中文 Markdown 结论。
 
 首版明确不建设腾讯 EDR 鉴权、API 查询、轮询或在线 Collector。这样可降低接口依赖和凭据风险，也与当前已有的控制台 JSON 导出能力一致。
 
@@ -118,6 +118,7 @@ flowchart TB
     M["Mapping Profile"] --> P
     B["BASELINE"] --> P
     P --> V["validation-result.json"]
+    P --> Q["validation-conclusion.md"]
 ```
 
 平台分成两个时间上解耦的阶段：
@@ -137,7 +138,7 @@ flowchart TB
 | --- | --- |
 | `EdrTest.exe run` | 创建 Test Run、选择能力、生成 Run ID、调度 Controller、封存数据库 |
 | `EdrTest.exe export` | 读取已封存 `.db`，校验结构并导出本地 JSON |
-| `EdrTest.exe compare` | 规范化用户导入的云端事件、执行 BASELINE、输出结果 JSON |
+| `EdrTest.exe compare` | 规范化用户导入的云端事件、执行 BASELINE、输出结果 JSON 与中文 Markdown 结论 |
 | `EdrTest.exe inspect` | 查看数据库摘要、能力状态和清理情况，不修改数据库 |
 
 ### 6.2 每项能力的两类程序
@@ -269,6 +270,7 @@ runs/<yyyyMMdd>/<run-id>/
   import/cloud-events.json
   import/cloud-export-manifest.json
   result/validation-result.json
+  result/validation-conclusion.md
 ```
 
 其中 `runs/` 为本地制品目录，应由 `.gitignore` 排除。
@@ -375,7 +377,7 @@ EdrTest.exe export --db .\runs\...\<run-id>.db --out .\local-run.json
 3. Compare 工具根据本轮主机和时间生成建议导出范围；
 4. 用户在 EDR 平台选择对应主机、事件类型和时间窗，导出 JSON；
 5. 用户把 JSON 放入本轮 `import/`，可选填写 `cloud-export-manifest.json`；
-6. Compare 工具离线比较并输出 `validation-result.json`。
+6. Compare 工具离线比较并输出 `validation-result.json` 与 `validation-conclusion.md`。
 
 建议时间窗：本轮最早能力开始前 60 秒，到最晚能力结束后 5 分钟。具体余量可在 BASELINE 中覆盖。
 
@@ -390,7 +392,7 @@ EdrTest.exe export --db .\runs\...\<run-id>.db --out .\local-run.json
 - 事件表/类型筛选；
 - 原始 JSON 文件名和 SHA-256。
 
-如果没有 manifest，Compare 会从事件时间和主机字段推断覆盖范围。推断不能证明缺失事件时，结果为 `INCONCLUSIVE`，而不是 `FAIL`。用户可显式使用 `--assume-export-complete`，该决定会写入报告。
+如果没有 manifest，Compare 会从映射配置声明的事件时间、主机 ID 和主机名字段推断覆盖范围。同一主机的日志时间能够包住本地能力执行窗口时标记为 `inferred`；否则标记为 `insufficient`，此时未命中结果为 `INCONCLUSIVE`，而不是 `FAIL`。manifest 的查询窗口、主机条件及源文件 hash/大小均通过校验时标记为 `verified`。
 
 ### 11.3 大文件与容错
 
@@ -441,8 +443,9 @@ EdrTest.exe compare `
   --cloud .\EDR事件导出.json `
   --cloud-manifest .\cloud-export-manifest.json `
   --mapping .\mappings\tencent-edr-proc-events-v1.yaml `
-  --baselines .\baselines\windows `
-  --out .\validation-result.json
+  --baseline .\baselines\windows\process_create.yaml `
+  --out .\validation-result.json `
+  --conclusion-out .\validation-conclusion.md
 ```
 
 ### 13.1 比较步骤
@@ -455,7 +458,7 @@ EdrTest.exe compare `
 6. 按强、中、弱锚点评分并排除冲突候选；
 7. 对唯一最佳候选执行字段、数量和时间断言；
 8. 检查云端导出范围是否足以支持“未发现”结论；
-9. 输出逐能力结果、逐字段结果、候选说明和输入 hash。
+9. 输出逐能力结果、逐字段结果、候选说明、输入 hash 和中文总体结论。
 
 ### 13.2 关联锚点
 

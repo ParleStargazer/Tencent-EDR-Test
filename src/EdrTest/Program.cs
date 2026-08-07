@@ -105,11 +105,13 @@ public static class Program
             options.Require("mapping"),
             baselines,
             options.Require("out"),
-            options.Get("cloud-manifest"));
+            options.Get("cloud-manifest"),
+            options.Get("conclusion-out"));
         var result = CompareService.Compare(request);
         var summary = result["summary"]!.AsObject();
         Console.WriteLine($"比较完成：PASS={summary["pass"]} PARTIAL={summary["partial"]} FAIL={summary["fail"]} INCONCLUSIVE={summary["inconclusive"]}");
         Console.WriteLine($"结果：{Path.GetFullPath(request.OutputPath)}");
+        Console.WriteLine($"结论：{Path.GetFullPath(request.ConclusionOutputPath ?? ConclusionExportService.DefaultOutputPath(request.OutputPath))}");
         return summary["fail"]?.GetValue<int>() > 0 ? 1 : 0;
     }
 
@@ -166,6 +168,7 @@ public static class Program
               compare --local <local-run.json> --cloud <cloud.json> [--cloud <...>]
                   --mapping <mapping.yaml> --baseline <baseline.yaml> [--baseline <...>]
                   [--cloud-manifest <manifest.json>] --out <validation-result.json>
+                  [--conclusion-out <validation-conclusion.md>]
               inspect --db <run.db>
               serve [--host 127.0.0.1] [--port 4317] [--repo-root <path>]
                   [--samples-root samples] [--runs-dir runs]

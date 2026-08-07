@@ -59,6 +59,8 @@ pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -SkipBuild
 | POST | `/api/runs/{id}/cancel` | 取消并触发 Runner 清理 |
 | GET | `/api/runs/{id}/local-export` | 下载 `local-run.json` |
 | POST | `/api/compare` | multipart 导入云端日志并执行比较 |
+| GET | `/api/reports/{comparison-id}/result` | 下载结构化 JSON 验证结果 |
+| GET | `/api/reports/{comparison-id}/conclusion` | 下载中文 Markdown 验证结论 |
 
 `POST /api/compare` 必须提供 `cloud_file`，并在 `operation_id` 与 `local_file` 中二选一。可选字段包括 `cloud_manifest`、`mapping_id` 和一个或多个 `baseline_id`；未指定 BASELINE 时，API 按本地导出中的能力 ID 自动选择。
 
@@ -74,4 +76,4 @@ pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -SkipBuild
 
 ## 5. 前端行为
 
-前端始终展示规范化的 16 个活动域和 53 项能力。只有 API 实际发现的能力包可勾选，其余项目显示“样本待实现”。包含 L2/L3 能力时必须在页面显式确认高风险执行。页面轮询真实轮次状态，不再使用计时器模拟进度；比较结果直接展示后端生成的标准 `validation-result.json`。
+前端始终展示规范化的 16 个活动域和 53 项能力。只有 API 实际发现的能力包可勾选，其余项目显示“样本待实现”。包含 L2/L3 能力时必须在页面显式确认高风险执行。页面轮询真实轮次状态，不再使用计时器模拟进度；比较完成后展示总体结论、能力明细，并支持分别下载标准 `validation-result.json` 与中文 `validation-conclusion.md`。
