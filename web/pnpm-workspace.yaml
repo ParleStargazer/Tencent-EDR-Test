@@ -9,3 +9,11 @@ onlyBuiltDependencies:
   - sharp
   - unrs-resolver
   - workerd
+
+# pnpm 10.1+ 的构建脚本审批格式；为保证新装环境可直接安装，
+# 仅对前端构建所需且已锁定版本的依赖启用安装脚本。
+allowBuilds:
+  esbuild: true
+  sharp: true
+  unrs-resolver: true
+  workerd: true
