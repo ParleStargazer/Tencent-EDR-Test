@@ -346,7 +346,7 @@ EdrTest.exe export --db .\runs\...\<run-id>.db --out .\local-run.json
 
 - 输出符合 `schemas/run-export.schema.json`；
 - 数组按稳定键排序，同一数据库重复导出内容一致；
-- 包含数据库 Schema、工具版本、Run ID、环境、能力、程序、本地事件和工件摘要；
+- 包含数据库 Schema、工具版本、Run ID、环境、能力、程序、本地事件、执行日志和工件摘要；
 - 不内嵌大文件，只记录相对路径、大小和 SHA-256；
 - 默认脱敏用户名、IP 等非关联字段；
 - 导出前校验数据库已封存、外键完整、无 WAL 残留；
@@ -364,9 +364,12 @@ EdrTest.exe export --db .\runs\...\<run-id>.db --out .\local-run.json
   "local_facts": [],
   "artifacts": [],
   "cleanup_results": [],
+  "execution_logs": [],
   "integrity": {}
 }
 ```
+
+`execution_logs` 保存 Runner 与 Controller 输出，并用 `case_run_id` 关联到具体能力；前端“已完成队列”据此在页面刷新或服务重启后恢复能力详细日志。
 
 ## 11. 云端 JSON 导入
 

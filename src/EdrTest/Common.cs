@@ -37,6 +37,18 @@ public static class Hashing
         return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     }
 
+    public static string FileSha1(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA1.HashData(stream)).ToLowerInvariant();
+    }
+
+    public static string FileMd5(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(MD5.HashData(stream)).ToLowerInvariant();
+    }
+
     public static string TextSha256(string text) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
 }

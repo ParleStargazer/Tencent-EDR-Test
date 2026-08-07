@@ -79,6 +79,9 @@ public static class Program
         Assert(local["schema_version"]?.GetValue<string>() == "1.1", "导出 Schema 应为 1.1。");
         Assert(local["capabilities"]?.AsArray().Count == 1, "应有一个能力结果。");
         Assert(local["programs"]?.AsArray().Count == 3, "应记录 Controller/Actor/Target。");
+        var targetProgram = local["programs"]?.AsArray().Single(value => value?["role"]?.GetValue<string>() == "target");
+        Assert(targetProgram?["md5"]?.GetValue<string>().Length == 32, "Actor/Target 程序应采集 MD5，供 EDR 哈希字段比较。");
+        Assert(local["execution_logs"]?.AsArray().Count >= 1, "本地导出应保存运行日志，供历史轮次按能力查看。");
         Assert(local["local_events"]?.AsArray().Count == 1, "应记录一个进程创建事件。");
         Assert(local["cleanup_results"]?.AsArray().Count == 1, "应记录清理结果。");
 
@@ -100,10 +103,31 @@ public static class Program
         var requirements = validation["capabilities"]?[0]?["baseline_requirements"]?.AsArray() ?? throw new InvalidOperationException("结果应包含 BASELINE 要求。");
         Assert(requirements.Count == 13, "进程创建应展示 5 项本地要求、1 项事件数量要求和 7 项云端字段要求。");
         Assert(requirements.Where(value => value?["severity"]?.GetValue<string>() == "required").All(value => value?["status"]?.GetValue<string>() == "passed"), "所有必需 BASELINE 要求都应通过。");
+        var actorPidRequirement = requirements.Single(value => value?["field"]?.GetValue<string>() == "programs.actor.pid");
+        Assert(actorPidRequirement?["operator"]?.GetValue<string>() == "present" && actorPidRequirement["expected"] is null && actorPidRequirement["actual"]?.GetValue<int>() > 0, "PID 存在性规则应在 actual 中保留本地 PID，expected 为空表示没有固定 PID。");
+        var actorCommandRequirement = requirements.Single(value => value?["field"]?.GetValue<string>() == "programs.actor.command_line");
+        var commandMarker = actorCommandRequirement?["expected"]?.GetValue<string>() ?? string.Empty;
+        Assert(commandMarker.Length == 32 && actorCommandRequirement?["actual"]?.GetValue<string>().Contains(commandMarker, StringComparison.Ordinal) == true, "命令行 contains 规则的 expected 应是本轮测试标记，而不是文件哈希。");
         Assert(File.Exists(validationPath), "应写出 validation-result.json。");
         var conclusionPath = ConclusionExportService.DefaultOutputPath(validationPath);
         Assert(File.Exists(conclusionPath), "应同时写出中文 Markdown 结论。");
         Assert(File.ReadAllText(conclusionPath).Contains("全部能力满足验证基准", StringComparison.Ordinal), "Markdown 应包含中文总体结论。");
+
+        var missingMd5LocalPath = Path.Combine(fixture.Path, "missing-md5-local.json");
+        var missingMd5Local = local.DeepClone().AsObject();
+        var missingMd5Target = missingMd5Local["programs"]?.AsArray().Single(value => value?["role"]?.GetValue<string>() == "target")
+            ?? throw new InvalidOperationException("测试导出缺少 Target 程序。");
+        missingMd5Target["md5"] = null;
+        File.WriteAllText(missingMd5LocalPath, missingMd5Local.ToJsonString(JsonDefaults.Options));
+        var missingMd5 = CompareService.Compare(new CompareRequest(
+            missingMd5LocalPath,
+            [cloudPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"),
+            [Path.Combine(repository, "baselines", "windows", "process_create.yaml")],
+            Path.Combine(fixture.Path, "missing-md5-result.json")));
+        var md5Requirement = missingMd5["capabilities"]?[0]?["baseline_requirements"]?.AsArray().Single(value => value?["field"]?.GetValue<string>() == "process.hash.md5");
+        Assert(md5Requirement?["status"]?.GetValue<string>() == "not_evaluated", "本地未采集 MD5 时应标记为未检查，而不是用空值判定失败。");
+        Assert(missingMd5["capabilities"]?[0]?["validation_status"]?.GetValue<string>() == "PASS", "信息级 MD5 未检查不应降低必需字段全部通过的能力结论。");
 
         var emptyCloudPath = Path.Combine(fixture.Path, "empty-cloud.json");
         File.WriteAllText(emptyCloudPath, "[]");
@@ -286,6 +310,8 @@ public static class Program
         InstanceIndex = index,
         ExecutablePath = executable,
         Sha256 = Hashing.FileSha256(executable),
+        Sha1 = Hashing.FileSha1(executable),
+        Md5 = Hashing.FileMd5(executable),
         Pid = pid,
         ParentPid = parentPid,
         Architecture = "x64",

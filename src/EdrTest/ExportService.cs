@@ -24,6 +24,7 @@ public static class ExportService
         var facts = ReadFacts(connection);
         var artifacts = ReadArtifacts(connection);
         var cleanup = ReadCleanup(connection);
+        var executionLogs = ReadExecutionLogs(connection);
         var root = new JsonObject
         {
             ["schema_version"] = EdrTestVersion.RunExportSchema,
@@ -34,6 +35,7 @@ public static class ExportService
             ["local_facts"] = facts,
             ["artifacts"] = artifacts,
             ["cleanup_results"] = cleanup,
+            ["execution_logs"] = executionLogs,
             ["integrity"] = new JsonObject
             {
                 ["database_sha256"] = Hashing.FileSha256(databasePath),
@@ -49,6 +51,7 @@ public static class ExportService
                     ["local_facts"] = facts.Count,
                     ["artifacts"] = artifacts.Count,
                     ["cleanup_results"] = cleanup.Count,
+                    ["execution_logs"] = executionLogs.Count,
                 },
                 ["warnings"] = new JsonArray(),
             },
@@ -301,6 +304,29 @@ public static class ExportService
                 ["before"] = ParseObject(reader.String("before_json")),
                 ["after"] = ParseObject(reader.String("after_json")),
                 ["error_message"] = reader.NullableString("error_message"),
+            });
+        }
+        return result;
+    }
+
+    private static JsonArray ReadExecutionLogs(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT * FROM execution_log ORDER BY log_id;";
+        using var reader = command.ExecuteReader();
+        var result = new JsonArray();
+        while (reader.Read())
+        {
+            result.Add(new JsonObject
+            {
+                ["log_id"] = reader.Int64("log_id"),
+                ["case_run_id"] = reader.NullableString("case_run_id"),
+                ["timestamp_utc"] = reader.String("timestamp_utc"),
+                ["level"] = reader.String("level"),
+                ["phase"] = reader.String("phase"),
+                ["code"] = reader.NullableString("code"),
+                ["message"] = reader.String("message"),
+                ["properties"] = ParseObject(reader.String("properties_json")),
             });
         }
         return result;

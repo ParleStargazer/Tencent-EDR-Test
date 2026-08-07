@@ -79,7 +79,7 @@ dotnet run --project src/EdrTest -- compare `
 
 比较命令会同时生成结构化 `validation-result.json` 和中文 `validation-conclusion.md`；未指定 `--conclusion-out` 时，Markdown 结论自动写入 JSON 同目录。同一个 `EdrTest.exe` 还提供 `export` 和 `inspect` 子命令。运行 `dotnet run --project src/EdrTest -- help` 可查看完整参数。
 
-前端包含三个路由：工作台 `/`、串行能力测试 `/test`、离线比较 `/compare`。测试页逐项显示能力进度、下一项等待倒计时、重点日志和 Controller 详细输出；比较页按能力展示 BASELINE 的本地要求、EDR 要求及逐项满足情况。
+前端包含三个路由：工作台 `/`、串行能力测试 `/test`、离线比较 `/compare`。测试页逐项显示能力进度、下一项等待倒计时和重点日志，完成项按能力进入“已完成队列”，点击后在悬浮窗口查看 Runner 与 Controller 详细输出；比较页按能力折叠展示 BASELINE，本地要求、EDR 要求及逐项满足依据在展开后显示。
 
 ## 仓库约定
 

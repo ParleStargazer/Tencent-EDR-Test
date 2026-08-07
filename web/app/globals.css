@@ -1165,6 +1165,57 @@ tbody tr:last-child td { border-bottom: 0; }
 .highlight-item span { color: var(--quiet); font-family: Consolas, monospace; font-size: 9px; }
 .highlight-item strong { margin-top: 5px; font-size: 11px; line-height: 1.55; }
 
+.completed-queue-list { max-height: 430px; overflow-y: auto; border-top: 1px solid var(--line); }
+.completed-queue-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto 54px;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 76px;
+  padding: 12px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.completed-queue-item:last-child { border-bottom: 0; }
+.completed-queue-item:hover,
+.completed-queue-item:focus-visible { background: #f2f8f6; outline: 0; box-shadow: inset 3px 0 var(--accent); }
+.completed-queue-item.error { box-shadow: inset 3px 0 var(--danger); }
+.completed-queue-item.skipped,
+.completed-queue-item.cancelled { box-shadow: inset 3px 0 var(--quiet); }
+.queue-sequence { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent); font-family: Consolas, monospace; font-size: 9px; }
+.queue-copy { min-width: 0; }
+.queue-copy strong,
+.queue-copy code,
+.queue-meta em,
+.queue-meta small { display: block; }
+.queue-copy strong { font-size: 11px; }
+.queue-copy code { overflow: hidden; margin-top: 4px; color: var(--quiet); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.queue-meta { text-align: right; }
+.queue-meta em { color: var(--muted); font-size: 9px; font-style: normal; }
+.queue-meta small { margin-top: 4px; color: var(--quiet); font-size: 8px; }
+.queue-open { color: var(--accent); font-size: 9px; text-align: right; }
+
+.log-modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgb(10 19 16 / 72%); }
+.log-modal { width: min(1080px, 100%); max-height: calc(100vh - 48px); overflow: hidden; border: 1px solid #5d716a; background: var(--panel); box-shadow: 0 24px 80px rgb(0 0 0 / 35%); }
+.log-modal-header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; padding: 17px 20px; }
+.log-modal-header h2 { margin-top: 3px; font-size: 16px; }
+.log-modal-header code { display: block; margin-top: 5px; color: var(--quiet); font-size: 9px; }
+.log-modal-header > div:last-child { display: flex; gap: 12px; align-items: center; }
+.queue-status { padding: 4px 8px; border: 1px solid #a5cabd; background: var(--accent-soft); color: var(--accent); font-size: 9px; }
+.queue-status.error { border-color: #ddbbb6; background: #fff1ef; color: var(--danger); }
+.queue-status.skipped,
+.queue-status.cancelled { border-color: var(--line-strong); background: #f1f3f2; color: var(--muted); }
+.modal-close { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid var(--line-strong); background: transparent; color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; }
+.modal-close:hover,
+.modal-close:focus-visible { border-color: var(--accent); color: var(--accent); outline: 0; }
+.log-modal .log-console { height: min(62vh, 560px); }
+
 .log-console { height: 430px; overflow: auto; padding: 8px 0; border-top: 1px solid #31413c; background: #15201d; color: #dce7e3; font-family: Consolas, monospace; }
 .log-line { display: grid; grid-template-columns: 112px 58px 142px minmax(0, 1fr); gap: 8px; padding: 7px 14px; border-bottom: 1px solid #26332f; font-size: 9px; line-height: 1.55; }
 .log-line time { color: #789087; }
@@ -1197,10 +1248,16 @@ tbody tr:last-child td { border-bottom: 0; }
 
 .capability-result-stack { display: grid; gap: 12px; margin-top: 14px; }
 .capability-result-card { border: 1px solid var(--line-strong); background: var(--panel); }
-.capability-result-card > header { display: flex; justify-content: space-between; gap: 20px; align-items: center; padding: 17px 20px; }
-.capability-result-card > header > div:first-child { display: flex; gap: 12px; align-items: center; }
+.capability-result-card > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto 24px; gap: 20px; align-items: center; padding: 17px 20px; cursor: pointer; list-style: none; }
+.capability-result-card > summary::-webkit-details-marker { display: none; }
+.capability-result-card > summary::after { display: grid; width: 22px; height: 22px; place-items: center; border: 1px solid var(--line-strong); color: var(--accent); content: "+"; font-family: Consolas, monospace; font-size: 14px; }
+.capability-result-card[open] > summary::after { content: "−"; }
+.capability-result-card > summary:hover,
+.capability-result-card > summary:focus-visible { background: #f2f8f6; outline: 0; }
+.capability-summary-main { display: flex; gap: 12px; align-items: center; min-width: 0; }
 .capability-result-card h3 { font-size: 14px; }
-.capability-result-card header p { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.capability-result-card summary p { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.capability-result-body { border-top: 1px solid var(--line); }
 .requirement-count { text-align: right; }
 .requirement-count strong,
 .requirement-count span { display: block; }
@@ -1257,7 +1314,10 @@ tbody tr:last-child td { border-bottom: 0; }
   .step-timeline li:last-child { border-bottom: 1px solid var(--line); }
   .log-line { grid-template-columns: 90px 48px minmax(0, 1fr); }
   .log-line p { grid-column: 1 / 4; }
-  .capability-result-card > header { align-items: flex-start; }
+  .completed-queue-item { grid-template-columns: 34px minmax(0, 1fr) auto; }
+  .queue-open { display: none; }
+  .log-modal-backdrop { padding: 10px; }
+  .capability-result-card > summary { grid-template-columns: minmax(0, 1fr) auto 24px; gap: 10px; align-items: flex-start; }
   .requirement-row { grid-template-columns: 70px minmax(0, 1fr); gap: 8px; }
   .requirement-status { grid-column: 1; }
   .requirement-values { grid-column: 2; }

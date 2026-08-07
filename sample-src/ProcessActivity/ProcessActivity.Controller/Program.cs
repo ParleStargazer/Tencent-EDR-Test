@@ -234,6 +234,8 @@ internal static class Program
             Role = role,
             ExecutablePath = executable,
             Sha256 = Hashing.FileSha256(executable),
+            Sha1 = Hashing.FileSha1(executable),
+            Md5 = Hashing.FileMd5(executable),
             Pid = process.Id,
             ParentPid = parentPid,
             SessionId = TrySessionId(process),

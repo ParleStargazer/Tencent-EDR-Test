@@ -72,8 +72,8 @@ public sealed class ProgramObservation
             InstanceIndex = instanceIndex,
             ExecutablePath = path,
             Sha256 = Hashing.FileSha256(path),
-            Sha1 = FileHash(path, SHA1.Create()),
-            Md5 = FileHash(path, MD5.Create()),
+            Sha1 = Hashing.FileSha1(path),
+            Md5 = Hashing.FileMd5(path),
             Pid = Environment.ProcessId,
             ParentPid = 0,
             SessionId = process.SessionId,
@@ -95,14 +95,6 @@ public sealed class ProgramObservation
         };
     }
 
-    private static string FileHash(string path, HashAlgorithm algorithm)
-    {
-        using (algorithm)
-        using (var stream = File.OpenRead(path))
-        {
-            return Convert.ToHexString(algorithm.ComputeHash(stream)).ToLowerInvariant();
-        }
-    }
 }
 
 public sealed class LocalEventObservation

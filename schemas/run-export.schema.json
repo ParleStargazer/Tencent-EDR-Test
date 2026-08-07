@@ -327,6 +327,24 @@
         }
       }
     },
+    "execution_logs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["log_id", "timestamp_utc", "level", "phase", "message", "properties"],
+        "properties": {
+          "log_id": { "type": "integer", "minimum": 1 },
+          "case_run_id": { "type": ["string", "null"] },
+          "timestamp_utc": { "$ref": "#/$defs/date_time" },
+          "level": { "enum": ["trace", "debug", "info", "warning", "error", "critical"] },
+          "phase": { "type": "string", "minLength": 1 },
+          "code": { "type": ["string", "null"] },
+          "message": { "type": "string" },
+          "properties": { "type": "object" }
+        }
+      }
+    },
     "integrity": {
       "type": "object",
       "additionalProperties": false,
@@ -355,7 +373,8 @@
             "local_events": { "type": "integer", "minimum": 0 },
             "local_facts": { "type": "integer", "minimum": 0 },
             "artifacts": { "type": "integer", "minimum": 0 },
-            "cleanup_results": { "type": "integer", "minimum": 0 }
+            "cleanup_results": { "type": "integer", "minimum": 0 },
+            "execution_logs": { "type": "integer", "minimum": 0 }
           }
         },
         "warnings": {

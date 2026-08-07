@@ -121,7 +121,12 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /apiRequest<ValidationResult>\("\/compare"/);
   assert.match(livePage, /inter_capability_delay_seconds: nextDelay/);
   assert.match(livePage, /run\.highlights/);
+  assert.match(livePage, /E \/ 已完成队列/);
+  assert.match(livePage, /role="dialog"/);
   assert.match(livePage, /baseline_requirements/);
+  assert.match(livePage, /return <details className="capability-result-card">/);
+  assert.match(livePage, /应包含的测试标记/);
+  assert.match(livePage, /读取到的 PID/);
   assert.match(livePage, /总体结论/);
   assert.match(livePage, /\/reports\/\$\{comparison\.comparison_id\}\/conclusion/);
   assert.match(livePage, /下载中文结论/);

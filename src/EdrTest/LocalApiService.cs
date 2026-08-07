@@ -606,6 +606,33 @@ internal sealed class ApiRunCoordinator
                 var status = run?["status"]?.GetValue<string>() ?? "UNKNOWN";
                 var capabilityNodes = root?["capabilities"]?.AsArray().Select(value => value?.AsObject()).Where(value => value is not null).Cast<JsonObject>().ToArray() ?? [];
                 var capabilityIds = capabilityNodes.Select(value => value["capability_id"]?.GetValue<string>()).Where(value => value is not null).Cast<string>().ToArray();
+                var capabilityByCaseRunId = capabilityNodes
+                    .Where(value => value["case_run_id"] is not null && value["capability_id"] is not null)
+                    .ToDictionary(
+                        value => value["case_run_id"]!.GetValue<string>(),
+                        value => value["capability_id"]!.GetValue<string>(),
+                        StringComparer.Ordinal);
+                var logs = root?["execution_logs"]?.AsArray()
+                    .Select(value => value?.AsObject())
+                    .Where(value => value is not null)
+                    .Cast<JsonObject>()
+                    .Select(value =>
+                    {
+                        var caseRunId = value["case_run_id"]?.GetValue<string>();
+                        var level = value["level"]?.GetValue<string>() ?? "info";
+                        var phase = value["phase"]?.GetValue<string>() ?? "runner";
+                        var capabilityId = caseRunId is not null && capabilityByCaseRunId.TryGetValue(caseRunId, out var mappedCapabilityId)
+                            ? mappedCapabilityId
+                            : null;
+                        return new ApiRunLogEntry(
+                            DateTimeOffset.Parse(value["timestamp_utc"]?.GetValue<string>() ?? throw new InvalidDataException()),
+                            level,
+                            phase,
+                            value["message"]?.GetValue<string>() ?? string.Empty,
+                            capabilityId,
+                            level is "warning" or "error" or "critical" || phase is "precheck");
+                    })
+                    .ToArray() ?? [];
                 var steps = capabilityNodes.Select((value, index) =>
                 {
                     var capabilityStatus = value["status"]?.GetValue<string>() ?? "UNKNOWN";
@@ -634,8 +661,8 @@ internal sealed class ApiRunCoordinator
                     null,
                     null,
                     steps,
-                    [],
-                    [],
+                    logs,
+                    logs.Where(value => value.Important).TakeLast(12).ToArray(),
                     started,
                     endedText is null ? null : DateTimeOffset.Parse(endedText),
                     File.Exists(databasePath) ? Path.GetFileName(databasePath) : null,

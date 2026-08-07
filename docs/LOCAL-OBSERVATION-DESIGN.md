@@ -113,6 +113,7 @@
   "local_facts": [],
   "artifacts": [],
   "cleanup_results": [],
+  "execution_logs": [],
   "integrity": {}
 }
 ```
@@ -190,10 +191,11 @@ correlation.nonce
 
 复杂、可变的数据放在 `local_events[].data`；经常参与断言的单值同时投影到 `local_facts`。每个事实必须声明来源和可信度。
 
-### 4.6 `artifacts`、`cleanup_results`、`integrity`
+### 4.6 `artifacts`、`cleanup_results`、`execution_logs`、`integrity`
 
 - 工件只记录相对路径、类型、大小、SHA-256 和敏感标记，不内嵌大文件；
 - 清理记录必须包含前后状态；
+- 执行日志保存级别、阶段、消息和属性，并通过 `case_run_id` 归入具体能力；
 - 完整性记录包含数据库 hash、Schema hash、数据库大小和各数组计数；
 - JSON 自身 hash 不能写入自身，Export 工具在旁路输出 `<file>.sha256`。
 

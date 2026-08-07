@@ -200,7 +200,7 @@ function statusDot(status: RunStatus): string {
 }
 
 function displayValue(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "未提供";
+  if (value === null || value === undefined || value === "") return "未采集到值";
   if (value === true) return "是";
   if (value === false) return "否";
   if (typeof value === "object" && value !== null && "min" in value) {
@@ -209,6 +209,41 @@ function displayValue(value: unknown): string {
   }
   const text = typeof value === "string" ? value : JSON.stringify(value);
   return text.length > 120 ? `${text.slice(0, 120)}…` : text;
+}
+
+function requirementEvidence(requirement: BaselineRequirementResult): { expectedLabel: string; expectedValue: string; actualLabel: string; actualValue: string } {
+  const isPid = requirement.field.endsWith(".pid");
+  const isCommandLine = requirement.field.endsWith(".command_line");
+  const isMd5 = requirement.field.endsWith(".md5");
+
+  if (requirement.operator === "present") {
+    return {
+      expectedLabel: "校验条件",
+      expectedValue: "必须采集到值",
+      actualLabel: isPid ? "读取到的 PID" : "读取结果",
+      actualValue: displayValue(requirement.actual),
+    };
+  }
+  if (requirement.operator === "absent") {
+    return { expectedLabel: "校验条件", expectedValue: "必须为空", actualLabel: "读取结果", actualValue: displayValue(requirement.actual) };
+  }
+  if (requirement.operator === "contains") {
+    return {
+      expectedLabel: isCommandLine ? "应包含的测试标记" : "应包含内容",
+      expectedValue: displayValue(requirement.expected),
+      actualLabel: isCommandLine ? "实际命令行" : "实际内容",
+      actualValue: displayValue(requirement.actual),
+    };
+  }
+  if (requirement.field === "event.count") {
+    return { expectedLabel: "要求数量", expectedValue: displayValue(requirement.expected), actualLabel: "找到数量", actualValue: displayValue(requirement.actual) };
+  }
+  return {
+    expectedLabel: isPid ? "本地期望 PID" : isMd5 ? "本地期望 MD5" : "期望值",
+    expectedValue: displayValue(requirement.expected),
+    actualLabel: isPid ? "EDR 实际 PID" : isMd5 ? "EDR 实际 MD5" : "实际值",
+    actualValue: displayValue(requirement.actual),
+  };
 }
 
 function downloadBlob(fileName: string, blob: Blob) {
@@ -493,7 +528,7 @@ function TestWorkspace(props: TestWorkspaceProps) {
       </section>
     </div>
     <RunProgressPanel run={activeRun} onCancel={props.onCancel} onDownload={props.onDownload} />
-    <RunLogPanel run={activeRun} />
+    <RunLogPanel key={activeRun?.operation_id ?? "empty-run"} run={activeRun} />
     <RunHistory runs={props.recentRuns} onInspect={props.onInspect} onDownload={props.onDownload} onRefresh={props.onRefresh} />
   </>;
 }
@@ -508,8 +543,25 @@ function RunProgressPanel({ run, onCancel, onDownload }: { run: ApiRun | null; o
 }
 
 function RunLogPanel({ run }: { run: ApiRun | null }) {
-  return <section className="log-workspace"><article className="panel highlight-panel"><div className="panel-heading"><div><p className="section-index">D / 重点日志</p><h2>需要关注的事件</h2><p className="panel-description">只保留开始、完成、跳过、警告和错误，便于快速判断。</p></div></div><div className="highlight-list">{run?.highlights.length ? run.highlights.map((log, index) => <div className={`highlight-item ${log.level}`} key={`${log.timestamp_utc}-${index}`}><span>{formatTime(log.timestamp_utc)}</span><strong>{log.message}</strong></div>) : <div className="table-empty">暂时没有重点日志。</div>}</div></article>
-    <article className="panel detail-log-panel"><div className="panel-heading"><div><p className="section-index">E / 详细日志</p><h2>Runner 与 Controller 输出</h2><p className="panel-description">按发生时间显示，包含控制程序 stdout/stderr。</p></div><span className="line-badge">{run?.logs.length ?? 0} 条</span></div><div className="log-console" role="log" aria-live="polite">{run?.logs.length ? run.logs.map((log, index) => <div className={`log-line ${log.level}`} key={`${log.timestamp_utc}-${index}`}><time>{formatTime(log.timestamp_utc)}</time><span>{log.level.toUpperCase()}</span><code>{log.source}</code><p>{log.message}</p></div>) : <div className="log-empty">测试启动后将在这里显示实时日志。</div>}</div></article></section>;
+  const [selectedCapabilityId, setSelectedCapabilityId] = useState<string | null>(null);
+  const completedSteps = run?.steps.filter((step) => step.status !== "pending" && step.status !== "running") ?? [];
+  const selectedStep = completedSteps.find((step) => step.capability_id === selectedCapabilityId);
+  const selectedLogs = selectedStep ? run?.logs.filter((log) => log.capability_id === selectedStep.capability_id) ?? [] : [];
+
+  useEffect(() => {
+    if (!selectedStep) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setSelectedCapabilityId(null); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [selectedStep]);
+
+  return <><section className="log-workspace"><article className="panel highlight-panel"><div className="panel-heading"><div><p className="section-index">D / 重点日志</p><h2>需要关注的事件</h2><p className="panel-description">只保留开始、完成、跳过、警告和错误，便于快速判断。</p></div></div><div className="highlight-list">{run?.highlights.length ? run.highlights.map((log, index) => <div className={`highlight-item ${log.level}`} key={`${log.timestamp_utc}-${index}`}><span>{formatTime(log.timestamp_utc)}</span><strong>{log.message}</strong></div>) : <div className="table-empty">暂时没有重点日志。</div>}</div></article>
+    <article className="panel completed-queue-panel"><div className="panel-heading"><div><p className="section-index">E / 已完成队列</p><h2>按能力查看详细日志</h2><p className="panel-description">能力完成后进入队列；点击具体能力查看其 Runner 与 Controller 输出。</p></div><span className="line-badge">{completedSteps.length} 项</span></div><div className="completed-queue-list">{completedSteps.length ? completedSteps.map((step) => {
+      const logCount = run?.logs.filter((log) => log.capability_id === step.capability_id).length ?? 0;
+      return <button className={`completed-queue-item ${step.status}`} type="button" key={step.capability_id} onClick={() => setSelectedCapabilityId(step.capability_id)}><span className="queue-sequence">{step.sequence}</span><span className="queue-copy"><strong>{step.name_zh}</strong><code>{step.capability_id}</code></span><span className="queue-meta"><em>{step.status_label}</em><small>{logCount} 条日志</small></span><span className="queue-open" aria-hidden="true">查看 →</span></button>;
+    }) : <div className="table-empty">能力完成后会按执行顺序显示在这里。</div>}</div></article></section>
+    {selectedStep && <div className="log-modal-backdrop" onClick={() => setSelectedCapabilityId(null)}><section className="log-modal" role="dialog" aria-modal="true" aria-labelledby="capability-log-title" onClick={(event) => event.stopPropagation()}><header className="log-modal-header"><div><p className="section-index">能力详细日志</p><h2 id="capability-log-title">{selectedStep.name_zh}</h2><code>{selectedStep.capability_id}</code></div><div><span className={`queue-status ${selectedStep.status}`}>{selectedStep.status_label}</span><button className="modal-close" type="button" autoFocus aria-label="关闭能力详细日志" onClick={() => setSelectedCapabilityId(null)}>×</button></div></header><div className="log-console" role="log">{selectedLogs.length ? selectedLogs.map((log, index) => <div className={`log-line ${log.level}`} key={`${log.timestamp_utc}-${index}`}><time>{formatTime(log.timestamp_utc)}</time><span>{log.level.toUpperCase()}</span><code>{log.source}</code><p>{log.message}</p></div>) : <div className="log-empty">该能力没有可用的详细输出。</div>}</div></section></div>}
+  </>;
 }
 
 function RunHistory({ runs, onInspect, onDownload, onRefresh }: { runs: ApiRun[]; onInspect: (run: ApiRun) => void; onDownload: (run: ApiRun) => void; onRefresh: () => void }) {
@@ -544,7 +596,7 @@ function BaselineGuide({ baselines }: { baselines: ApiBaseline[] }) {
 }
 
 function ComparisonResultPanel({ result, onDownloadJson, onDownloadConclusion }: { result: ValidationResult | null; onDownloadJson: () => void; onDownloadConclusion: () => void }) {
-  return <section className="panel comparison-detail-panel"><div className="panel-heading"><div><p className="section-index">C / 比较结果</p><h2>要求满足情况</h2><p className="panel-description">每一项要求都显示“已满足、未满足或未检查”，并列出期望值与实际值。</p></div></div>{result ? <>
+  return <section className="panel comparison-detail-panel"><div className="panel-heading"><div><p className="section-index">C / 比较结果</p><h2>要求满足情况</h2><p className="panel-description">结果先按能力折叠；展开后查看每项要求的状态、校验条件和实际观测。</p></div></div>{result ? <>
     <div className={`conclusion-card ${result.conclusion.verdict.toLowerCase()}`}><div><span>总体结论</span><strong>{result.conclusion.label_zh}</strong><em>{result.conclusion.pass_rate === null ? "通过率不可计算" : `完整通过率 ${(result.conclusion.pass_rate * 100).toFixed(1)}%`}</em></div><p>{result.conclusion.statement_zh}</p></div>
     <div className="result-summary"><div><span>通过</span><strong className="pass-text">{result.summary.pass}</strong></div><div><span>部分通过</span><strong>{result.summary.partial}</strong></div><div><span>失败</span><strong className="fail-text">{result.summary.fail}</strong></div><div><span>无法判定</span><strong>{result.summary.inconclusive}</strong></div></div>
     <div className="capability-result-stack">{result.capabilities.map((entry) => <CapabilityComparison key={entry.case_run_id} entry={entry} />)}</div>
@@ -555,11 +607,12 @@ function ComparisonResultPanel({ result, onDownloadJson, onDownloadConclusion }:
 function CapabilityComparison({ entry }: { entry: ValidationEntry }) {
   const requirements = entry.baseline_requirements ?? [];
   const passed = requirements.filter((item) => item.status === "passed").length;
-  return <article className="capability-result-card"><header><div><span className={`result-status ${entry.validation_status.toLowerCase()}`}>{validationStatusLabel(entry.validation_status)}</span><div><h3>{entry.display_name_zh ?? entry.capability_id}</h3><p>{entry.baseline_title ?? entry.baseline_id ?? "没有匹配的检验基准"}</p></div></div><div className="requirement-count"><strong>{passed}/{requirements.length}</strong><span>要求已满足</span></div></header><div className="evidence-strip"><span>{coverageLabel(entry.export_coverage)}</span><span>{entry.candidate_count} 条候选事件</span><span>本地状态 {entry.local_status}</span></div>{entry.warnings?.length ? <div className="plain-warning"><strong>需要注意</strong><p>{entry.warnings.join("；")}</p></div> : null}<div className="requirement-table"><div className="requirement-head"><span>来源</span><span>要求</span><span>结果</span><span>依据</span></div>{requirements.map((requirement) => <RequirementRow key={requirement.requirement_id} requirement={requirement} />)}</div></article>;
+  return <details className="capability-result-card"><summary><div className="capability-summary-main"><span className={`result-status ${entry.validation_status.toLowerCase()}`}>{validationStatusLabel(entry.validation_status)}</span><div><h3>{entry.display_name_zh ?? entry.capability_id}</h3><p>{entry.baseline_title ?? entry.baseline_id ?? "没有匹配的检验基准"}</p></div></div><div className="requirement-count"><strong>{passed}/{requirements.length}</strong><span>要求已满足</span></div></summary><div className="capability-result-body"><div className="evidence-strip"><span>{coverageLabel(entry.export_coverage)}</span><span>{entry.candidate_count} 条候选事件</span><span>本地状态 {entry.local_status}</span></div>{entry.warnings?.length ? <div className="plain-warning"><strong>需要注意</strong><p>{entry.warnings.join("；")}</p></div> : null}<div className="requirement-table"><div className="requirement-head"><span>来源</span><span>要求</span><span>结果</span><span>依据</span></div>{requirements.map((requirement) => <RequirementRow key={requirement.requirement_id} requirement={requirement} />)}</div></div></details>;
 }
 
 function RequirementRow({ requirement }: { requirement: BaselineRequirementResult }) {
-  return <div className={`requirement-row ${requirement.status}`}><span><i className={`scope-chip ${requirement.scope}`}>{requirement.scope === "local" ? "本地" : "EDR"}</i><em>{severityLabel(requirement.severity)}</em></span><div><strong>{requirement.title_zh}</strong><code>{requirement.field}</code></div><span className={`requirement-status ${requirement.status}`}>{requirementStatusLabel(requirement.status)}</span><div className="requirement-values"><p><b>期望：</b>{displayValue(requirement.expected)}</p><p><b>实际：</b>{displayValue(requirement.actual)}</p>{requirement.message && <p className="requirement-message">{requirement.message}</p>}</div></div>;
+  const evidence = requirementEvidence(requirement);
+  return <div className={`requirement-row ${requirement.status}`}><span><i className={`scope-chip ${requirement.scope}`}>{requirement.scope === "local" ? "本地" : "EDR"}</i><em>{severityLabel(requirement.severity)}</em></span><div><strong>{requirement.title_zh}</strong><code>{requirement.field}</code></div><span className={`requirement-status ${requirement.status}`}>{requirementStatusLabel(requirement.status)}</span><div className="requirement-values"><p><b>{evidence.expectedLabel}：</b>{evidence.expectedValue}</p><p><b>{evidence.actualLabel}：</b>{evidence.actualValue}</p>{requirement.message && <p className="requirement-message">{requirement.message}</p>}</div></div>;
 }
 
 function FileSlot({ id, step, title, hint, choice, required = false, onChange }: { id: string; step: string; title: string; hint: string; choice: FileChoice; required?: boolean; onChange: (event: ChangeEvent<HTMLInputElement>) => void }) {

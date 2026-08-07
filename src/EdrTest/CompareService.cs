@@ -373,7 +373,8 @@ public static class CompareService
                 var fieldName = baseline.CloudExpectations.Count == 1 ? evaluated.Field : $"{expectation.Id}:{evaluated.Field}";
                 outputAssertions.Add(evaluated.ToJson(fieldName));
                 outputRequirements.Add(RequirementJson($"{expectation.Id}-{expectation.Assertions.IndexOf(assertion) + 1}", "cloud", expectation.Id, evaluated));
-                if (evaluated.Status == "not_evaluated") overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+                if (evaluated.Status == "not_evaluated" && assertion.Severity == "required") overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+                else if (evaluated.Status == "not_evaluated" && assertion.Severity == "recommended") overallStatus = Worse(overallStatus, "PARTIAL");
                 else if (evaluated.Status == "failed" && assertion.Severity == "required") overallStatus = Worse(overallStatus, "FAIL");
                 else if (evaluated.Status == "failed" && assertion.Severity == "recommended") overallStatus = Worse(overallStatus, "PARTIAL");
             }
@@ -560,6 +561,17 @@ public static class CompareService
     private static AssertionEvaluation Evaluate(BaselineAssertion definition, object? actual, LocalResolver resolver)
     {
         object? expected = definition.ExpectedFromLocal is not null ? resolver.Resolve(definition.ExpectedFromLocal) : definition.Expected;
+        if (definition.ExpectedFromLocal is not null && expected is null)
+        {
+            return new AssertionEvaluation(
+                definition.Field,
+                definition.Operator,
+                definition.Severity,
+                "not_evaluated",
+                null,
+                actual,
+                $"本地运行结果未采集 {definition.ExpectedFromLocal}，无法形成期望值。");
+        }
         if (expected is string template) expected = resolver.Expand(template);
         var normalizedActual = Normalize(actual, definition.Normalizers);
         var normalizedExpected = Normalize(expected, definition.Normalizers);
