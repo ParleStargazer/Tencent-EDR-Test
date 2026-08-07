@@ -3,3 +3,9 @@ packages:
 
 patchedDependencies:
   vinext@0.0.50: patches/vinext@0.0.50.patch
+
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - unrs-resolver
+  - workerd
