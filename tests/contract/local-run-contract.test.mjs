@@ -53,6 +53,24 @@ test("轮次 Schema 与分类事件 Schema 使用 1.1 数据契约", async () =>
   assert.equal(runSchema.properties.programs.minItems, undefined);
 });
 
+test("验证结果 Schema 支持逐能力 JSON 对照与多候选高亮", async () => {
+  const schema = await readJson("schemas/validation-result.schema.json");
+  const capability = schema.properties.capabilities.items;
+  const candidate = capability.properties.edr_candidates.items;
+
+  assert.ok(capability.required.includes("local_export_block"));
+  assert.ok(capability.required.includes("local_baseline_matches"));
+  assert.ok(candidate.required.includes("baseline_matches"));
+  assert.deepEqual(
+    candidate.properties.baseline_matches.items.properties.kind.enum,
+    ["correlation", "assertion"],
+  );
+  assert.equal(
+    candidate.properties.baseline_matches.items.properties.raw_json_pointer.type.includes("null"),
+    true,
+  );
+});
+
 test("能力包 1.1 模板具备中英名称、Actor 和安全相对 EXE 路径", async () => {
   const schema = await readJson("schemas/capability-manifest.schema.json");
   const template = await readJson("examples/capability-package/capability.json");

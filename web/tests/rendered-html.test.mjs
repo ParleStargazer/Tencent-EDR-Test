@@ -127,9 +127,15 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /programs\.\$\{program\.role\}\.pid/);
   assert.match(livePage, /能力开始/);
   assert.match(livePage, /baseline_requirements/);
-  assert.match(livePage, /return <details className="capability-result-card">/);
+  assert.match(livePage, /<details className="capability-result-card">/);
   assert.match(livePage, /open=\{isCloud\}/);
   assert.match(livePage, /EDR 原始完整日志/);
+  assert.match(livePage, /打开 JSON 对照窗/);
+  assert.match(livePage, /逐能力 JSON 对照/);
+  assert.match(livePage, /选择 EDR 候选 JSON 块/);
+  assert.match(livePage, /BASELINE 一致/);
+  assert.match(livePage, /baseline_matches/);
+  assert.match(livePage, /JsonCodeViewer/);
   assert.match(livePage, /correlation_score/);
   assert.match(livePage, /time_distance_ms/);
   assert.match(livePage, /应包含的测试标记/);

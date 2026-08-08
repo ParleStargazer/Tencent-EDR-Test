@@ -109,6 +109,8 @@
           "validation_status",
           "export_coverage",
           "candidate_count",
+          "local_export_block",
+          "local_baseline_matches",
           "assertions"
         ],
         "properties": {
@@ -161,6 +163,7 @@
                 "time_distance_ms",
                 "raw_ref",
                 "matched_anchors",
+                "baseline_matches",
                 "canonical_event",
                 "raw_event"
               ],
@@ -177,8 +180,81 @@
                   "type": "array",
                   "items": { "type": "string" }
                 },
+                "baseline_matches": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "requirement_id",
+                      "status",
+                      "local_field",
+                      "local_json_pointer",
+                      "canonical_field",
+                      "raw_field",
+                      "raw_json_pointer",
+                      "expected",
+                      "actual",
+                      "message"
+                    ],
+                    "properties": {
+                      "kind": { "enum": ["correlation", "assertion"] },
+                      "requirement_id": { "type": "string", "minLength": 1 },
+                      "status": { "enum": ["passed", "failed", "not_evaluated"] },
+                      "local_field": { "type": ["string", "null"] },
+                      "local_json_pointer": { "type": ["string", "null"] },
+                      "canonical_field": { "type": "string", "minLength": 1 },
+                      "raw_field": { "type": ["string", "null"] },
+                      "raw_json_pointer": { "type": ["string", "null"] },
+                      "expected": {},
+                      "actual": {},
+                      "message": { "type": ["string", "null"] }
+                    }
+                  }
+                },
                 "canonical_event": { "type": "object" },
                 "raw_event": { "type": "object" }
+              }
+            }
+          },
+          "local_export_block": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "run",
+              "capability",
+              "programs",
+              "local_events",
+              "local_facts",
+              "artifacts",
+              "cleanup_results",
+              "execution_logs"
+            ],
+            "properties": {
+              "run": { "type": "object" },
+              "capability": { "type": "object" },
+              "programs": { "type": "array" },
+              "local_events": { "type": "array" },
+              "local_facts": { "type": "array" },
+              "artifacts": { "type": "array" },
+              "cleanup_results": { "type": "array" },
+              "execution_logs": { "type": "array" }
+            }
+          },
+          "local_baseline_matches": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["requirement_id", "status", "field", "json_pointer", "expected", "actual"],
+              "properties": {
+                "requirement_id": { "type": "string", "minLength": 1 },
+                "status": { "enum": ["passed", "failed", "not_evaluated"] },
+                "field": { "type": "string", "minLength": 1 },
+                "json_pointer": { "type": ["string", "null"] },
+                "expected": {},
+                "actual": {}
               }
             }
           },

@@ -173,9 +173,14 @@ public sealed class CardinalityDefinition
     public int? Max { get; init; }
 }
 
-internal sealed record CanonicalEvent(string RawRef, Dictionary<string, object?> Fields, JsonObject Raw)
+internal sealed record CanonicalEvent(
+    string RawRef,
+    Dictionary<string, object?> Fields,
+    Dictionary<string, string?> SourceFields,
+    JsonObject Raw)
 {
     public object? Get(string field) => Fields.TryGetValue(field, out var value) ? value : null;
+    public string? SourceField(string field) => SourceFields.TryGetValue(field, out var value) ? value : null;
 }
 
 internal sealed record Candidate(CanonicalEvent Event, double Score, long TimeDistanceMs, IReadOnlyList<string> MatchedAnchors);
@@ -234,17 +239,19 @@ public static class CompareService
                     result = NotCompared(capabilityId, caseRunId, localStatus,
                         $"没有与能力版本 {capabilityVersion} 匹配的 BASELINE；不会使用其他版本的本地条件误判采集失败。");
                     DecorateCapabilityResult(result, capability, null);
-                    results.Add(result);
-                    continue;
                 }
-                if (matchingBaselines.Length > 1)
+                else if (matchingBaselines.Length > 1)
                 {
                     throw new InvalidDataException($"能力 {capabilityId} {capabilityVersion} 存在多份 BASELINE，无法唯一选择。");
                 }
-                var baselineEntry = matchingBaselines[0];
-                result = CompareCapability(localRoot, capability, baselineEntry.Value, cloud, cloudManifest, manifestFilesVerified);
-                DecorateCapabilityResult(result, capability, baselineEntry.Value);
+                else
+                {
+                    var baselineEntry = matchingBaselines[0];
+                    result = CompareCapability(localRoot, capability, baselineEntry.Value, cloud, cloudManifest, manifestFilesVerified);
+                    DecorateCapabilityResult(result, capability, baselineEntry.Value);
+                }
             }
+            AttachJsonComparisonEvidence(result, localRoot, capability);
             results.Add(result);
         }
 
@@ -352,7 +359,13 @@ public static class CompareService
             totalCandidates += candidates.Length;
             for (var candidateIndex = 0; candidateIndex < candidates.Length; candidateIndex++)
             {
-                outputCandidates.Add(CandidateJson(expectation.Id, candidateIndex + 1, candidates[candidateIndex]));
+                outputCandidates.Add(CandidateJson(
+                    expectation.Id,
+                    candidateIndex + 1,
+                    candidates[candidateIndex],
+                    expectation,
+                    expectationAnchors,
+                    resolver));
             }
             var cardinalityStatus = candidates.Length < expectation.Cardinality.Min
                 ? exportCoverage is "verified" or "inferred" or "assumed" ? "failed" : "not_evaluated"
@@ -624,12 +637,49 @@ public static class CompareService
         _ => "low",
     };
 
-    private static JsonObject CandidateJson(string expectationId, int rank, Candidate candidate)
+    private static JsonObject CandidateJson(
+        string expectationId,
+        int rank,
+        Candidate candidate,
+        CloudExpectation expectation,
+        IReadOnlyList<CorrelationAnchor> anchors,
+        LocalResolver resolver)
     {
         var canonical = new JsonObject();
         foreach (var (field, value) in candidate.Event.Fields.OrderBy(value => value.Key, StringComparer.Ordinal))
         {
             canonical[field] = Values.ToNode(value);
+        }
+        var baselineMatches = new JsonArray();
+        for (var index = 0; index < anchors.Count; index++)
+        {
+            var anchor = anchors[index];
+            var evaluation = Evaluate(new BaselineAssertion
+            {
+                Field = anchor.CloudField,
+                Operator = "equals",
+                ExpectedFromLocal = anchor.LocalField,
+                Severity = "required",
+                Normalizers = anchor.Normalizers,
+            }, candidate.Event.Get(anchor.CloudField), resolver);
+            baselineMatches.Add(CandidateBaselineMatchJson(
+                "correlation",
+                $"{expectationId}-anchor-{index + 1}",
+                anchor.LocalField,
+                candidate.Event,
+                evaluation,
+                resolver));
+        }
+        for (var index = 0; index < expectation.Assertions.Count; index++)
+        {
+            var assertion = expectation.Assertions[index];
+            baselineMatches.Add(CandidateBaselineMatchJson(
+                "assertion",
+                $"{expectationId}-{index + 1}",
+                assertion.ExpectedFromLocal,
+                candidate.Event,
+                Evaluate(assertion, candidate.Event.Get(assertion.Field), resolver),
+                resolver));
         }
         return new JsonObject
         {
@@ -642,10 +692,40 @@ public static class CompareService
             ["raw_ref"] = candidate.Event.RawRef,
             ["event_id"] = Values.ToNode(candidate.Event.Get("event.id")),
             ["matched_anchors"] = new JsonArray(candidate.MatchedAnchors.Select(value => (JsonNode)value).ToArray()),
+            ["baseline_matches"] = baselineMatches,
             ["canonical_event"] = canonical,
             ["raw_event"] = candidate.Event.Raw.DeepClone(),
         };
     }
+
+    private static JsonObject CandidateBaselineMatchJson(
+        string kind,
+        string requirementId,
+        string? localField,
+        CanonicalEvent candidate,
+        AssertionEvaluation evaluation,
+        LocalResolver resolver)
+    {
+        var rawField = candidate.SourceField(evaluation.Field);
+        return new JsonObject
+        {
+            ["kind"] = kind,
+            ["requirement_id"] = requirementId,
+            ["status"] = evaluation.Status,
+            ["local_field"] = localField,
+            ["local_json_pointer"] = localField is null ? null : resolver.JsonPointer(localField),
+            ["canonical_field"] = evaluation.Field,
+            ["raw_field"] = rawField,
+            ["raw_json_pointer"] = rawField is null ? null : JsonPointer(rawField),
+            ["expected"] = Values.ToNode(evaluation.Expected),
+            ["actual"] = Values.ToNode(evaluation.Actual),
+            ["message"] = evaluation.Message,
+        };
+    }
+
+    private static string JsonPointer(string property) => "/" + property
+        .Replace("~", "~0", StringComparison.Ordinal)
+        .Replace("/", "~1", StringComparison.Ordinal);
 
     private static bool EventMatches(CanonicalEvent item, CloudExpectation expectation, DateTimeOffset start, DateTimeOffset end, CorrelationDefinition correlation)
     {
@@ -740,6 +820,7 @@ public static class CompareService
         {
             if (!Matches(record, route.When)) continue;
             var fields = new Dictionary<string, object?>(StringComparer.Ordinal);
+            var sourceFields = new Dictionary<string, string?>(StringComparer.Ordinal);
             foreach (var (field, rule) in route.Canonical)
             {
                 object? value;
@@ -755,10 +836,12 @@ public static class CompareService
                     value = rule.OnError;
                 }
                 fields[field] = value;
+                sourceFields[field] = rule.Source;
             }
             output.Add(new CanonicalEvent(
                 rawRef,
                 fields,
+                sourceFields,
                 JsonNode.Parse(record.GetRawText())?.AsObject() ?? throw new InvalidDataException("EDR 日志记录必须是 JSON 对象。")));
         }
     }
@@ -979,6 +1062,47 @@ public static class CompareService
         result["baseline_version"] = baseline?.Version;
         result["baseline_title"] = baseline?.Title;
     }
+
+    private static void AttachJsonComparisonEvidence(JsonObject result, JsonObject localRoot, JsonObject capability)
+    {
+        var caseRunId = RequiredString(capability, "case_run_id");
+        result["local_export_block"] = new JsonObject
+        {
+            ["run"] = localRoot["run"]?.DeepClone(),
+            ["capability"] = capability.DeepClone(),
+            ["programs"] = CaseItems(localRoot, "programs", caseRunId),
+            ["local_events"] = CaseItems(localRoot, "local_events", caseRunId),
+            ["local_facts"] = CaseItems(localRoot, "local_facts", caseRunId),
+            ["artifacts"] = CaseItems(localRoot, "artifacts", caseRunId),
+            ["cleanup_results"] = CaseItems(localRoot, "cleanup_results", caseRunId),
+            ["execution_logs"] = CaseItems(localRoot, "execution_logs", caseRunId),
+        };
+
+        var resolver = new LocalResolver(localRoot, capability);
+        var localMatches = new JsonArray();
+        foreach (var requirementNode in result["baseline_requirements"]?.AsArray() ?? [])
+        {
+            if (requirementNode is not JsonObject requirement
+                || requirement["scope"]?.GetValue<string>() != "local") continue;
+            var field = requirement["field"]?.GetValue<string>();
+            localMatches.Add(new JsonObject
+            {
+                ["requirement_id"] = requirement["requirement_id"]?.DeepClone(),
+                ["status"] = requirement["status"]?.DeepClone(),
+                ["field"] = field,
+                ["json_pointer"] = field is null ? null : resolver.JsonPointer(field),
+                ["expected"] = requirement["expected"]?.DeepClone(),
+                ["actual"] = requirement["actual"]?.DeepClone(),
+            });
+        }
+        result["local_baseline_matches"] = localMatches;
+    }
+
+    private static JsonArray CaseItems(JsonObject root, string collection, string caseRunId) => new(
+        (root[collection]?.AsArray() ?? [])
+            .Where(value => value?["case_run_id"]?.GetValue<string>() == caseRunId)
+            .Select(value => value!.DeepClone())
+            .ToArray());
 
     private static JsonObject BuildConclusion(JsonArray results, JsonObject summary)
     {
@@ -1216,6 +1340,35 @@ internal sealed class LocalResolver
         return null;
     }
 
+    public string? JsonPointer(string path)
+    {
+        if (path == "nonce") return "/capability/nonce";
+        if (path.StartsWith("facts.", StringComparison.Ordinal))
+        {
+            var key = path[6..];
+            var facts = root["local_facts"]?.AsArray()
+                .Where(value => value?["case_run_id"]?.GetValue<string>() == caseRunId)
+                .ToArray() ?? [];
+            var index = Array.FindIndex(facts, value => value?["key"]?.GetValue<string>() == key);
+            return index < 0 ? null : $"/local_facts/{index}/value";
+        }
+        if (path.StartsWith("programs.", StringComparison.Ordinal))
+        {
+            var parts = path.Split('.');
+            if (parts.Length < 3) return null;
+            var programs = root["programs"]?.AsArray()
+                .Where(value => value?["case_run_id"]?.GetValue<string>() == caseRunId)
+                .ToArray() ?? [];
+            var index = Array.FindIndex(programs, value => value?["role"]?.GetValue<string>() == parts[1]);
+            return index < 0 ? null : "/programs/" + index + "/" + string.Join('/', parts.Skip(2).Select(EscapeJsonPointer));
+        }
+        if (path.StartsWith("capability.", StringComparison.Ordinal))
+        {
+            return "/capability/" + string.Join('/', path.Split('.').Skip(1).Select(EscapeJsonPointer));
+        }
+        return null;
+    }
+
     public string Expand(string template) => template
         .Replace("${nonce}", capability["nonce"]?.GetValue<string>() ?? string.Empty, StringComparison.Ordinal);
 
@@ -1227,4 +1380,8 @@ internal sealed class LocalResolver
         }
         return Values.FromJson(node);
     }
+
+    private static string EscapeJsonPointer(string value) => value
+        .Replace("~", "~0", StringComparison.Ordinal)
+        .Replace("/", "~1", StringComparison.Ordinal);
 }

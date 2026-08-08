@@ -124,6 +124,29 @@ type BaselineRequirementResult = ApiBaselineRequirement & {
   message?: string;
 };
 
+type LocalBaselineMatch = {
+  requirement_id: string;
+  status: RequirementStatus;
+  field: string;
+  json_pointer?: string;
+  expected?: unknown;
+  actual?: unknown;
+};
+
+type CandidateBaselineMatch = {
+  kind: "correlation" | "assertion";
+  requirement_id: string;
+  status: RequirementStatus;
+  local_field?: string;
+  local_json_pointer?: string;
+  canonical_field: string;
+  raw_field?: string;
+  raw_json_pointer?: string;
+  expected?: unknown;
+  actual?: unknown;
+  message?: string;
+};
+
 type ValidationEntry = {
   case_run_id: string;
   capability_id: string;
@@ -136,6 +159,8 @@ type ValidationEntry = {
   validation_status: ValidationStatus;
   export_coverage: string;
   candidate_count: number;
+  local_export_block: Record<string, unknown>;
+  local_baseline_matches?: LocalBaselineMatch[];
   edr_candidates?: EdrCandidate[];
   baseline_requirements?: BaselineRequirementResult[];
   warnings?: string[];
@@ -151,6 +176,7 @@ type EdrCandidate = {
   raw_ref: string;
   event_id?: string;
   matched_anchors: string[];
+  baseline_matches?: CandidateBaselineMatch[];
   canonical_event: Record<string, unknown>;
   raw_event: Record<string, unknown>;
 };
@@ -688,12 +714,13 @@ function ComparisonResultPanel({ result, onDownloadJson, onDownloadConclusion }:
 }
 
 function CapabilityComparison({ entry }: { entry: ValidationEntry }) {
+  const [showJsonComparison, setShowJsonComparison] = useState(false);
   const requirements = entry.baseline_requirements ?? [];
   const passed = requirements.filter((item) => item.status === "passed").length;
   const localRequirements = requirements.filter((item) => item.scope === "local");
   const cloudRequirements = requirements.filter((item) => item.scope === "cloud");
   const candidates = [...(entry.edr_candidates ?? [])].sort((left, right) => right.correlation_score - left.correlation_score || left.time_distance_ms - right.time_distance_ms || left.rank - right.rank);
-  return <details className="capability-result-card"><summary><div className="capability-summary-main"><span className={`result-status ${entry.validation_status.toLowerCase()}`}>{validationStatusLabel(entry.validation_status)}</span><div><h3>{entry.display_name_zh ?? entry.capability_id}</h3><p>{entry.baseline_title ?? entry.baseline_id ?? "没有匹配的检验基准"}</p></div></div><div className="requirement-count"><strong>{passed}/{requirements.length}</strong><span>要求已满足</span></div></summary><div className="capability-result-body"><div className="evidence-strip"><span>{coverageLabel(entry.export_coverage)}</span><span>{entry.candidate_count} 条候选事件</span><span>本地状态 {entry.local_status}</span></div>{entry.warnings?.length ? <div className="plain-warning"><strong>需要注意</strong><p>{entry.warnings.join("；")}</p></div> : null}<RequirementGroup scope="local" requirements={localRequirements} /><RequirementGroup scope="cloud" requirements={cloudRequirements} candidates={candidates} /></div></details>;
+  return <><details className="capability-result-card"><summary><div className="capability-summary-main"><span className={`result-status ${entry.validation_status.toLowerCase()}`}>{validationStatusLabel(entry.validation_status)}</span><div><h3>{entry.display_name_zh ?? entry.capability_id}</h3><p>{entry.baseline_title ?? entry.baseline_id ?? "没有匹配的检验基准"}</p></div></div><div className="requirement-count"><strong>{passed}/{requirements.length}</strong><span>要求已满足</span></div></summary><div className="capability-result-body"><div className="evidence-strip"><span>{coverageLabel(entry.export_coverage)}</span><span>{entry.candidate_count} 条候选事件</span><span>本地状态 {entry.local_status}</span><button className="json-compare-open" type="button" onClick={() => setShowJsonComparison(true)}>打开 JSON 对照窗</button></div>{entry.warnings?.length ? <div className="plain-warning"><strong>需要注意</strong><p>{entry.warnings.join("；")}</p></div> : null}<RequirementGroup scope="local" requirements={localRequirements} /><RequirementGroup scope="cloud" requirements={cloudRequirements} candidates={candidates} /></div></details>{showJsonComparison && <JsonComparisonModal entry={entry} candidates={candidates} onClose={() => setShowJsonComparison(false)} />}</>;
 }
 
 function RequirementGroup({ scope, requirements, candidates = [] }: { scope: "local" | "cloud"; requirements: BaselineRequirementResult[]; candidates?: EdrCandidate[] }) {
@@ -704,6 +731,67 @@ function RequirementGroup({ scope, requirements, candidates = [] }: { scope: "lo
 
 function EdrCandidateList({ candidates }: { candidates: EdrCandidate[] }) {
   return <section className="edr-candidate-section"><div className="candidate-section-heading"><div><span>完整 EDR 日志</span><h4>关联候选事件</h4><p>先按关联得分从高到低，再按与本地行为时间的距离从近到远排列。</p></div><em>{candidates.length} 条</em></div>{candidates.length ? <div className="candidate-list">{candidates.map((candidate, index) => <details className="candidate-card" key={`${candidate.expectation_id}-${candidate.raw_ref}-${index}`}><summary><span className="candidate-rank">#{index + 1}</span><div><strong>{candidate.event_id || "无事件 ID"}</strong><code>{candidate.expectation_id}</code></div><span className={`confidence-badge ${candidate.confidence}`}>{confidenceLabel(candidate.confidence)}</span><div className="candidate-score"><strong>{candidate.correlation_score} 分</strong><span>{formatDistance(candidate.time_distance_ms)}</span></div></summary><div className="candidate-detail"><div className="candidate-meta"><span>事件时间：{formatTime(candidate.event_time_utc)}</span><span>来源：{candidate.raw_ref}</span></div><div className="matched-anchor-list"><strong>命中的关联锚点</strong>{candidate.matched_anchors.length ? candidate.matched_anchors.map((anchor) => <code key={anchor}>{anchor}</code>) : <span>没有记录关联锚点</span>}</div><div className="candidate-json-grid"><section><h5>规范化字段</h5><pre>{JSON.stringify(candidate.canonical_event, null, 2)}</pre></section><section><h5>EDR 原始完整日志</h5><pre>{JSON.stringify(candidate.raw_event, null, 2)}</pre></section></div></div></details>)}</div> : <div className="candidate-empty">没有找到可关联的 EDR 候选日志。</div>}</section>;
+}
+
+function JsonComparisonModal({ entry, candidates, onClose }: { entry: ValidationEntry; candidates: EdrCandidate[]; onClose: () => void }) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const candidate = candidates[selectedIndex];
+  const candidateMatches = (candidate?.baseline_matches ?? []).filter((match) => match.status === "passed");
+  const localPointers = uniqueStrings([
+    ...(entry.local_baseline_matches ?? []).filter((match) => match.status === "passed").map((match) => match.json_pointer),
+    ...candidateMatches.map((match) => match.local_json_pointer),
+  ]);
+  const rawPointers = uniqueStrings(candidateMatches.map((match) => match.raw_json_pointer));
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  return <div className="json-compare-backdrop" onClick={onClose}><section className="json-compare-modal" role="dialog" aria-modal="true" aria-labelledby={`json-compare-${entry.case_run_id}`} onClick={(event) => event.stopPropagation()}><header className="json-compare-header"><div><p className="section-index">逐能力 JSON 对照</p><h2 id={`json-compare-${entry.case_run_id}`}>{entry.display_name_zh ?? entry.capability_id}</h2><code>{entry.capability_id} · {entry.baseline_id ?? "无匹配 BASELINE"}</code></div><button className="modal-close" type="button" autoFocus aria-label="关闭 JSON 对照窗" onClick={onClose}>×</button></header>
+    <div className="json-candidate-toolbar"><label>选择 EDR 候选 JSON 块<select value={selectedIndex} disabled={!candidates.length} onChange={(event) => setSelectedIndex(Number(event.target.value))}>{candidates.length ? candidates.map((item, index) => <option value={index} key={`${item.expectation_id}-${item.raw_ref}-${index}`}>#{index + 1} · {item.event_id || "无事件 ID"} · {item.expectation_id} · {confidenceLabel(item.confidence)}</option>) : <option value={0}>没有可选候选</option>}</select></label><div className="candidate-switch"><button type="button" disabled={selectedIndex <= 0} onClick={() => setSelectedIndex((value) => Math.max(0, value - 1))}>上一条</button><span>{candidates.length ? `${selectedIndex + 1} / ${candidates.length}` : "0 / 0"}</span><button type="button" disabled={selectedIndex >= candidates.length - 1} onClick={() => setSelectedIndex((value) => Math.min(candidates.length - 1, value + 1))}>下一条</button></div><div className="match-legend"><i /><span>绿色行表示该候选与 BASELINE 比对一致</span><strong>{rawPointers.length} 个 EDR 字段命中</strong></div></div>
+    <div className="selected-candidate-meta">{candidate ? <><span>关联得分 {candidate.correlation_score}</span><span>{formatDistance(candidate.time_distance_ms)}</span><span>{confidenceLabel(candidate.confidence)}</span><code>{candidate.raw_ref}</code></> : <span>当前能力没有可关联的 EDR 候选 JSON 块</span>}</div>
+    <div className="json-side-by-side"><section><header><div><span>原 JSON</span><h3>本地运行导出块</h3></div><em>{localPointers.length} 处高亮</em></header><JsonCodeViewer value={entry.local_export_block ?? {}} highlightPointers={localPointers} label="本地运行导出 JSON" /></section><section><header><div><span>导出 JSON</span><h3>EDR 平台候选块</h3></div><em>{rawPointers.length} 处高亮</em></header>{candidate ? <JsonCodeViewer value={candidate.raw_event} highlightPointers={rawPointers} label="EDR 平台导出 JSON" /> : <div className="json-candidate-placeholder"><strong>没有可关联的 EDR JSON 块</strong><p>本地 JSON 仍可查看；导入范围内没有候选事件时不会产生错误高亮。</p></div>}</section></div>
+    <footer className="json-match-footer"><strong>当前候选命中的 BASELINE 字段</strong><div>{candidateMatches.length ? candidateMatches.map((match) => <span key={`${match.kind}-${match.requirement_id}`}><i>{match.kind === "correlation" ? "关联" : "断言"}</i><code>{match.local_field ?? "固定期望"} ↔ {match.raw_field ?? match.canonical_field}</code></span>) : <em>当前候选没有完全一致的字段。</em>}</div></footer>
+  </section></div>;
+}
+
+type JsonDisplayLine = { pointer: string; text: string };
+
+function JsonCodeViewer({ value, highlightPointers, label }: { value: unknown; highlightPointers: string[]; label: string }) {
+  const highlighted = new Set(highlightPointers);
+  const lines = buildJsonLines(value);
+  return <div className="json-code-viewer" role="region" aria-label={label}>{lines.map((line, index) => <div className={`json-code-line ${highlighted.has(line.pointer) ? "baseline-match" : ""}`} key={`${line.pointer}-${index}`}><span>{String(index + 1).padStart(3, "0")}</span><code>{line.text}</code>{highlighted.has(line.pointer) && <em>BASELINE 一致</em>}</div>)}</div>;
+}
+
+function buildJsonLines(value: unknown, pointer = "", depth = 0, property?: string, trailingComma = false): JsonDisplayLine[] {
+  const indent = "  ".repeat(depth);
+  const propertyText = property === undefined ? "" : `${JSON.stringify(property)}: `;
+  const suffix = trailingComma ? "," : "";
+  if (Array.isArray(value)) {
+    const lines: JsonDisplayLine[] = [{ pointer, text: `${indent}${propertyText}[` }];
+    value.forEach((item, index) => lines.push(...buildJsonLines(item, joinJsonPointer(pointer, String(index)), depth + 1, undefined, index < value.length - 1)));
+    lines.push({ pointer, text: `${indent}]${suffix}` });
+    return lines;
+  }
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    const lines: JsonDisplayLine[] = [{ pointer, text: `${indent}${propertyText}{` }];
+    entries.forEach(([key, item], index) => lines.push(...buildJsonLines(item, joinJsonPointer(pointer, key), depth + 1, key, index < entries.length - 1)));
+    lines.push({ pointer, text: `${indent}}${suffix}` });
+    return lines;
+  }
+  return [{ pointer, text: `${indent}${propertyText}${JSON.stringify(value) ?? "null"}${suffix}` }];
+}
+
+function joinJsonPointer(pointer: string, segment: string): string {
+  const escaped = segment.replaceAll("~", "~0").replaceAll("/", "~1");
+  return `${pointer}/${escaped}`;
+}
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
 }
 
 function RequirementRow({ requirement }: { requirement: BaselineRequirementResult }) {

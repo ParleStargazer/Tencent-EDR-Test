@@ -8,6 +8,7 @@
 - Controller / Actor / Target 程序构成展示；
 - 本地运行 JSON、EDR 云端 JSON 和导出清单导入；
 - 后端统一执行映射、BASELINE 关联和验证；
+- 每项能力可打开本地运行 JSON 与 EDR 导出 JSON 对照窗，在多个候选块之间切换并高亮 BASELINE 一致字段；
 - 验证结果 JSON 下载。
 
 页面不会连接腾讯 EDR。导入文件只发送到同一台机器的 `127.0.0.1:4317`，保存在仓库的 Git 忽略目录中。

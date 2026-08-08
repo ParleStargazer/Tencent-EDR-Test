@@ -119,6 +119,23 @@ public static class Program
         var firstCandidate = validation["capabilities"]?[0]?["edr_candidates"]?.AsArray().Single()
             ?? throw new InvalidOperationException("结果应包含完整 EDR 候选日志。");
         Assert(firstCandidate["rank"]?.GetValue<int>() == 1 && firstCandidate["raw_event"]?["@table"]?.GetValue<string>() == "ProcEvents", "EDR 候选应保留排名和原始完整日志。");
+        var localExportBlock = validation["capabilities"]?[0]?["local_export_block"]?.AsObject()
+            ?? throw new InvalidOperationException("能力结果应包含可供悬浮窗展示的本地导出 JSON 块。");
+        Assert(localExportBlock["programs"]?.AsArray().Count == 3
+            && localExportBlock["local_events"]?.AsArray().Count == 1,
+            "本地导出 JSON 块只应保留当前能力的程序和事件。");
+        var localPidMatch = validation["capabilities"]?[0]?["local_baseline_matches"]?.AsArray()
+            .Single(value => value?["field"]?.GetValue<string>() == "programs.actor.pid");
+        Assert(localPidMatch?["status"]?.GetValue<string>() == "passed"
+            && localPidMatch["json_pointer"]?.GetValue<string>().StartsWith("/programs/", StringComparison.Ordinal) == true,
+            "本地 BASELINE 命中应带有原 JSON 精确位置。");
+        var cloudPidMatch = firstCandidate["baseline_matches"]?.AsArray()
+            .Single(value => value?["kind"]?.GetValue<string>() == "assertion"
+                && value?["canonical_field"]?.GetValue<string>() == "process.pid");
+        Assert(cloudPidMatch?["status"]?.GetValue<string>() == "passed"
+            && cloudPidMatch["raw_field"]?.GetValue<string>() == "Child.ProcPid"
+            && cloudPidMatch["raw_json_pointer"]?.GetValue<string>() == "/Child.ProcPid",
+            "每条 EDR 候选应把通过的规范字段映射回原始 JSON 字段供高亮。");
         var actorPidRequirement = requirements.Single(value => value?["field"]?.GetValue<string>() == "programs.actor.pid");
         Assert(actorPidRequirement?["operator"]?.GetValue<string>() == "present" && actorPidRequirement["expected"] is null && actorPidRequirement["actual"]?.GetValue<int>() > 0, "PID 存在性规则应在 actual 中保留本地 PID，expected 为空表示没有固定 PID。");
         var actorCommandRequirement = requirements.Single(value => value?["field"]?.GetValue<string>() == "programs.actor.command_line");
@@ -170,6 +187,8 @@ public static class Program
             && rankedCandidates[0]?["time_distance_ms"]?.GetValue<long>() < rankedCandidates[1]?["time_distance_ms"]?.GetValue<long>(), "同关联得分候选应按与本地行为时间的距离由近到远排序。");
         Assert(rankedCandidates[1]?["correlation_score"]?.GetValue<double>() > rankedCandidates[2]?["correlation_score"]?.GetValue<double>()
             && rankedCandidates[2]?["time_distance_ms"]?.GetValue<long>() < rankedCandidates[1]?["time_distance_ms"]?.GetValue<long>(), "关联得分应优先于时间距离决定候选置信度顺序。");
+        Assert(rankedCandidates[2]?["baseline_matches"]?.AsArray().Any(value => value?["canonical_field"]?.GetValue<string>() == "parent_process.executable"
+            && value?["status"]?.GetValue<string>() == "failed") == true, "候选切换时应能看到该候选自身不满足的 BASELINE 字段。");
         Assert(multipleCandidates["capabilities"]?[0]?["validation_status"]?.GetValue<string>() == "PASS", "时间距离可以消除同分候选歧义。");
 
         var emptyCloudPath = Path.Combine(fixture.Path, "empty-cloud.json");
