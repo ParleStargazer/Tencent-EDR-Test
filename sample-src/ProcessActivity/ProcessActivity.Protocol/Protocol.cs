@@ -79,6 +79,7 @@ public sealed class BehaviorResult
 public sealed class ImageLoadAttempt
 {
     public required string SubtestId { get; init; }
+    public required string TargetRole { get; init; }
     public required string DisplayNameZh { get; init; }
     public required string DisplayNameEn { get; init; }
     public required string Method { get; init; }

@@ -33,6 +33,7 @@ type ApiBaselineRequirement = {
 type ApiBaseline = {
   baseline_id: string;
   capability_id: string;
+  capability_version: string;
   title: string;
   risk_level: string;
   version: string;
@@ -673,7 +674,7 @@ function CompareWorkspace(props: CompareWorkspaceProps) {
 function BaselineGuide({ baselines }: { baselines: ApiBaseline[] }) {
   return <section className="panel baseline-guide"><div className="panel-heading"><div><p className="section-index">B / BASELINE 是什么</p><h2>通过判定的要求</h2><p className="panel-description">“本地要求”证明测试行为真的发生；“EDR 要求”检查云端事件是否记录了正确内容。必需要求全部满足才算通过。</p></div><span className="line-badge">{baselines.length} 份基准</span></div><div className="baseline-card-grid">{baselines.map((baseline) => {
     const localCount = baseline.requirements.filter((item) => item.scope === "local").length; const cloudCount = baseline.requirements.length - localCount;
-    return <details className="baseline-card" key={baseline.baseline_id}><summary><div><strong>{baseline.title}</strong><span>{localCount} 项本地要求 · {cloudCount} 项 EDR 要求</span></div><em>{baseline.risk_level}</em></summary><div className="baseline-preview">{baseline.requirements.map((requirement) => <div key={requirement.requirement_id}><span className={`scope-chip ${requirement.scope}`}>{requirement.scope === "local" ? "本地" : "EDR"}</span><p>{requirement.title_zh}</p><em>{severityLabel(requirement.severity)}</em></div>)}</div></details>;
+    return <details className="baseline-card" key={baseline.baseline_id}><summary><div><strong>{baseline.title}</strong><span>能力 v{baseline.capability_version} · {localCount} 项本地要求 · {cloudCount} 项 EDR 要求</span></div><em>{baseline.risk_level}</em></summary><div className="baseline-preview">{baseline.requirements.map((requirement) => <div key={requirement.requirement_id}><span className={`scope-chip ${requirement.scope}`}>{requirement.scope === "local" ? "本地" : "EDR"}</span><p>{requirement.title_zh}</p><em>{severityLabel(requirement.severity)}</em></div>)}</div></details>;
   })}</div></section>;
 }
 

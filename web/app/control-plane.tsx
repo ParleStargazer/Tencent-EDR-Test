@@ -81,7 +81,7 @@ export const capabilityCatalog: CapabilityCategory[] = [
       defineCapability("win.process.create", "进程创建", "Process Creation", "L0", "Controller · Actor · Target"),
       defineCapability("win.process.terminate", "进程终止", "Process Termination", "L1", "Controller · Actor · Target"),
       defineCapability("win.process.access", "进程访问", "Process Access", "L0", "Controller · Actor · Target"),
-      defineCapability("win.process.image_load", "加载镜像或动态库", "Image/Library Loaded", "L0", "Controller · Actor · Target · 3 个 DLL 子项"),
+      defineCapability("win.process.image_load", "加载镜像或动态库", "Image/Library Loaded", "L0", "Controller · Actor · Target · dotnet Helper · 4 个 DLL 子项"),
       defineCapability("win.process.remote_thread", "远程线程创建", "Remote Thread Creation", "L2", "Controller · Actor · Target"),
       defineCapability("win.process.tampering", "进程篡改活动", "Process Tampering Activity", "L2", "Controller · Actor · Target"),
     ],

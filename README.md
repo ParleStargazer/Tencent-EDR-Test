@@ -77,6 +77,8 @@ dotnet run --project src/EdrTest -- compare `
   --conclusion-out .\validation-conclusion.md
 ```
 
+Process Activity 构建会直接清理并覆盖 `samples/` 下的同名旧能力包。`win.process.image_load@0.3.0` 包含三个原生 DLL 加载子项和一个由真实 `dotnet.exe` Helper 执行的托管程序集加载子项；比较器仅使用与本地能力版本完全匹配的 BASELINE。
+
 比较命令会同时生成结构化 `validation-result.json` 和中文 `validation-conclusion.md`；未指定 `--conclusion-out` 时，Markdown 结论自动写入 JSON 同目录。同一个 `EdrTest.exe` 还提供 `export` 和 `inspect` 子命令。运行 `dotnet run --project src/EdrTest -- help` 可查看完整参数。
 
 前端包含三个路由：工作台 `/`、串行能力测试 `/test`、离线比较 `/compare`。测试页逐项显示能力进度、下一项等待倒计时和重点日志，完成项按能力进入“已完成队列”，点击后可查看 PID、路径、命令行、开始/结束时间、本地事实以及 Runner/Controller 输出；比较页按能力折叠展示 BASELINE，能力展开后默认折叠本地条件、展开 EDR 条件，并可查看按关联得分和时间距离排序的 EDR 原始完整日志。

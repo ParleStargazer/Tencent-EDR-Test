@@ -36,7 +36,14 @@ $packages = @(
 )
 
 foreach ($package in $packages) {
-    $destination = Join-Path $SamplesRoot $package.Id
+    $destination = [System.IO.Path]::GetFullPath((Join-Path $SamplesRoot $package.Id))
+    $relativeDestination = [System.IO.Path]::GetRelativePath($SamplesRoot, $destination)
+    if ($relativeDestination.StartsWith("..", [System.StringComparison]::Ordinal) -or [System.IO.Path]::IsPathRooted($relativeDestination)) {
+        throw "能力包目标越出 samples 根目录：$destination"
+    }
+    if (Test-Path -LiteralPath $destination) {
+        Remove-Item -LiteralPath $destination -Recurse -Force
+    }
     [System.IO.Directory]::CreateDirectory($destination) | Out-Null
     Copy-Item (Join-Path $controllerPublish "*") $destination -Recurse -Force
     Copy-Item (Join-Path $behaviorPublish "*") $destination -Recurse -Force

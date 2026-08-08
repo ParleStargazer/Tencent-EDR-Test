@@ -54,6 +54,7 @@ public sealed record ApiBaselineRequirement(
 public sealed record ApiBaseline(
     string BaselineId,
     string CapabilityId,
+    string CapabilityVersion,
     string Title,
     string RiskLevel,
     string Version,
@@ -424,6 +425,7 @@ internal sealed class LocalApiCatalog
                     value => (new ApiBaseline(
                         value.Value.BaselineId,
                         value.Value.Capability.Id,
+                        value.Value.Capability.Version,
                         value.Value.Title ?? value.Value.BaselineId,
                         value.Value.RiskLevel ?? "L0",
                         value.Value.Version,

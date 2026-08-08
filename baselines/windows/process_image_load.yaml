@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.process.image_load
-version: "0.2.0"
+version: "0.3.0"
 title: Windows 镜像或动态库加载遥测
-description: 验证同一受控 Target 中三种典型 DLL 加载方式均能在云端找到对应模块事件。
+description: 验证三个原生 DLL 加载子项和一个复现腾讯 EDR 0807 LoadDll 事件形态的 dotnet 托管程序集加载子项。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,7 +10,7 @@ platform:
 risk_level: L0
 capability:
   id: win.process.image_load
-  version: "0.2.0"
+  version: "0.3.0"
   parameters:
     library_name: winhttp.dll
     application_local_library_name: version.dll
@@ -22,7 +22,7 @@ local_requirements:
     expected: true
   - field: facts.process.image_load_subtest_count
     operator: equals
-    expected: 3
+    expected: 4
   - field: facts.process.image_load.system_loadlibrary.succeeded
     operator: equals
     expected: true
@@ -43,6 +43,15 @@ local_requirements:
   - field: facts.process.image_load.application_local_loadlibrary_ex.path
     operator: present
   - field: facts.process.image_load.application_local_loadlibrary_ex.occurred_at_utc
+    operator: present
+  - field: facts.process.image_load.managed_assembly_load_context.succeeded
+    operator: equals
+    expected: true
+  - field: facts.process.image_load.managed_assembly_load_context.path
+    operator: present
+  - field: facts.process.image_load.managed_assembly_load_context.target_pid
+    operator: present
+  - field: facts.process.image_load.managed_assembly_load_context.occurred_at_utc
     operator: present
 correlation:
   time_before_seconds: 60
@@ -155,9 +164,42 @@ cloud_expectations:
         expected_from_local: facts.process.image_load.application_local_loadlibrary_ex.path
         severity: required
         normalizers: [windows_path]
+  - id: managed-assembly-load-event
+    event_type: process
+    event_actions: [image_load]
+    cardinality: { min: 1, max: 3 }
+    correlation:
+      time_from_local: facts.process.image_load.managed_assembly_load_context.occurred_at_utc
+      anchors:
+        - local_field: facts.process.image_load.managed_assembly_load_context.path
+          cloud_field: file.path
+          strength: strong
+          normalizers: [windows_path]
+        - local_field: facts.process.image_load.managed_assembly_load_context.file_name
+          cloud_field: file.name
+          strength: strong
+          normalizers: [lowercase]
+        - local_field: programs.helper.pid
+          cloud_field: process.pid
+          strength: medium
+    assertions:
+      - field: process.pid
+        operator: equals
+        expected_from_local: programs.helper.pid
+        severity: required
+      - field: process.executable
+        operator: equals
+        expected_from_local: programs.helper.executable
+        severity: required
+        normalizers: [windows_path]
+      - field: file.path
+        operator: equals
+        expected_from_local: facts.process.image_load.managed_assembly_load_context.path
+        severity: required
+        normalizers: [windows_path]
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: draft
-  change_reason: 增加系统目录、应用目录和 LoadLibraryExW 三个可独立验收的 DLL 加载子项。
+  change_reason: 覆盖旧能力包，并增加 dotnet.exe 加载刚落盘托管 DLL 的第四子项，以复现 0807 导出的真实 LoadDll 事件形态。
   references: [EDR-Telemetry / Windows / Process Activity / Image Library Loaded]

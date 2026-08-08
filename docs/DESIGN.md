@@ -506,6 +506,8 @@ BASELINE 同时定义两层条件：
 
 BASELINE 不包含腾讯字段名；腾讯字段只出现在 Mapping Profile 中。这样同一个能力 BASELINE 可以复用于其他 EDR 产品。
 
+比较时必须使用 `capability.id` 和 `capability.version` 同时选择 BASELINE，版本必须完全一致。若只存在同 ID 的其他版本，结果应为 `NOT_COMPARED` 并给出版本不匹配提示；不得套用新版新增条件，把旧能力包运行结果误判为本地采集失败。能力包重新构建时直接替换对应 `samples/<capability-id>/` 目录，确保可执行文件、依赖和清单来自同一版本。
+
 每条云端断言分为：
 
 - `required`：缺失或错误导致能力失败；

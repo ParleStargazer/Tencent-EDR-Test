@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Runtime.Loader;
 
 namespace ProcessActivity;
 
@@ -68,7 +69,17 @@ internal static class Program
             return 0;
         }
 
-        if (operation != "image_load") throw new ArgumentException($"未知 Target 行为：{operation}");
+        return operation switch
+        {
+            "image_load" => RunNativeImageTarget(options),
+            "managed_image_load" => RunManagedImageTarget(options),
+            _ => throw new ArgumentException($"未知 Target 行为：{operation}"),
+        };
+    }
+
+    private static int RunNativeImageTarget(ArgumentReader options)
+    {
+        const string operation = "image_load";
         var goPath = Path.GetFullPath(options.Require("go"));
         var resultPath = Path.GetFullPath(options.Require("result"));
         WaitForFile(goPath, options.GetInt("wait-ms", 15_000, 100, 120_000));
@@ -137,6 +148,68 @@ internal static class Program
         return result.Succeeded ? 0 : BehaviorError;
     }
 
+    private static int RunManagedImageTarget(ArgumentReader options)
+    {
+        const string operation = "managed_image_load";
+        var goPath = Path.GetFullPath(options.Require("go"));
+        var resultPath = Path.GetFullPath(options.Require("result"));
+        WaitForFile(goPath, options.GetInt("wait-ms", 15_000, 100, 120_000));
+        var sourcePath = Path.GetFullPath(options.Require("managed-assembly"));
+        if (!File.Exists(sourcePath)) throw new FileNotFoundException("找不到托管 DLL 测试载荷。", sourcePath);
+        var nonceTag = SafeFileTag(options.Require("nonce"));
+        var imagePath = Path.Combine(Path.GetDirectoryName(resultPath)!, $"edrtest_{nonceTag}_managed.dll");
+        File.Copy(sourcePath, imagePath, overwrite: false);
+        var before = AppDomain.CurrentDomain.GetAssemblies().Any(assembly =>
+            !string.IsNullOrWhiteSpace(assembly.Location)
+            && string.Equals(Path.GetFullPath(assembly.Location), imagePath, StringComparison.OrdinalIgnoreCase));
+        var occurred = DateTimeOffset.UtcNow;
+        var loadContext = new AssemblyLoadContext($"EDRTest-{nonceTag}", isCollectible: false);
+        var assembly = loadContext.LoadFromAssemblyPath(imagePath);
+        var after = string.Equals(Path.GetFullPath(assembly.Location), imagePath, StringComparison.OrdinalIgnoreCase)
+            && loadContext.Assemblies.Contains(assembly);
+        var attempt = new ImageLoadAttempt
+        {
+            SubtestId = "managed_assembly_load_context",
+            TargetRole = "helper",
+            DisplayNameZh = "dotnet 托管宿主加载新落盘程序集",
+            DisplayNameEn = "Newly Written Managed Assembly Load",
+            Method = "AssemblyLoadContext.LoadFromAssemblyPath",
+            SourcePath = sourcePath,
+            ImagePath = imagePath,
+            FileName = Path.GetFileName(imagePath),
+            OccurredAtUtc = occurred,
+            Succeeded = !before && after,
+            Win32Error = 0,
+            Error = before ? "托管测试程序集在触发加载前已经存在。" : after ? null : "AssemblyLoadContext 未保留目标程序集。",
+            BaseAddress = null,
+            SizeBytes = new FileInfo(imagePath).Length,
+            Sha256 = FileSha256(imagePath),
+            BeforeLoaded = before,
+            AfterLoaded = after,
+            TemporaryCopy = true,
+        };
+        var result = new BehaviorResult
+        {
+            Operation = operation,
+            Succeeded = attempt.Succeeded,
+            Win32Error = attempt.Win32Error,
+            Error = attempt.Error,
+            OccurredAtUtc = attempt.OccurredAtUtc,
+            Target = CaptureCurrentSnapshot(),
+            ImagePath = attempt.ImagePath,
+            ImageSizeBytes = attempt.SizeBytes,
+            ImageSha256 = attempt.Sha256,
+            BeforeLoaded = attempt.BeforeLoaded,
+            AfterLoaded = attempt.AfterLoaded,
+            ImageLoads = [attempt],
+        };
+        ProtocolJson.WriteAtomic(resultPath, result);
+        Thread.Sleep(options.GetInt("hold-ms", 5_000, 0, 30_000));
+        GC.KeepAlive(assembly);
+        GC.KeepAlive(loadContext);
+        return result.Succeeded ? 0 : BehaviorError;
+    }
+
     private static ImageLoadAttempt LoadImage(ImageLoadPlan plan, string requestedPath)
     {
         var before = CurrentProcessModuleLoaded(requestedPath);
@@ -153,6 +226,7 @@ internal static class Program
         return new ImageLoadAttempt
         {
             SubtestId = plan.SubtestId,
+            TargetRole = "target",
             DisplayNameZh = plan.DisplayNameZh,
             DisplayNameEn = plan.DisplayNameEn,
             Method = plan.Method,
@@ -264,6 +338,13 @@ internal static class Program
         var goPath = Path.GetFullPath(options.Require("go"));
         Directory.CreateDirectory(Path.GetDirectoryName(goPath)!);
         File.WriteAllText(goPath, options.Require("nonce"));
+        var managedGo = options.Get("managed-go", string.Empty);
+        if (!string.IsNullOrWhiteSpace(managedGo))
+        {
+            var managedGoPath = Path.GetFullPath(managedGo);
+            Directory.CreateDirectory(Path.GetDirectoryName(managedGoPath)!);
+            File.WriteAllText(managedGoPath, options.Require("nonce"));
+        }
         return new BehaviorResult
         {
             Operation = "image_load",

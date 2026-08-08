@@ -199,7 +199,9 @@ public static class CompareService
         ValidateMapping(mapping);
         var baselines = request.BaselinePaths.Select(path => (Path: Path.GetFullPath(path), Value: ReadYaml<BaselineDefinition>(path))).ToArray();
         foreach (var baseline in baselines) ValidateBaseline(baseline.Value);
-        var baselineByCapability = baselines.ToDictionary(x => x.Value.Capability.Id, x => x, StringComparer.Ordinal);
+        var baselinesByCapability = baselines
+            .GroupBy(value => value.Value.Capability.Id, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
         var cloud = LoadCloud(request.CloudPaths, mapping);
         var cloudManifest = request.CloudManifestPath is null
             ? null
@@ -213,16 +215,33 @@ public static class CompareService
         {
             var capability = capabilityNode?.AsObject() ?? throw new InvalidDataException("capabilities 元素必须是对象。");
             var capabilityId = RequiredString(capability, "capability_id");
+            var capabilityVersion = RequiredString(capability, "capability_version");
             var caseRunId = RequiredString(capability, "case_run_id");
             var localStatus = RequiredString(capability, "status");
             JsonObject result;
-            if (!baselineByCapability.TryGetValue(capabilityId, out var baselineEntry))
+            if (!baselinesByCapability.TryGetValue(capabilityId, out var capabilityBaselines))
             {
                 result = NotCompared(capabilityId, caseRunId, localStatus, "没有匹配的 BASELINE。");
                 DecorateCapabilityResult(result, capability, null);
             }
             else
             {
+                var matchingBaselines = capabilityBaselines
+                    .Where(value => string.Equals(value.Value.Capability.Version, capabilityVersion, StringComparison.Ordinal))
+                    .ToArray();
+                if (matchingBaselines.Length == 0)
+                {
+                    result = NotCompared(capabilityId, caseRunId, localStatus,
+                        $"没有与能力版本 {capabilityVersion} 匹配的 BASELINE；不会使用其他版本的本地条件误判采集失败。");
+                    DecorateCapabilityResult(result, capability, null);
+                    results.Add(result);
+                    continue;
+                }
+                if (matchingBaselines.Length > 1)
+                {
+                    throw new InvalidDataException($"能力 {capabilityId} {capabilityVersion} 存在多份 BASELINE，无法唯一选择。");
+                }
+                var baselineEntry = matchingBaselines[0];
                 result = CompareCapability(localRoot, capability, baselineEntry.Value, cloud, cloudManifest, manifestFilesVerified);
                 DecorateCapabilityResult(result, capability, baselineEntry.Value);
             }

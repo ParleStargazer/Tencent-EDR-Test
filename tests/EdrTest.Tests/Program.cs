@@ -235,6 +235,7 @@ public static class Program
             {
                 ["case_run_id"] = caseRunId,
                 ["capability_id"] = "win.process.image_load",
+                ["capability_version"] = "0.2.0",
                 ["status"] = "LOCAL_PASS",
                 ["nonce"] = "fixture-nonce",
                 ["started_at_utc"] = Values.Utc(started),
@@ -322,6 +323,23 @@ public static class Program
             && candidates[1]?["expectation_id"]?.GetValue<string>() == "second-event"
             && candidates[1]?["event_id"]?.GetValue<string>() == "second-event", "子项不能互相替代或误排序。");
         Assert(candidates.All(value => value?["time_distance_ms"]?.GetValue<long>() == 0), "子项应使用自己的本地发生时间计算距离。");
+
+        var oldVersionLocal = local.DeepClone().AsObject();
+        oldVersionLocal["capabilities"]![0]!["capability_version"] = "0.1.0";
+        var oldVersionLocalPath = Path.Combine(fixture.Path, "old-version-local.json");
+        File.WriteAllText(oldVersionLocalPath, oldVersionLocal.ToJsonString(JsonDefaults.Options));
+        var versionMismatch = CompareService.Compare(new CompareRequest(
+            oldVersionLocalPath,
+            [cloudPath],
+            Path.Combine(repository, "mappings", "generic-process-activity-v1.yaml"),
+            [baselinePath],
+            Path.Combine(fixture.Path, "version-mismatch-result.json")));
+        var mismatchCapability = versionMismatch["capabilities"]?[0]
+            ?? throw new InvalidOperationException("版本错配结果缺少能力结论。");
+        Assert(mismatchCapability["validation_status"]?.GetValue<string>() == "NOT_COMPARED", "旧能力包不得套用新版 BASELINE 形成采集失败误报。");
+        Assert(mismatchCapability["baseline_requirements"]?.AsArray().Count == 0, "版本不匹配时不应展示新版 BASELINE 条件。");
+        Assert(mismatchCapability["warnings"]?.AsArray().Any(value => value?.GetValue<string>().Contains("能力版本 0.1.0", StringComparison.Ordinal) == true) == true,
+            "版本错配应明确提示缺少对应版本的 BASELINE。");
         return Task.CompletedTask;
     }
 

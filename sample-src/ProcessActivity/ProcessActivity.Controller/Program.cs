@@ -43,6 +43,19 @@ internal static class Program
             var target = CreateProgram(invocation, "target", state.TargetPath, state.TargetProcess, targetParentPid, state.TargetArguments, state.TargetSnapshot);
             database.AddProgram(actor);
             database.AddProgram(target);
+            ProgramObservation? helper = null;
+            if (operation == "image_load")
+            {
+                helper = CreateProgram(
+                    invocation,
+                    "helper",
+                    state.HelperPath,
+                    state.HelperProcess ?? throw new InvalidDataException("镜像加载缺少 dotnet 托管辅助进程。"),
+                    Environment.ProcessId,
+                    state.HelperArguments,
+                    state.HelperSnapshot);
+                database.AddProgram(helper);
+            }
 
             var independentlyObserved = VerifyOutcome(operation, state);
             var localSucceeded = state.Result.Succeeded && independentlyObserved;
@@ -57,11 +70,13 @@ internal static class Program
             }
             var localEvents = operation == "image_load"
                 ? imageAttempts.Select((attempt, index) => CreateEvent(
-                    invocation, operation, stopwatch, state.Result, actor, target, evidence?.ArtifactId, attempt, index + 1)).ToArray()
+                    invocation, operation, stopwatch, state.Result, actor,
+                    attempt.TargetRole == "helper" ? helper! : target,
+                    evidence?.ArtifactId, attempt, index + 1)).ToArray()
                 : [CreateEvent(invocation, operation, stopwatch, state.Result, actor, target, evidence?.ArtifactId)];
             foreach (var localEvent in localEvents) database.AddEvent(localEvent);
             AddFacts(database, invocation, operation, state.Result, localEvents[0].LocalEventId, actor, target, localSucceeded);
-            if (operation == "image_load") AddImageLoadFacts(database, invocation, imageAttempts, localEvents);
+            if (operation == "image_load") AddImageLoadFacts(database, invocation, imageAttempts, localEvents, target, helper!);
 
             var cleanup = Cleanup(invocation, state);
             database.AddCleanup(cleanup);
@@ -122,8 +137,12 @@ internal static class Program
         var targetPath = package.ResolveProgram(targetDefinition.Executable);
         var resultPath = Path.Combine(invocation.WorkDir, "behavior-result.json");
         var targetResultPath = Path.Combine(invocation.WorkDir, "target-result.json");
+        var helperResultPath = Path.Combine(invocation.WorkDir, "managed-target-result.json");
+        var suiteResultPath = Path.Combine(invocation.WorkDir, "image-load-suite-result.json");
         var readyPath = Path.Combine(invocation.WorkDir, "target-ready.json");
+        var helperReadyPath = Path.Combine(invocation.WorkDir, "managed-target-ready.json");
         var goPath = Path.Combine(invocation.WorkDir, "image-load.go");
+        var helperGoPath = Path.Combine(invocation.WorkDir, "managed-image-load.go");
         var state = new ExecutionState(actorPath, targetPath, resultPath);
 
         try
@@ -165,6 +184,27 @@ internal static class Program
                 ];
             state.TargetProcess = Start(targetPath, state.TargetArguments, invocation.WorkDir);
             state.TargetSnapshot = WaitAndRead<ProcessSnapshot>(readyPath, Math.Min(invocation.TimeoutMs, 10_000));
+            if (operation == "image_load")
+            {
+                state.HelperPath = FindDotnetHost();
+                var behaviorAssemblyPath = Path.Combine(package.PackageDirectory, "ProcessActivity.Behavior.dll");
+                var managedPayloadPath = Path.Combine(package.PackageDirectory, "ProcessActivity.Protocol.dll");
+                if (!File.Exists(behaviorAssemblyPath) || !File.Exists(managedPayloadPath))
+                {
+                    throw new FileNotFoundException("能力包缺少 dotnet 托管加载子项所需的程序集。");
+                }
+                state.HelperArguments =
+                [
+                    behaviorAssemblyPath,
+                    "--role", "target", "--operation", "managed_image_load", "--ready", helperReadyPath,
+                    "--go", helperGoPath, "--result", helperResultPath,
+                    "--managed-assembly", managedPayloadPath,
+                    "--hold-ms", ParameterInt(parameters, "post_load_hold_ms", 5_000).ToString(),
+                    "--wait-ms", invocation.TimeoutMs.ToString(), "--nonce", invocation.Nonce,
+                ];
+                state.HelperProcess = Start(state.HelperPath, state.HelperArguments, invocation.WorkDir);
+                state.HelperSnapshot = WaitAndRead<ProcessSnapshot>(helperReadyPath, Math.Min(invocation.TimeoutMs, 10_000));
+            }
             if (operation is "image_load" or "remote_thread_create")
             {
                 var libraryPath = ResolveSystemLibrary(ParameterString(parameters, "library_name", "winhttp.dll"));
@@ -186,6 +226,7 @@ internal static class Program
                     break;
                 case "image_load":
                     Add(actorArguments, "go", goPath);
+                    Add(actorArguments, "managed-go", helperGoPath);
                     break;
                 case "remote_thread_create":
                     Add(actorArguments, "library", ParameterString(parameters, "library_name", "winhttp.dll"));
@@ -198,10 +239,18 @@ internal static class Program
             state.ActorArguments = [.. actorArguments];
             state.ActorProcess = Start(actorPath, state.ActorArguments, invocation.WorkDir);
             var actorResult = WaitAndRead<BehaviorResult>(resultPath, invocation.TimeoutMs);
-            state.Result = operation == "image_load"
-                ? WaitAndRead<BehaviorResult>(targetResultPath, invocation.TimeoutMs)
-                : actorResult;
-            if (operation == "image_load") state.ResultPath = targetResultPath;
+            if (operation == "image_load")
+            {
+                var nativeResult = WaitAndRead<BehaviorResult>(targetResultPath, invocation.TimeoutMs);
+                var managedResult = WaitAndRead<BehaviorResult>(helperResultPath, invocation.TimeoutMs);
+                state.Result = CombineImageResults(nativeResult, managedResult);
+                state.ResultPath = suiteResultPath;
+                ProtocolJson.WriteAtomic(suiteResultPath, state.Result);
+            }
+            else
+            {
+                state.Result = actorResult;
+            }
             return state;
         }
         catch
@@ -209,6 +258,7 @@ internal static class Program
             var errors = new List<string>();
             Stop(state.ActorProcess, errors);
             Stop(state.TargetProcess, errors);
+            Stop(state.HelperProcess, errors);
             state.Dispose();
             throw;
         }
@@ -447,7 +497,9 @@ internal static class Program
         RunDatabase database,
         ControllerInvocation invocation,
         IReadOnlyList<ImageLoadAttempt> attempts,
-        IReadOnlyList<LocalEventObservation> events)
+        IReadOnlyList<LocalEventObservation> events,
+        ProgramObservation target,
+        ProgramObservation helper)
     {
         database.AddFact(new LocalFactObservation
         {
@@ -462,11 +514,15 @@ internal static class Program
         for (var index = 0; index < attempts.Count; index++)
         {
             var attempt = attempts[index];
+            var attemptTarget = attempt.TargetRole == "helper" ? helper : target;
             var eventId = events[index].LocalEventId;
             var prefix = $"process.image_load.{attempt.SubtestId}";
             var values = new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
             {
                 [$"{prefix}.succeeded"] = JsonValue.Create(attempt.Succeeded),
+                [$"{prefix}.target_role"] = JsonValue.Create(attempt.TargetRole),
+                [$"{prefix}.target_pid"] = JsonValue.Create(attemptTarget.Pid),
+                [$"{prefix}.target_executable"] = JsonValue.Create(attemptTarget.ExecutablePath),
                 [$"{prefix}.method"] = JsonValue.Create(attempt.Method),
                 [$"{prefix}.source_path"] = JsonValue.Create(attempt.SourcePath),
                 [$"{prefix}.path"] = JsonValue.Create(attempt.ImagePath),
@@ -501,9 +557,10 @@ internal static class Program
                 "access" => !state.TargetProcess.HasExited && state.Result.HandleObtained == true,
                 "image_load" => !state.TargetProcess.HasExited && !state.ImageWasLoadedBefore
                     && state.Result.ImageLoads.Select(value => value.SubtestId).ToHashSet(StringComparer.Ordinal).SetEquals(
-                        ["system_loadlibrary", "application_local_loadlibrary", "application_local_loadlibrary_ex"])
+                        ["system_loadlibrary", "application_local_loadlibrary", "application_local_loadlibrary_ex", "managed_assembly_load_context"])
+                    && state.HelperProcess is not null && !state.HelperProcess.HasExited
                     && state.Result.ImageLoads.All(value => value.Succeeded && !value.BeforeLoaded && value.AfterLoaded
-                        && ModuleLoaded(state.TargetProcess, value.ImagePath)),
+                        && ModuleLoaded(value.TargetRole == "helper" ? state.HelperProcess : state.TargetProcess, value.ImagePath)),
                 "remote_thread_create" => !state.TargetProcess.HasExited && !state.ImageWasLoadedBefore
                     && ModuleLoaded(state.TargetProcess, state.Result.ImagePath),
                 "tamper" => !state.TargetProcess.HasExited && state.Result.BeforeSha256 is not null && state.Result.AfterSha256 is not null
@@ -544,10 +601,12 @@ internal static class Program
         var started = DateTimeOffset.UtcNow;
         var beforeActor = IsAlive(state.ActorProcess);
         var beforeTarget = IsAlive(state.TargetProcess);
+        var beforeHelper = IsAlive(state.HelperProcess);
         var temporaryImages = FindTemporaryImages(invocation.WorkDir, invocation.Nonce);
         var errors = new List<string>();
         Stop(state.ActorProcess, errors);
         Stop(state.TargetProcess, errors);
+        Stop(state.HelperProcess, errors);
         foreach (var imagePath in temporaryImages)
         {
             try { File.Delete(imagePath); }
@@ -555,8 +614,9 @@ internal static class Program
         }
         var afterActor = IsAlive(state.ActorProcess);
         var afterTarget = IsAlive(state.TargetProcess);
+        var afterHelper = IsAlive(state.HelperProcess);
         var remainingImages = FindTemporaryImages(invocation.WorkDir, invocation.Nonce);
-        var succeeded = errors.Count == 0 && !afterActor && !afterTarget;
+        var succeeded = errors.Count == 0 && !afterActor && !afterTarget && !afterHelper;
         return new CleanupObservation
         {
             CaseRunId = invocation.CaseRunId,
@@ -568,12 +628,14 @@ internal static class Program
             {
                 ["actor_alive"] = beforeActor,
                 ["target_alive"] = beforeTarget,
+                ["helper_alive"] = beforeHelper,
                 ["temporary_image_count"] = temporaryImages.Count,
             },
             After = new JsonObject
             {
                 ["actor_alive"] = afterActor,
                 ["target_alive"] = afterTarget,
+                ["helper_alive"] = afterHelper,
                 ["temporary_image_count"] = remainingImages.Count,
             },
             ErrorMessage = errors.Count == 0 ? null : string.Join(" | ", errors),
@@ -600,6 +662,30 @@ internal static class Program
         return Directory.EnumerateFiles(workDirectory, $"edrtest_{tag.ToLowerInvariant()}_*.dll", SearchOption.TopDirectoryOnly)
             .Select(Path.GetFullPath)
             .ToArray();
+    }
+
+    private static BehaviorResult CombineImageResults(BehaviorResult native, BehaviorResult managed)
+    {
+        var attempts = native.ImageLoads.Concat(managed.ImageLoads).ToArray();
+        var errors = attempts.Where(value => !value.Succeeded)
+            .Select(value => $"{value.SubtestId}: {value.Error ?? $"Win32 {value.Win32Error}"}")
+            .ToArray();
+        return new BehaviorResult
+        {
+            Operation = "image_load",
+            Succeeded = attempts.All(value => value.Succeeded),
+            Win32Error = attempts.FirstOrDefault(value => !value.Succeeded)?.Win32Error ?? 0,
+            Error = errors.Length == 0 ? null : string.Join(" | ", errors),
+            OccurredAtUtc = attempts.Min(value => value.OccurredAtUtc),
+            Target = native.Target,
+            ImagePath = native.ImagePath,
+            ImageBaseAddress = native.ImageBaseAddress,
+            ImageSizeBytes = native.ImageSizeBytes,
+            ImageSha256 = native.ImageSha256,
+            BeforeLoaded = native.BeforeLoaded,
+            AfterLoaded = native.AfterLoaded,
+            ImageLoads = attempts,
+        };
     }
 
     private static ArtifactObservation? CreateEvidenceArtifact(ControllerInvocation invocation, string resultPath)
@@ -642,6 +728,24 @@ internal static class Program
         };
         foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
         return Process.Start(startInfo) ?? throw new InvalidOperationException($"启动行为程序失败：{executable}");
+    }
+
+    private static string FindDotnetHost()
+    {
+        var candidates = new List<string?>
+        {
+            Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"),
+            Path.Combine(Environment.GetEnvironmentVariable("DOTNET_ROOT") ?? string.Empty, "dotnet.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe"),
+        };
+        candidates.AddRange((Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(directory => Path.Combine(directory.Trim('"'), "dotnet.exe")));
+        var host = candidates
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => Path.GetFullPath(value!))
+            .FirstOrDefault(File.Exists);
+        return host ?? throw new FileNotFoundException("找不到 dotnet.exe，无法执行托管 DLL 加载验证子项。");
     }
 
     private static T WaitAndRead<T>(string path, int timeoutMs) where T : class
@@ -760,6 +864,10 @@ internal static class Program
         public IReadOnlyList<string> ActorArguments { get; set; } = [];
         public IReadOnlyList<string> TargetArguments { get; set; } = [];
         public ProcessSnapshot? TargetSnapshot { get; set; }
+        public string HelperPath { get; set; } = string.Empty;
+        public Process? HelperProcess { get; set; }
+        public IReadOnlyList<string> HelperArguments { get; set; } = [];
+        public ProcessSnapshot? HelperSnapshot { get; set; }
         public BehaviorResult Result { get; set; } = null!;
         public bool ImageWasLoadedBefore { get; set; }
 
@@ -767,6 +875,7 @@ internal static class Program
         {
             ActorProcess?.Dispose();
             TargetProcess?.Dispose();
+            HelperProcess?.Dispose();
         }
     }
 }
