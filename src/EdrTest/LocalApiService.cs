@@ -925,7 +925,7 @@ internal sealed class ApiRunState
                 currentCapabilityId,
                 waitRemainingSeconds,
                 steps.ToArray(),
-                logs.TakeLast(300).ToArray(),
+                logs.ToArray(),
                 logs.Where(value => value.Important || value.Level is "warning" or "error").TakeLast(12).ToArray(),
                 StartedAt,
                 endedAt,
@@ -938,7 +938,6 @@ internal sealed class ApiRunState
     private void AddLog(ApiRunLogEntry entry)
     {
         logs.Add(entry);
-        if (logs.Count > 500) logs.RemoveRange(0, logs.Count - 500);
     }
 }
 

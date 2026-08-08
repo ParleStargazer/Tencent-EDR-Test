@@ -105,6 +105,7 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   const hosting = await readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8");
   const page = await readFile(new URL("../app/control-plane.tsx", import.meta.url), "utf8");
   const livePage = await readFile(new URL("../app/live-control-plane.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const route = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const testRoute = await readFile(new URL("../app/test/page.tsx", import.meta.url), "utf8");
   const compareRoute = await readFile(new URL("../app/compare/page.tsx", import.meta.url), "utf8");
@@ -143,6 +144,10 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /总体结论/);
   assert.match(livePage, /\/reports\/\$\{comparison\.comparison_id\}\/conclusion/);
   assert.match(livePage, /下载中文结论/);
+  assert.doesNotMatch(livePage, /slice\(0,\s*120\)/);
+  assert.match(styles, /\.log-line p \{[^}]*white-space:\s*pre-wrap;/);
+  assert.doesNotMatch(styles, /\.log-line code \{[^}]*text-overflow:\s*ellipsis;/);
+  assert.doesNotMatch(styles, /\.selected-candidate-meta code \{[^}]*text-overflow:\s*ellipsis;/);
   assert.doesNotMatch(livePage, /当前为控制面阶段|真实 EXE 调度将在/);
 
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));

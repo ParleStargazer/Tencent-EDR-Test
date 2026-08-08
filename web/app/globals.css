@@ -1195,7 +1195,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .queue-meta em,
 .queue-meta small { display: block; }
 .queue-copy strong { font-size: 11px; }
-.queue-copy code { overflow: hidden; margin-top: 4px; color: var(--quiet); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.queue-copy code { margin-top: 4px; color: var(--quiet); font-size: 8px; overflow-wrap: anywhere; white-space: normal; }
 .queue-meta { text-align: right; }
 .queue-meta em { color: var(--muted); font-size: 9px; font-style: normal; }
 .queue-meta small { margin-top: 4px; color: var(--quiet); font-size: 8px; }
@@ -1256,8 +1256,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .log-line > span { color: #8dc6b1; }
 .log-line.warning > span { color: #e7c279; }
 .log-line.error > span { color: #ed8e85; }
-.log-line code { overflow: hidden; color: #aabdb6; text-overflow: ellipsis; white-space: nowrap; }
-.log-line p { min-width: 0; overflow-wrap: anywhere; }
+.log-line code { min-width: 0; color: #aabdb6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.log-line p { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .log-empty { display: grid; height: 100%; place-items: center; color: #71877f; font-size: 10px; }
 .table-actions { display: flex; gap: 8px; }
 
@@ -1351,7 +1351,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .candidate-rank { color: #496781; font-family: Consolas, monospace; font-size: 11px; }
 .candidate-card > summary > div:nth-child(2) { min-width: 0; }
 .candidate-card > summary > div:nth-child(2) strong,
-.candidate-card > summary > div:nth-child(2) code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.candidate-card > summary > div:nth-child(2) code { display: block; overflow-wrap: anywhere; white-space: normal; }
 .candidate-card > summary > div:nth-child(2) strong { font-size: 10px; }
 .candidate-card > summary > div:nth-child(2) code { margin-top: 4px; color: var(--quiet); font-size: 8px; }
 .confidence-badge { padding: 3px 6px; border: 1px solid var(--line-strong); font-size: 8px; }
@@ -1393,7 +1393,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .match-legend i { width: 10px; height: 10px; border: 1px solid #62a68f; background: #cdeade; }
 .match-legend strong { grid-column: 2; color: var(--accent); font-family: Consolas, monospace; font-size: 9px; }
 .selected-candidate-meta { display: flex; flex-wrap: wrap; gap: 7px 15px; align-items: center; padding: 8px 18px; border-bottom: 1px solid var(--line); background: #fbfcfc; color: var(--muted); font-size: 8px; }
-.selected-candidate-meta code { min-width: 0; overflow: hidden; color: #496781; text-overflow: ellipsis; white-space: nowrap; }
+.selected-candidate-meta code { min-width: 0; color: #496781; overflow-wrap: anywhere; white-space: normal; }
 .json-side-by-side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); min-height: 0; overflow: hidden; }
 .json-side-by-side > section { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; border-right: 1px solid var(--line-strong); }
 .json-side-by-side > section:last-child { border-right: 0; }

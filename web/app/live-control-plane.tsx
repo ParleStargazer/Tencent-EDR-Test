@@ -298,8 +298,7 @@ function displayValue(value: unknown): string {
     const range = value as { min?: unknown; max?: unknown };
     return range.max === null || range.max === undefined ? `至少 ${range.min} 条` : `${range.min}–${range.max} 条`;
   }
-  const text = typeof value === "string" ? value : JSON.stringify(value);
-  return text.length > 120 ? `${text.slice(0, 120)}…` : text;
+  return typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
 }
 
 function requirementEvidence(requirement: BaselineRequirementResult): { expectedLabel: string; expectedValue: string; actualLabel: string; actualValue: string } {

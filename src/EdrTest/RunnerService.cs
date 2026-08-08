@@ -205,8 +205,8 @@ public sealed class RunnerService
 
             var stdout = await stdoutTask;
             var stderr = await stderrTask;
-            if (!string.IsNullOrWhiteSpace(stdout)) database.AddLog(caseRunId, "info", "controller.stdout", Truncate(stdout));
-            if (!string.IsNullOrWhiteSpace(stderr)) database.AddLog(caseRunId, "warning", "controller.stderr", Truncate(stderr));
+            if (!string.IsNullOrWhiteSpace(stdout)) database.AddLog(caseRunId, "info", "controller.stdout", stdout);
+            if (!string.IsNullOrWhiteSpace(stderr)) database.AddLog(caseRunId, "warning", "controller.stderr", stderr);
 
             var currentStatus = database.GetCapabilityStatus(caseRunId);
             if (!TerminalStatuses.Contains(currentStatus))
@@ -235,14 +235,11 @@ public sealed class RunnerService
         var builder = new StringBuilder();
         while (await reader.ReadLineAsync() is { } line)
         {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            onLine(TruncateLine(line));
-            if (builder.Length < 16_384) builder.AppendLine(line);
+            builder.AppendLine(line);
+            if (!string.IsNullOrWhiteSpace(line)) onLine(line);
         }
-        return Truncate(builder.ToString());
+        return builder.ToString().TrimEnd('\r', '\n');
     }
-
-    private static string TruncateLine(string value) => value.Length <= 1_000 ? value : value[..1_000] + "…";
 
     private static void ReportCapabilityCompleted(RunRequest request, CapabilityPackage package, int index, int total, string status, string message, JsonObject localEvidence)
     {
@@ -289,13 +286,6 @@ public sealed class RunnerService
     {
         info.ArgumentList.Add($"--{name}");
         info.ArgumentList.Add(value);
-    }
-
-    private static string Truncate(string value)
-    {
-        const int maximum = 16_384;
-        var trimmed = value.Trim();
-        return trimmed.Length <= maximum ? trimmed : trimmed[..maximum] + "…[truncated]";
     }
 
     private static void TryAbort(RunDatabase database, string code, string message)

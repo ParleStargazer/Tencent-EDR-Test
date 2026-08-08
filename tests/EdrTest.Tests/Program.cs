@@ -14,6 +14,10 @@ public static class Program
         {
             return RunFixtureController(args.Skip(1).ToArray());
         }
+        if (args.FirstOrDefault() == "--fixture-long-output")
+        {
+            return RunFixtureController(args.Skip(1).ToArray(), emitLongOutput: true);
+        }
         if (args.FirstOrDefault() == "--fixture-hang")
         {
             Thread.Sleep(TimeSpan.FromSeconds(30));
@@ -24,6 +28,7 @@ public static class Program
         await RunTest("能力包路径和参数校验", TestManifestValidation, failures);
         await RunTest("L2/L3 默认风险门禁", TestHighRiskGate, failures);
         await RunTest("同一轮按顺序执行多个能力", TestMultipleCapabilities, failures);
+        await RunTest("Runner 与 SQLite 完整保留长日志", TestLongControllerOutput, failures);
         await RunTest("Controller 超时封存为 SAMPLE_ERROR", TestControllerTimeout, failures);
         await RunTest("取消轮次会终止进程树并封存 ABORTED", TestCancellation, failures);
         await RunTest("Runner → SQLite → Export → Compare 最小闭环", TestEndToEnd, failures);
@@ -440,7 +445,30 @@ public static class Program
         Assert(inspect["capabilities"]?[0]?["status"]?.GetValue<string>() == "ABORTED", "当前能力应封存为 ABORTED。");
     }
 
-    private static int RunFixtureController(string[] args)
+    private static async Task TestLongControllerOutput()
+    {
+        using var fixture = TestDirectory.Create();
+        var manifestPath = PreparePackage(fixture.Path, "L0", "--fixture-long-output");
+        var progress = new List<RunProgressUpdate>();
+        var result = await new RunnerService().RunAsync(new RunRequest(
+            [manifestPath],
+            Path.Combine(fixture.Path, "runs"),
+            null,
+            false,
+            ProgressCallback: progress.Add));
+        var expected = BuildLongFixtureLine();
+        var streamed = progress.Single(value => value.Kind == "controller_stdout" && value.Message.StartsWith("LONG_LOG_START:", StringComparison.Ordinal));
+        Assert(streamed.Message == expected, "实时进度必须完整保留超过 16 KiB 的单行输出。");
+
+        var local = JsonNode.Parse(File.ReadAllText(result.LocalExportPath))!.AsObject();
+        var persisted = local["execution_logs"]?.AsArray()
+            .Single(value => value?["phase"]?.GetValue<string>() == "controller.stdout")?["message"]?.GetValue<string>()
+            ?? throw new InvalidOperationException("本地导出缺少 Controller 标准输出。");
+        Assert(persisted.Contains(expected, StringComparison.Ordinal), "SQLite 与本地导出必须完整保留长日志。");
+        Assert(!persisted.Contains("[truncated]", StringComparison.OrdinalIgnoreCase), "长日志中不应再写入截断标记。");
+    }
+
+    private static int RunFixtureController(string[] args, bool emitLongOutput = false)
     {
         try
         {
@@ -500,6 +528,7 @@ public static class Program
                 After = new JsonObject { ["exists"] = false },
             });
             database.CompleteCapability(invocation.CaseRunId, "LOCAL_PASS", observedAt.AddMilliseconds(25), 25);
+            if (emitLongOutput) Console.WriteLine(BuildLongFixtureLine());
             Console.WriteLine("{\"schema_version\":\"1.0\",\"status\":\"LOCAL_PASS\"}");
             return 0;
         }
@@ -509,6 +538,8 @@ public static class Program
             return 20;
         }
     }
+
+    private static string BuildLongFixtureLine() => $"LONG_LOG_START:{new string('L', 20_000)}:LONG_LOG_END";
 
     private static ProgramObservation CreateProgram(string caseRunId, string role, int index, string executable, int pid, int parentPid, string commandLine, DateTimeOffset startedAt) => new()
     {
