@@ -61,6 +61,7 @@ public sealed class BehaviorResult
     public string? ImageSha256 { get; init; }
     public bool? BeforeLoaded { get; init; }
     public bool? AfterLoaded { get; init; }
+    public IReadOnlyList<ImageLoadAttempt> ImageLoads { get; init; } = [];
 
     public int? ThreadId { get; init; }
     public string? StartAddress { get; init; }
@@ -73,6 +74,27 @@ public sealed class BehaviorResult
     public string? BeforeSha256 { get; init; }
     public string? AfterSha256 { get; init; }
     public bool? MemoryReleased { get; set; }
+}
+
+public sealed class ImageLoadAttempt
+{
+    public required string SubtestId { get; init; }
+    public required string DisplayNameZh { get; init; }
+    public required string DisplayNameEn { get; init; }
+    public required string Method { get; init; }
+    public required string SourcePath { get; init; }
+    public required string ImagePath { get; init; }
+    public required string FileName { get; init; }
+    public required DateTimeOffset OccurredAtUtc { get; init; }
+    public required bool Succeeded { get; init; }
+    public int? Win32Error { get; init; }
+    public string? Error { get; init; }
+    public string? BaseAddress { get; init; }
+    public long? SizeBytes { get; init; }
+    public string? Sha256 { get; init; }
+    public required bool BeforeLoaded { get; init; }
+    public required bool AfterLoaded { get; init; }
+    public required bool TemporaryCopy { get; init; }
 }
 
 public sealed class ArgumentReader

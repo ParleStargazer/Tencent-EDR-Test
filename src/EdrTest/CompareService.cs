@@ -157,7 +157,14 @@ public sealed class CloudExpectation
     public required string EventType { get; init; }
     public List<string> EventActions { get; init; } = [];
     public required CardinalityDefinition Cardinality { get; init; }
+    public ExpectationCorrelationDefinition? Correlation { get; init; }
     public List<BaselineAssertion> Assertions { get; init; } = [];
+}
+
+public sealed class ExpectationCorrelationDefinition
+{
+    public string? TimeFromLocal { get; init; }
+    public List<CorrelationAnchor> Anchors { get; init; } = [];
 }
 
 public sealed class CardinalityDefinition
@@ -302,7 +309,7 @@ public static class CompareService
         var start = DateTimeOffset.Parse(RequiredString(capability, "started_at_utc"), CultureInfo.InvariantCulture);
         var end = DateTimeOffset.Parse(RequiredString(capability, "ended_at_utc"), CultureInfo.InvariantCulture);
         var exportCoverage = DetermineExportCoverage(localRoot, start, end, cloud.Observations, cloudManifest, manifestFilesVerified);
-        var correlationTime = LocalCorrelationTime(localRoot, caseRunId, start);
+        var defaultCorrelationTime = LocalCorrelationTime(localRoot, caseRunId, start);
         var totalCandidates = 0;
         var outputAssertions = new JsonArray();
         var outputCandidates = new JsonArray();
@@ -311,9 +318,13 @@ public static class CompareService
 
         foreach (var expectation in baseline.CloudExpectations)
         {
+            var expectationAnchors = expectation.Correlation?.Anchors is { Count: > 0 }
+                ? expectation.Correlation.Anchors
+                : baseline.Correlation.Anchors;
+            var correlationTime = ResolveCorrelationTime(expectation.Correlation?.TimeFromLocal, resolver, defaultCorrelationTime);
             var candidates = cloud.Events
                 .Where(item => EventMatches(item, expectation, start, end, baseline.Correlation))
-                .Select(item => Score(item, baseline.Correlation.Anchors, resolver, correlationTime))
+                .Select(item => Score(item, expectationAnchors, resolver, correlationTime))
                 .Where(item => item.Score > 0)
                 .OrderByDescending(item => item.Score)
                 .ThenBy(item => item.TimeDistanceMs)
@@ -573,6 +584,13 @@ public static class CompareService
             .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
         return DateTimeOffset.TryParse(eventTime, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed) ? parsed : fallback;
     }
+
+    private static DateTimeOffset ResolveCorrelationTime(string? localField, LocalResolver resolver, DateTimeOffset fallback) =>
+        !string.IsNullOrWhiteSpace(localField)
+        && resolver.Resolve(localField)?.ToString() is { } value
+        && DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
+            ? parsed
+            : fallback;
 
     private static DateTimeOffset? CanonicalEventTime(CanonicalEvent item) =>
         item.Get("event.created") is string text
@@ -1117,6 +1135,12 @@ public static class CompareService
             if (expectation.Cardinality.Max is { } maximum && maximum < expectation.Cardinality.Min)
             {
                 throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 cardinality.max 小于 min。");
+            }
+            if (expectation.Correlation is { } correlation
+                && (correlation.Anchors.Count == 0 || correlation.Anchors.Any(anchor => string.IsNullOrWhiteSpace(anchor.LocalField)
+                    || string.IsNullOrWhiteSpace(anchor.CloudField))))
+            {
+                throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 cloud_expectation.correlation 无效。");
             }
         }
     }

@@ -72,34 +72,106 @@ internal static class Program
         var goPath = Path.GetFullPath(options.Require("go"));
         var resultPath = Path.GetFullPath(options.Require("result"));
         WaitForFile(goPath, options.GetInt("wait-ms", 15_000, 100, 120_000));
-        var library = ResolveSystemLibrary(options.Get("library", "winhttp.dll"));
-        var moduleName = Path.GetFileName(library);
-        var before = NativeMethods.GetModuleHandleW(moduleName) != IntPtr.Zero;
-        var occurred = DateTimeOffset.UtcNow;
-        var module = NativeMethods.LoadLibraryW(library);
-        var error = module == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
-        var after = NativeMethods.GetModuleHandleW(moduleName) != IntPtr.Zero;
-        var loadedPath = module == IntPtr.Zero ? library : GetModulePath(module);
+        var nonceTag = SafeFileTag(options.Require("nonce"));
+        var workDirectory = Path.GetDirectoryName(resultPath)!;
+        var attempts = new List<ImageLoadAttempt>();
+        var plans = new[]
+        {
+            new ImageLoadPlan(
+                "system_loadlibrary",
+                "系统目录 DLL 显式加载",
+                "Explicit System DLL Load",
+                "LoadLibraryW",
+                ResolveSystemLibrary(options.Get("library", "winhttp.dll")),
+                null,
+                false),
+            new ImageLoadPlan(
+                "application_local_loadlibrary",
+                "应用目录 DLL 加载",
+                "Application-local DLL Load",
+                "LoadLibraryW",
+                ResolveSystemLibrary(options.Get("application-local-library", "version.dll")),
+                Path.Combine(workDirectory, $"edrtest_{nonceTag}_version.dll"),
+                false),
+            new ImageLoadPlan(
+                "application_local_loadlibrary_ex",
+                "应用目录 DLL 扩展加载",
+                "Application-local DLL LoadLibraryEx",
+                "LoadLibraryExW(LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32)",
+                ResolveSystemLibrary(options.Get("loadlibraryex-library", "dbghelp.dll")),
+                Path.Combine(workDirectory, $"edrtest_{nonceTag}_dbghelp.dll"),
+                true),
+        };
+        var interLoadDelay = options.GetInt("inter-load-delay-ms", 750, 0, 10_000);
+        for (var index = 0; index < plans.Length; index++)
+        {
+            var plan = plans[index];
+            var loadPath = plan.DestinationPath ?? plan.SourcePath;
+            if (plan.DestinationPath is not null) File.Copy(plan.SourcePath, plan.DestinationPath, overwrite: false);
+            attempts.Add(LoadImage(plan, loadPath));
+            if (index + 1 < plans.Length && interLoadDelay > 0) Thread.Sleep(interLoadDelay);
+        }
+
+        var primary = attempts[0];
+        var errors = attempts.Where(value => !value.Succeeded)
+            .Select(value => $"{value.SubtestId}: {value.Error ?? $"Win32 {value.Win32Error}"}")
+            .ToArray();
         var result = new BehaviorResult
         {
             Operation = operation,
-            Succeeded = module != IntPtr.Zero && !before && after,
-            Win32Error = error,
-            Error = module == IntPtr.Zero
-                ? new Win32Exception(error).Message
-                : before ? $"目标模块在触发加载前已经存在：{moduleName}" : null,
-            OccurredAtUtc = occurred,
+            Succeeded = attempts.All(value => value.Succeeded),
+            Win32Error = attempts.FirstOrDefault(value => !value.Succeeded)?.Win32Error ?? 0,
+            Error = errors.Length == 0 ? null : string.Join(" | ", errors),
+            OccurredAtUtc = primary.OccurredAtUtc,
             Target = CaptureCurrentSnapshot(),
-            ImagePath = loadedPath,
-            ImageBaseAddress = module == IntPtr.Zero ? null : Hex(module),
-            ImageSizeBytes = File.Exists(loadedPath) ? new FileInfo(loadedPath).Length : null,
-            ImageSha256 = File.Exists(loadedPath) ? FileSha256(loadedPath) : null,
-            BeforeLoaded = before,
-            AfterLoaded = after,
+            ImagePath = primary.ImagePath,
+            ImageBaseAddress = primary.BaseAddress,
+            ImageSizeBytes = primary.SizeBytes,
+            ImageSha256 = primary.Sha256,
+            BeforeLoaded = primary.BeforeLoaded,
+            AfterLoaded = primary.AfterLoaded,
+            ImageLoads = attempts,
         };
         ProtocolJson.WriteAtomic(resultPath, result);
         Thread.Sleep(options.GetInt("hold-ms", 2_000, 0, 30_000));
         return result.Succeeded ? 0 : BehaviorError;
+    }
+
+    private static ImageLoadAttempt LoadImage(ImageLoadPlan plan, string requestedPath)
+    {
+        var before = CurrentProcessModuleLoaded(requestedPath);
+        var occurred = DateTimeOffset.UtcNow;
+        var module = plan.UseLoadLibraryEx
+            ? NativeMethods.LoadLibraryExW(
+                requestedPath,
+                IntPtr.Zero,
+                NativeMethods.LoadLibrarySearchDllLoadDir | NativeMethods.LoadLibrarySearchSystem32)
+            : NativeMethods.LoadLibraryW(requestedPath);
+        var error = module == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
+        var loadedPath = module == IntPtr.Zero ? requestedPath : GetModulePath(module);
+        var after = CurrentProcessModuleLoaded(loadedPath);
+        return new ImageLoadAttempt
+        {
+            SubtestId = plan.SubtestId,
+            DisplayNameZh = plan.DisplayNameZh,
+            DisplayNameEn = plan.DisplayNameEn,
+            Method = plan.Method,
+            SourcePath = plan.SourcePath,
+            ImagePath = loadedPath,
+            FileName = Path.GetFileName(loadedPath),
+            OccurredAtUtc = occurred,
+            Succeeded = module != IntPtr.Zero && !before && after,
+            Win32Error = error,
+            Error = module == IntPtr.Zero
+                ? new Win32Exception(error).Message
+                : before ? $"目标模块在触发加载前已经存在：{Path.GetFileName(requestedPath)}" : null,
+            BaseAddress = module == IntPtr.Zero ? null : Hex(module),
+            SizeBytes = File.Exists(loadedPath) ? new FileInfo(loadedPath).Length : null,
+            Sha256 = File.Exists(loadedPath) ? FileSha256(loadedPath) : null,
+            BeforeLoaded = before,
+            AfterLoaded = after,
+            TemporaryCopy = plan.DestinationPath is not null,
+        };
     }
 
     private static BehaviorResult CreateProcess(ArgumentReader options)
@@ -396,6 +468,21 @@ internal static class Program
         return path.ToString();
     }
 
+    private static bool CurrentProcessModuleLoaded(string expectedPath)
+    {
+        using var process = Process.GetCurrentProcess();
+        process.Refresh();
+        var fullPath = Path.GetFullPath(expectedPath);
+        return process.Modules.Cast<ProcessModule>().Any(module =>
+            string.Equals(Path.GetFullPath(module.FileName), fullPath, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string SafeFileTag(string value)
+    {
+        var tag = new string(value.Where(char.IsLetterOrDigit).Take(12).ToArray());
+        return tag.Length == 0 ? "run" : tag.ToLowerInvariant();
+    }
+
     private static BehaviorResult Failure(string operation, Exception exception)
     {
         var win32Error = exception is Win32Exception win32 ? win32.NativeErrorCode : Marshal.GetLastWin32Error();
@@ -423,4 +510,13 @@ internal static class Program
 
     private static string ByteSha256(byte[] value) => Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
     private static string Hex(IntPtr value) => $"0x{value.ToInt64():X}";
+
+    private sealed record ImageLoadPlan(
+        string SubtestId,
+        string DisplayNameZh,
+        string DisplayNameEn,
+        string Method,
+        string SourcePath,
+        string? DestinationPath,
+        bool UseLoadLibraryEx);
 }

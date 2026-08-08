@@ -210,7 +210,7 @@ correlation.nonce
 | 进程创建（Process Creation） | `process/create` | Actor、Target；双方 PID/路径/命令行/开始时间；父子关系；初始线程 ID；CreateProcess flags 与结果 |
 | 进程终止（Process Termination） | `process/terminate` | Target 身份；终止方式；请求退出码、观察退出码；退出时间；操作结果 |
 | 进程访问（Process Access） | `process/access` | Actor/Target 身份；操作名；请求和授予的 Access Mask；句柄是否取得；错误码 |
-| 加载镜像或动态库（Image/Library Loaded） | `process/image_load` | 目标进程；模块绝对路径；基址、大小、hash；加载前后模块枚举 |
+| 加载镜像或动态库（Image/Library Loaded） | `process/image_load` | 同一 Target 的系统目录 LoadLibraryW、应用目录 LoadLibraryW、应用目录 LoadLibraryExW 三个子项；各自的发生时间、方法、源路径、实际模块路径、文件名、基址、大小、hash、加载前后枚举；临时 DLL 清理结果 |
 | 远程线程创建（Remote Thread Creation） | `process/remote_thread_create` | Actor/Target；线程 ID；起始地址、参数地址、flags；API 结果 |
 | 进程篡改活动（Process Tampering Activity） | `process/tamper` | Actor/Target；技术名；目标地址/长度；变更前后 hash；API 结果；恢复证据 |
 

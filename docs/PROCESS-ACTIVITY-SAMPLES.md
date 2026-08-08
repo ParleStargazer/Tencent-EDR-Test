@@ -9,7 +9,7 @@ Process Activity 已实现六个 Windows 能力包。每个能力包对外均提
 | `win.process.create` | 进程创建 / Process Creation | Actor 创建带 nonce 的 Target，Controller 核验 PID、父子关系与存活状态 | L0 |
 | `win.process.terminate` | 进程终止 / Process Termination | Actor 对受控 Target 调用 `TerminateProcess`，Controller 核验退出码 | L1 |
 | `win.process.access` | 进程访问 / Process Access | Actor 使用 `OpenProcess` 和 `QueryFullProcessImageName` 访问受控 Target | L0 |
-| `win.process.image_load` | 加载镜像或动态库 / Image/Library Loaded | Target 在 Actor 触发后动态加载系统 DLL，Controller 独立枚举模块 | L0 |
+| `win.process.image_load` | 加载镜像或动态库 / Image/Library Loaded | Target 依次执行系统目录 `LoadLibraryW`、应用目录 `LoadLibraryW`、应用目录 `LoadLibraryExW`，Controller 对每个子项独立枚举 | L0 |
 | `win.process.remote_thread` | 远程线程创建 / Remote Thread Creation | Actor 在受控 Target 中创建执行 `LoadLibraryW` 的远程线程 | L2 |
 | `win.process.tampering` | 进程篡改活动 / Process Tampering Activity | Actor 在受控 Target 中分配缓冲区、写入 nonce 数据、回读哈希并释放内存 | L2 |
 
@@ -62,7 +62,7 @@ pwsh -NoProfile -File scripts/Test-ProcessActivitySamples.ps1
 
 1. 轮次状态为 `COMPLETED`，六个能力均为 `LOCAL_PASS`；
 2. 保存 18 个程序实例，即每项各一个 Controller、Actor、Target；
-3. `create`、`terminate`、`access`、`image_load`、`remote_thread_create`、`tamper` 各有一条高置信本地事件；
+3. 共保存 8 条高置信本地事件；其中 `image_load` 有 3 条子项事件，其余五项各 1 条；
 4. 每项都有行为协议证据、nonce 事实和成功清理记录；
 5. 进程篡改样本必须确认远程缓冲区已释放；
 6. 六份 BASELINE 对自测夹具全部返回 `PASS`，不能出现 `PARTIAL`、`FAIL` 或 `INCONCLUSIVE`。
@@ -84,7 +84,17 @@ artifacts/process-activity-e2e/
 
 六份厂商无关 BASELINE 位于 `baselines/windows/process_*.yaml`。`mappings/generic-process-activity-v1.yaml` 仅用于框架自测，文件内也明确标注不是厂商生产映射。
 
-当前腾讯 EDR 参考导出只提供了 `ProcessCreate` 示例，因此 `mappings/tencent-edr-proc-events-v1.yaml` 只对进程创建字段进行了证据支撑的映射。其余五项必须先由用户从 EDR 平台导出真实日志，确认 `Action.Name` 和字段路径后再扩充腾讯映射；平台不会直连腾讯 EDR，也不会把合成夹具结果表述为真实产品检出结果。
+腾讯 EDR 映射已包含 `ProcessCreate`、`NtOpenProcess`、`LoadDll`、`RemoteThread` 和 `WriteProcessMemory` 路由。映射以当前参考导出的字段结构为准；产品版本或导出页面变化后，应先核对 `Action.Type`、`Action.Name` 和父子对象字段。平台不会直连腾讯 EDR，也不会把合成夹具结果表述为真实产品检出结果。
+
+### 4.1 DLL 加载子项
+
+`win.process.image_load` 一次执行三个子项，使用同一个 Target PID，但分别保存独立发生时间、文件路径、文件名、加载方法、基址、大小和 SHA-256：
+
+1. `system_loadlibrary`：使用绝对路径加载 `System32\winhttp.dll`，保留与旧版本相同的系统 DLL 场景；
+2. `application_local_loadlibrary`：把 `version.dll` 复制为带本轮 nonce 的唯一文件名，再用 `LoadLibraryW` 从能力工作目录加载；
+3. `application_local_loadlibrary_ex`：把 `dbghelp.dll` 复制为另一唯一文件名，再使用带安全搜索标志的 `LoadLibraryExW` 加载。
+
+后两个临时 DLL 在 Target 停止后删除。唯一文件名能减少系统 DLL 白名单或高频模块降噪造成的干扰，也便于在 EDR 导出中直接按本轮路径检索。离线 BASELINE 为三个子项分别定义关联锚点和发生时间，因此某个子项漏采时会单独显示失败，不会被另外两条 DLL 日志替代。
 
 使用真实导出进行比较：
 

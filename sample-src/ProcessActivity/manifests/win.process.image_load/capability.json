@@ -1,10 +1,10 @@
 {
   "schema_version": "1.1",
   "capability_id": "win.process.image_load",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "display_name_zh": "加载镜像或动态库",
   "display_name_en": "Image/Library Loaded",
-  "description": "Actor 触发受控 Target 动态加载系统 DLL，Controller 对加载后模块列表进行独立枚举。",
+  "description": "Actor 触发受控 Target 依次执行系统目录 LoadLibraryW、应用目录 LoadLibraryW 和应用目录 LoadLibraryExW，Controller 对三个加载结果分别进行独立枚举。",
   "platform": {
     "os": "windows",
     "minimum_version": "10.0.19041",
@@ -24,10 +24,29 @@
       "default": "winhttp.dll",
       "allowed_values": ["winhttp.dll", "dbghelp.dll", "version.dll"]
     },
+    "application_local_library_name": {
+      "type": "string",
+      "required": true,
+      "default": "version.dll",
+      "allowed_values": ["version.dll", "winhttp.dll", "dbghelp.dll"]
+    },
+    "loadlibraryex_library_name": {
+      "type": "string",
+      "required": true,
+      "default": "dbghelp.dll",
+      "allowed_values": ["dbghelp.dll", "version.dll", "winhttp.dll"]
+    },
+    "inter_subtest_delay_ms": {
+      "type": "integer",
+      "required": true,
+      "default": 750,
+      "minimum": 250,
+      "maximum": 5000
+    },
     "post_load_hold_ms": {
       "type": "integer",
       "required": true,
-      "default": 2000,
+      "default": 5000,
       "minimum": 500,
       "maximum": 10000
     }
@@ -39,6 +58,16 @@
     "process.target_pid",
     "process.image_path",
     "process.image_sha256",
+    "process.image_load_subtest_count",
+    "process.image_load.system_loadlibrary.succeeded",
+    "process.image_load.system_loadlibrary.path",
+    "process.image_load.system_loadlibrary.occurred_at_utc",
+    "process.image_load.application_local_loadlibrary.succeeded",
+    "process.image_load.application_local_loadlibrary.path",
+    "process.image_load.application_local_loadlibrary.occurred_at_utc",
+    "process.image_load.application_local_loadlibrary_ex.succeeded",
+    "process.image_load.application_local_loadlibrary_ex.path",
+    "process.image_load.application_local_loadlibrary_ex.occurred_at_utc",
     "correlation.nonce"
   ]
 }

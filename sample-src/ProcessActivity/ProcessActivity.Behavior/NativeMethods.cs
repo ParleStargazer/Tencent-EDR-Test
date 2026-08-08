@@ -19,6 +19,8 @@ internal static class NativeMethods
     internal const uint MemRelease = 0x8000;
     internal const uint PageReadWrite = 0x04;
     internal const uint WaitObject0 = 0;
+    internal const uint LoadLibrarySearchDllLoadDir = 0x00000100;
+    internal const uint LoadLibrarySearchSystem32 = 0x00000800;
 
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern SafeFileHandle OpenProcess(uint desiredAccess, bool inheritHandle, int processId);
@@ -73,6 +75,9 @@ internal static class NativeMethods
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern IntPtr LoadLibraryW(string fileName);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern IntPtr LoadLibraryExW(string fileName, IntPtr file, uint flags);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     internal static extern IntPtr GetModuleHandleW(string moduleName);

@@ -75,26 +75,29 @@ $invalidEvidenceRefs = @($localRun.local_events | ForEach-Object {
 
 $syntheticCloud = @()
 foreach ($capability in $localRun.capabilities) {
-    $event = $localRun.local_events | Where-Object { $_.case_run_id -eq $capability.case_run_id } | Select-Object -First 1
     $actor = $localRun.programs | Where-Object { $_.case_run_id -eq $capability.case_run_id -and $_.role -eq "actor" } | Select-Object -First 1
     $target = $localRun.programs | Where-Object { $_.case_run_id -eq $capability.case_run_id -and $_.role -eq "target" } | Select-Object -First 1
-    $syntheticCloud += [ordered]@{
-        table = "ProcessActivity"
-        event_id = $event.local_event_id
-        host_id = $localRun.run.host.hostname
-        event_time = $event.occurred_at_utc
-        action = $event.event_action
-        target_pid = $target.pid
-        target_entity_id = $target.program_instance_id
-        target_executable = $target.executable
-        target_command_line = $target.command_line
-        actor_pid = $actor.pid
-        actor_entity_id = $actor.program_instance_id
-        actor_executable = $actor.executable
-        actor_command_line = $actor.command_line
-        exit_code = $event.data.termination.observed_exit_code
-        file_path = $event.data.image.path
-        thread_id = $event.data.thread.thread_id
+    $events = @($localRun.local_events | Where-Object { $_.case_run_id -eq $capability.case_run_id })
+    foreach ($event in $events) {
+        $syntheticCloud += [ordered]@{
+            table = "ProcessActivity"
+            event_id = $event.local_event_id
+            host_id = $localRun.run.host.hostname
+            event_time = $event.occurred_at_utc
+            action = $event.event_action
+            target_pid = $target.pid
+            target_entity_id = $target.program_instance_id
+            target_executable = $target.executable
+            target_command_line = $target.command_line
+            actor_pid = $actor.pid
+            actor_entity_id = $actor.program_instance_id
+            actor_executable = $actor.executable
+            actor_command_line = $actor.command_line
+            exit_code = $event.data.termination.observed_exit_code
+            file_path = $event.data.image.path
+            file_name = $event.data.image.file_name
+            thread_id = $event.data.thread.thread_id
+        }
     }
 }
 $syntheticCloudPath = Join-Path $OutputRoot "synthetic-cloud.process-activity.json"
@@ -131,7 +134,8 @@ $assertions = [ordered]@{
     capability_count_is_6 = @($localRun.capabilities).Count -eq 6
     all_capabilities_local_pass = $failedCapabilities.Count -eq 0
     program_count_is_18 = @($localRun.programs).Count -eq 18
-    event_count_is_6 = @($localRun.local_events).Count -eq 6
+    event_count_is_8 = @($localRun.local_events).Count -eq 8
+    image_load_event_count_is_3 = @($localRun.local_events | Where-Object { $_.event_action -eq "image_load" }).Count -eq 3
     event_actions_complete = (Compare-Object $expectedActions $actualActions).Count -eq 0
     all_events_high_confidence = @($localRun.local_events | Where-Object { $_.confidence -ne "high" }).Count -eq 0
     cleanup_count_is_6 = @($localRun.cleanup_results).Count -eq 6

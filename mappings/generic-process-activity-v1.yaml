@@ -73,6 +73,9 @@ routes:
         transform:
           - windows_path
         on_empty: null
+      "file.name":
+        source: file_name
+        on_empty: null
       "thread.id":
         source: thread_id
         on_zero: null

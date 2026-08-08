@@ -48,9 +48,20 @@ internal static class Program
             var localSucceeded = state.Result.Succeeded && independentlyObserved;
             var evidence = CreateEvidenceArtifact(invocation, state.ResultPath);
             if (evidence is not null) database.AddArtifact(evidence);
-            var localEvent = CreateEvent(invocation, operation, stopwatch, state.Result, actor, target, evidence?.ArtifactId);
-            database.AddEvent(localEvent);
-            AddFacts(database, invocation, operation, state.Result, localEvent.LocalEventId, actor, target, localSucceeded);
+            var imageAttempts = operation == "image_load"
+                ? state.Result.ImageLoads
+                : [];
+            if (operation == "image_load" && imageAttempts.Count == 0)
+            {
+                throw new InvalidDataException("镜像加载结果缺少测试子项。");
+            }
+            var localEvents = operation == "image_load"
+                ? imageAttempts.Select((attempt, index) => CreateEvent(
+                    invocation, operation, stopwatch, state.Result, actor, target, evidence?.ArtifactId, attempt, index + 1)).ToArray()
+                : [CreateEvent(invocation, operation, stopwatch, state.Result, actor, target, evidence?.ArtifactId)];
+            foreach (var localEvent in localEvents) database.AddEvent(localEvent);
+            AddFacts(database, invocation, operation, state.Result, localEvents[0].LocalEventId, actor, target, localSucceeded);
+            if (operation == "image_load") AddImageLoadFacts(database, invocation, imageAttempts, localEvents);
 
             var cleanup = Cleanup(invocation, state);
             database.AddCleanup(cleanup);
@@ -141,7 +152,10 @@ internal static class Program
                     "--role", "target", "--operation", "image_load", "--ready", readyPath,
                     "--go", goPath, "--result", targetResultPath,
                     "--library", ParameterString(parameters, "library_name", "winhttp.dll"),
-                    "--hold-ms", ParameterInt(parameters, "post_load_hold_ms", 2_000).ToString(),
+                    "--application-local-library", ParameterString(parameters, "application_local_library_name", "version.dll"),
+                    "--loadlibraryex-library", ParameterString(parameters, "loadlibraryex_library_name", "dbghelp.dll"),
+                    "--inter-load-delay-ms", ParameterInt(parameters, "inter_subtest_delay_ms", 750).ToString(),
+                    "--hold-ms", ParameterInt(parameters, "post_load_hold_ms", 5_000).ToString(),
                     "--wait-ms", invocation.TimeoutMs.ToString(), "--nonce", invocation.Nonce,
                 ]
                 :
@@ -267,8 +281,13 @@ internal static class Program
         BehaviorResult result,
         ProgramObservation actor,
         ProgramObservation target,
-        string? evidenceArtifactId)
+        string? evidenceArtifactId,
+        ImageLoadAttempt? imageAttempt = null,
+        int sequence = 1)
     {
+        var eventSucceeded = imageAttempt?.Succeeded ?? result.Succeeded;
+        var eventError = imageAttempt?.Error ?? result.Error;
+        var eventWin32Error = imageAttempt?.Win32Error ?? result.Win32Error;
         var data = new JsonObject
         {
             ["kind"] = "process",
@@ -278,9 +297,9 @@ internal static class Program
             ["result"] = new JsonObject
             {
                 ["attempted"] = result.Attempted,
-                ["succeeded"] = result.Succeeded,
-                ["win32_error"] = result.Win32Error,
-                ["message"] = result.Error,
+                ["succeeded"] = eventSucceeded,
+                ["win32_error"] = eventWin32Error,
+                ["message"] = eventError,
             },
         };
 
@@ -315,12 +334,21 @@ internal static class Program
             case "image_load":
                 data["image"] = new JsonObject
                 {
-                    ["path"] = result.ImagePath,
-                    ["base_address"] = result.ImageBaseAddress,
-                    ["size_bytes"] = result.ImageSizeBytes,
-                    ["hashes"] = result.ImageSha256 is null ? null : new JsonObject { ["sha256"] = result.ImageSha256 },
-                    ["before_loaded"] = result.BeforeLoaded,
-                    ["after_loaded"] = result.AfterLoaded,
+                    ["subtest_id"] = imageAttempt?.SubtestId,
+                    ["display_name_zh"] = imageAttempt?.DisplayNameZh,
+                    ["display_name_en"] = imageAttempt?.DisplayNameEn,
+                    ["method"] = imageAttempt?.Method,
+                    ["source_path"] = imageAttempt?.SourcePath,
+                    ["path"] = imageAttempt?.ImagePath ?? result.ImagePath,
+                    ["file_name"] = imageAttempt?.FileName ?? Path.GetFileName(result.ImagePath),
+                    ["base_address"] = imageAttempt?.BaseAddress ?? result.ImageBaseAddress,
+                    ["size_bytes"] = imageAttempt?.SizeBytes ?? result.ImageSizeBytes,
+                    ["hashes"] = (imageAttempt?.Sha256 ?? result.ImageSha256) is { } sha256
+                        ? new JsonObject { ["sha256"] = sha256 }
+                        : null,
+                    ["before_loaded"] = imageAttempt?.BeforeLoaded ?? result.BeforeLoaded,
+                    ["after_loaded"] = imageAttempt?.AfterLoaded ?? result.AfterLoaded,
+                    ["temporary_copy"] = imageAttempt?.TemporaryCopy,
                 };
                 break;
             case "remote_thread_create":
@@ -348,14 +376,15 @@ internal static class Program
         return new LocalEventObservation
         {
             CaseRunId = invocation.CaseRunId,
+            Sequence = sequence,
             EventType = "process",
             EventAction = operation,
             Nonce = invocation.Nonce,
-            OccurredAtUtc = result.OccurredAtUtc,
+            OccurredAtUtc = imageAttempt?.OccurredAtUtc ?? result.OccurredAtUtc,
             ObservedAtUtc = DateTimeOffset.UtcNow,
             MonotonicOffsetMs = stopwatch.ElapsedMilliseconds,
             Source = "process_activity_controller",
-            CollectionMethod = CollectionMethod(operation),
+            CollectionMethod = imageAttempt?.Method ?? CollectionMethod(operation),
             Confidence = "high",
             ActorProgramId = actor.ProgramInstanceId,
             TargetProgramId = target.ProgramInstanceId,
@@ -414,6 +443,53 @@ internal static class Program
         }
     }
 
+    private static void AddImageLoadFacts(
+        RunDatabase database,
+        ControllerInvocation invocation,
+        IReadOnlyList<ImageLoadAttempt> attempts,
+        IReadOnlyList<LocalEventObservation> events)
+    {
+        database.AddFact(new LocalFactObservation
+        {
+            CaseRunId = invocation.CaseRunId,
+            LocalEventId = events[0].LocalEventId,
+            Key = "process.image_load_subtest_count",
+            Value = JsonValue.Create(attempts.Count),
+            ObservedAtUtc = DateTimeOffset.UtcNow,
+            Source = "process_activity_controller",
+            Confidence = "high",
+        });
+        for (var index = 0; index < attempts.Count; index++)
+        {
+            var attempt = attempts[index];
+            var eventId = events[index].LocalEventId;
+            var prefix = $"process.image_load.{attempt.SubtestId}";
+            var values = new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
+            {
+                [$"{prefix}.succeeded"] = JsonValue.Create(attempt.Succeeded),
+                [$"{prefix}.method"] = JsonValue.Create(attempt.Method),
+                [$"{prefix}.source_path"] = JsonValue.Create(attempt.SourcePath),
+                [$"{prefix}.path"] = JsonValue.Create(attempt.ImagePath),
+                [$"{prefix}.file_name"] = JsonValue.Create(attempt.FileName),
+                [$"{prefix}.sha256"] = JsonValue.Create(attempt.Sha256),
+                [$"{prefix}.occurred_at_utc"] = JsonValue.Create(Values.Utc(attempt.OccurredAtUtc)),
+            };
+            foreach (var (key, value) in values)
+            {
+                database.AddFact(new LocalFactObservation
+                {
+                    CaseRunId = invocation.CaseRunId,
+                    LocalEventId = eventId,
+                    Key = key,
+                    Value = value,
+                    ObservedAtUtc = DateTimeOffset.UtcNow,
+                    Source = "process_activity_controller",
+                    Confidence = "high",
+                });
+            }
+        }
+    }
+
     private static bool VerifyOutcome(string operation, ExecutionState state)
     {
         try
@@ -424,8 +500,10 @@ internal static class Program
                 "terminate" => state.TargetProcess.HasExited && state.Result.ObservedExitCode == state.TargetProcess.ExitCode,
                 "access" => !state.TargetProcess.HasExited && state.Result.HandleObtained == true,
                 "image_load" => !state.TargetProcess.HasExited && !state.ImageWasLoadedBefore
-                    && state.Result.BeforeLoaded == false && state.Result.AfterLoaded == true
-                    && ModuleLoaded(state.TargetProcess, state.Result.ImagePath),
+                    && state.Result.ImageLoads.Select(value => value.SubtestId).ToHashSet(StringComparer.Ordinal).SetEquals(
+                        ["system_loadlibrary", "application_local_loadlibrary", "application_local_loadlibrary_ex"])
+                    && state.Result.ImageLoads.All(value => value.Succeeded && !value.BeforeLoaded && value.AfterLoaded
+                        && ModuleLoaded(state.TargetProcess, value.ImagePath)),
                 "remote_thread_create" => !state.TargetProcess.HasExited && !state.ImageWasLoadedBefore
                     && ModuleLoaded(state.TargetProcess, state.Result.ImagePath),
                 "tamper" => !state.TargetProcess.HasExited && state.Result.BeforeSha256 is not null && state.Result.AfterSha256 is not null
@@ -466,21 +544,38 @@ internal static class Program
         var started = DateTimeOffset.UtcNow;
         var beforeActor = IsAlive(state.ActorProcess);
         var beforeTarget = IsAlive(state.TargetProcess);
+        var temporaryImages = FindTemporaryImages(invocation.WorkDir, invocation.Nonce);
         var errors = new List<string>();
         Stop(state.ActorProcess, errors);
         Stop(state.TargetProcess, errors);
+        foreach (var imagePath in temporaryImages)
+        {
+            try { File.Delete(imagePath); }
+            catch (Exception exception) { errors.Add($"删除临时 DLL {imagePath} 失败：{exception.Message}"); }
+        }
         var afterActor = IsAlive(state.ActorProcess);
         var afterTarget = IsAlive(state.TargetProcess);
+        var remainingImages = FindTemporaryImages(invocation.WorkDir, invocation.Nonce);
         var succeeded = errors.Count == 0 && !afterActor && !afterTarget;
         return new CleanupObservation
         {
             CaseRunId = invocation.CaseRunId,
-            Action = "stop_controlled_process_tree",
+            Action = "stop_controlled_process_tree_and_remove_temporary_images",
             Status = succeeded ? "succeeded" : "failed",
             StartedAtUtc = started,
             EndedAtUtc = DateTimeOffset.UtcNow,
-            Before = new JsonObject { ["actor_alive"] = beforeActor, ["target_alive"] = beforeTarget },
-            After = new JsonObject { ["actor_alive"] = afterActor, ["target_alive"] = afterTarget },
+            Before = new JsonObject
+            {
+                ["actor_alive"] = beforeActor,
+                ["target_alive"] = beforeTarget,
+                ["temporary_image_count"] = temporaryImages.Count,
+            },
+            After = new JsonObject
+            {
+                ["actor_alive"] = afterActor,
+                ["target_alive"] = afterTarget,
+                ["temporary_image_count"] = remainingImages.Count,
+            },
             ErrorMessage = errors.Count == 0 ? null : string.Join(" | ", errors),
         };
     }
@@ -496,6 +591,16 @@ internal static class Program
         After = new JsonObject { ["actor_alive"] = false, ["target_alive"] = false },
         ErrorMessage = null,
     };
+
+    private static IReadOnlyList<string> FindTemporaryImages(string workDirectory, string nonce)
+    {
+        if (!Directory.Exists(workDirectory)) return [];
+        var tag = new string(nonce.Where(char.IsLetterOrDigit).Take(12).ToArray());
+        if (tag.Length == 0) tag = "run";
+        return Directory.EnumerateFiles(workDirectory, $"edrtest_{tag.ToLowerInvariant()}_*.dll", SearchOption.TopDirectoryOnly)
+            .Select(Path.GetFullPath)
+            .ToArray();
+    }
 
     private static ArtifactObservation? CreateEvidenceArtifact(ControllerInvocation invocation, string resultPath)
     {

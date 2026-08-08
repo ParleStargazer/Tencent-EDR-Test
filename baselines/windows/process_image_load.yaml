@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.process.image_load
-version: "0.1.0"
+version: "0.2.0"
 title: Windows 镜像或动态库加载遥测
-description: 验证受控 Target 动态加载指定系统 DLL 后，云端存在目标进程和镜像路径。
+description: 验证同一受控 Target 中三种典型 DLL 加载方式均能在云端找到对应模块事件。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,16 +10,39 @@ platform:
 risk_level: L0
 capability:
   id: win.process.image_load
-  version: "0.1.0"
+  version: "0.2.0"
   parameters:
     library_name: winhttp.dll
+    application_local_library_name: version.dll
+    loadlibraryex_library_name: dbghelp.dll
+    inter_subtest_delay_ms: 750
 local_requirements:
   - field: facts.process.image_load_succeeded
     operator: equals
     expected: true
-  - field: facts.process.image_path
+  - field: facts.process.image_load_subtest_count
+    operator: equals
+    expected: 3
+  - field: facts.process.image_load.system_loadlibrary.succeeded
+    operator: equals
+    expected: true
+  - field: facts.process.image_load.system_loadlibrary.path
     operator: present
-  - field: facts.process.image_sha256
+  - field: facts.process.image_load.system_loadlibrary.occurred_at_utc
+    operator: present
+  - field: facts.process.image_load.application_local_loadlibrary.succeeded
+    operator: equals
+    expected: true
+  - field: facts.process.image_load.application_local_loadlibrary.path
+    operator: present
+  - field: facts.process.image_load.application_local_loadlibrary.occurred_at_utc
+    operator: present
+  - field: facts.process.image_load.application_local_loadlibrary_ex.succeeded
+    operator: equals
+    expected: true
+  - field: facts.process.image_load.application_local_loadlibrary_ex.path
+    operator: present
+  - field: facts.process.image_load.application_local_loadlibrary_ex.occurred_at_utc
     operator: present
 correlation:
   time_before_seconds: 60
@@ -29,18 +52,28 @@ correlation:
       cloud_field: process.executable
       strength: strong
       normalizers: [windows_path]
-    - local_field: facts.process.image_path
-      cloud_field: file.path
-      strength: strong
-      normalizers: [windows_path]
     - local_field: programs.target.pid
       cloud_field: process.pid
       strength: medium
 cloud_expectations:
-  - id: image-load-event
+  - id: system-loadlibrary-event
     event_type: process
     event_actions: [image_load]
     cardinality: { min: 1, max: 3 }
+    correlation:
+      time_from_local: facts.process.image_load.system_loadlibrary.occurred_at_utc
+      anchors:
+        - local_field: facts.process.image_load.system_loadlibrary.path
+          cloud_field: file.path
+          strength: strong
+          normalizers: [windows_path]
+        - local_field: facts.process.image_load.system_loadlibrary.file_name
+          cloud_field: file.name
+          strength: strong
+          normalizers: [lowercase]
+        - local_field: programs.target.pid
+          cloud_field: process.pid
+          strength: medium
     assertions:
       - field: process.pid
         operator: equals
@@ -53,11 +86,78 @@ cloud_expectations:
         normalizers: [windows_path]
       - field: file.path
         operator: equals
-        expected_from_local: facts.process.image_path
+        expected_from_local: facts.process.image_load.system_loadlibrary.path
+        severity: required
+        normalizers: [windows_path]
+  - id: application-local-loadlibrary-event
+    event_type: process
+    event_actions: [image_load]
+    cardinality: { min: 1, max: 3 }
+    correlation:
+      time_from_local: facts.process.image_load.application_local_loadlibrary.occurred_at_utc
+      anchors:
+        - local_field: facts.process.image_load.application_local_loadlibrary.path
+          cloud_field: file.path
+          strength: strong
+          normalizers: [windows_path]
+        - local_field: facts.process.image_load.application_local_loadlibrary.file_name
+          cloud_field: file.name
+          strength: strong
+          normalizers: [lowercase]
+        - local_field: programs.target.pid
+          cloud_field: process.pid
+          strength: medium
+    assertions:
+      - field: process.pid
+        operator: equals
+        expected_from_local: programs.target.pid
+        severity: required
+      - field: process.executable
+        operator: equals
+        expected_from_local: programs.target.executable
+        severity: required
+        normalizers: [windows_path]
+      - field: file.path
+        operator: equals
+        expected_from_local: facts.process.image_load.application_local_loadlibrary.path
+        severity: required
+        normalizers: [windows_path]
+  - id: application-local-loadlibraryex-event
+    event_type: process
+    event_actions: [image_load]
+    cardinality: { min: 1, max: 3 }
+    correlation:
+      time_from_local: facts.process.image_load.application_local_loadlibrary_ex.occurred_at_utc
+      anchors:
+        - local_field: facts.process.image_load.application_local_loadlibrary_ex.path
+          cloud_field: file.path
+          strength: strong
+          normalizers: [windows_path]
+        - local_field: facts.process.image_load.application_local_loadlibrary_ex.file_name
+          cloud_field: file.name
+          strength: strong
+          normalizers: [lowercase]
+        - local_field: programs.target.pid
+          cloud_field: process.pid
+          strength: medium
+    assertions:
+      - field: process.pid
+        operator: equals
+        expected_from_local: programs.target.pid
+        severity: required
+      - field: process.executable
+        operator: equals
+        expected_from_local: programs.target.executable
+        severity: required
+        normalizers: [windows_path]
+      - field: file.path
+        operator: equals
+        expected_from_local: facts.process.image_load.application_local_loadlibrary_ex.path
         severity: required
         normalizers: [windows_path]
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: draft
+  change_reason: 增加系统目录、应用目录和 LoadLibraryExW 三个可独立验收的 DLL 加载子项。
   references: [EDR-Telemetry / Windows / Process Activity / Image Library Loaded]

@@ -27,6 +27,7 @@ public static class Program
         await RunTest("Controller 超时封存为 SAMPLE_ERROR", TestControllerTimeout, failures);
         await RunTest("取消轮次会终止进程树并封存 ABORTED", TestCancellation, failures);
         await RunTest("Runner → SQLite → Export → Compare 最小闭环", TestEndToEnd, failures);
+        await RunTest("同类多子项使用独立锚点与时间关联", TestExpectationCorrelation, failures);
         if (failures.Count == 0)
         {
             Console.WriteLine("全部框架测试通过。");
@@ -216,6 +217,133 @@ public static class Program
         Assert(local["capabilities"]?[0]?["error_code"]?.GetValue<string>() == "RISK_APPROVAL_REQUIRED", "应记录风险授权原因。");
         Assert(local["programs"]?.AsArray().Count == 0, "跳过能力不应伪造程序实例。");
     }
+
+    private static Task TestExpectationCorrelation()
+    {
+        using var fixture = TestDirectory.Create();
+        var caseRunId = Ids.NewUuid7();
+        var started = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var firstTime = started.AddSeconds(10);
+        var secondTime = started.AddSeconds(20);
+        const string targetPath = @"C:\samples\ImageLoad.Target.exe";
+        const string firstPath = @"C:\Windows\System32\winhttp.dll";
+        const string secondPath = @"C:\runs\edrtest_nonce_version.dll";
+        var local = new JsonObject
+        {
+            ["run"] = new JsonObject { ["host"] = new JsonObject { ["hostname"] = "fixture-host" } },
+            ["capabilities"] = new JsonArray(new JsonObject
+            {
+                ["case_run_id"] = caseRunId,
+                ["capability_id"] = "win.process.image_load",
+                ["status"] = "LOCAL_PASS",
+                ["nonce"] = "fixture-nonce",
+                ["started_at_utc"] = Values.Utc(started),
+                ["ended_at_utc"] = Values.Utc(started.AddSeconds(30)),
+            }),
+            ["programs"] = new JsonArray(new JsonObject
+            {
+                ["case_run_id"] = caseRunId,
+                ["role"] = "target",
+                ["pid"] = 4242,
+                ["executable"] = targetPath,
+            }),
+            ["local_events"] = new JsonArray(),
+            ["local_facts"] = new JsonArray(
+                Fact(caseRunId, "process.image_load.first.succeeded", true),
+                Fact(caseRunId, "process.image_load.first.path", firstPath),
+                Fact(caseRunId, "process.image_load.first.file_name", "winhttp.dll"),
+                Fact(caseRunId, "process.image_load.first.occurred_at_utc", Values.Utc(firstTime)),
+                Fact(caseRunId, "process.image_load.second.succeeded", true),
+                Fact(caseRunId, "process.image_load.second.path", secondPath),
+                Fact(caseRunId, "process.image_load.second.file_name", "edrtest_nonce_version.dll"),
+                Fact(caseRunId, "process.image_load.second.occurred_at_utc", Values.Utc(secondTime))),
+        };
+        var localPath = Path.Combine(fixture.Path, "local.json");
+        File.WriteAllText(localPath, local.ToJsonString(JsonDefaults.Options));
+
+        var cloud = new JsonArray(
+            CloudImage("first-event", firstTime, firstPath, "winhttp.dll", targetPath),
+            CloudImage("second-event", secondTime, secondPath, "edrtest_nonce_version.dll", targetPath));
+        var cloudPath = Path.Combine(fixture.Path, "cloud.json");
+        File.WriteAllText(cloudPath, cloud.ToJsonString(JsonDefaults.Options));
+        var baselinePath = Path.Combine(fixture.Path, "baseline.yaml");
+        File.WriteAllText(baselinePath, """
+            schema_version: "1.1"
+            baseline_id: win.process.image_load
+            version: "0.2.0"
+            title: 多子项镜像加载测试
+            risk_level: L0
+            capability: { id: win.process.image_load, version: "0.2.0" }
+            local_requirements:
+              - { field: facts.process.image_load.first.succeeded, operator: equals, expected: true }
+              - { field: facts.process.image_load.second.succeeded, operator: equals, expected: true }
+            correlation:
+              time_before_seconds: 60
+              time_after_seconds: 60
+              anchors:
+                - { local_field: programs.target.executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+            cloud_expectations:
+              - id: first-event
+                event_type: process
+                event_actions: [image_load]
+                cardinality: { min: 1, max: 1 }
+                correlation:
+                  time_from_local: facts.process.image_load.first.occurred_at_utc
+                  anchors:
+                    - { local_field: facts.process.image_load.first.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+                    - { local_field: facts.process.image_load.first.file_name, cloud_field: file.name, strength: strong, normalizers: [lowercase] }
+                assertions:
+                  - { field: file.path, operator: equals, expected_from_local: facts.process.image_load.first.path, severity: required, normalizers: [windows_path] }
+              - id: second-event
+                event_type: process
+                event_actions: [image_load]
+                cardinality: { min: 1, max: 1 }
+                correlation:
+                  time_from_local: facts.process.image_load.second.occurred_at_utc
+                  anchors:
+                    - { local_field: facts.process.image_load.second.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+                    - { local_field: facts.process.image_load.second.file_name, cloud_field: file.name, strength: strong, normalizers: [lowercase] }
+                assertions:
+                  - { field: file.path, operator: equals, expected_from_local: facts.process.image_load.second.path, severity: required, normalizers: [windows_path] }
+            """);
+        var repository = FindRepositoryRoot();
+        var validation = CompareService.Compare(new CompareRequest(
+            localPath,
+            [cloudPath],
+            Path.Combine(repository, "mappings", "generic-process-activity-v1.yaml"),
+            [baselinePath],
+            Path.Combine(fixture.Path, "result.json")));
+        Assert(validation["summary"]?["pass"]?.GetValue<int>() == 1, "两个同类子项应分别关联并通过。");
+        var candidates = validation["capabilities"]?[0]?["edr_candidates"]?.AsArray()
+            ?? throw new InvalidOperationException("多子项结果缺少候选事件。");
+        Assert(candidates.Count == 2, "每个子项只能保留匹配自身路径的候选。");
+        Assert(candidates[0]?["expectation_id"]?.GetValue<string>() == "first-event"
+            && candidates[0]?["event_id"]?.GetValue<string>() == "first-event"
+            && candidates[1]?["expectation_id"]?.GetValue<string>() == "second-event"
+            && candidates[1]?["event_id"]?.GetValue<string>() == "second-event", "子项不能互相替代或误排序。");
+        Assert(candidates.All(value => value?["time_distance_ms"]?.GetValue<long>() == 0), "子项应使用自己的本地发生时间计算距离。");
+        return Task.CompletedTask;
+    }
+
+    private static JsonObject Fact(string caseRunId, string key, object value) => new()
+    {
+        ["case_run_id"] = caseRunId,
+        ["key"] = key,
+        ["value"] = JsonValue.Create(value),
+    };
+
+    private static JsonObject CloudImage(string eventId, DateTimeOffset time, string imagePath, string fileName, string targetPath) => new()
+    {
+        ["table"] = "ProcessActivity",
+        ["event_id"] = eventId,
+        ["host_id"] = "fixture-host",
+        ["event_time"] = Values.Utc(time),
+        ["action"] = "image_load",
+        ["target_pid"] = 4242,
+        ["target_executable"] = targetPath,
+        ["file_path"] = imagePath,
+        ["file_name"] = fileName,
+    };
 
     private static async Task TestControllerTimeout()
     {
