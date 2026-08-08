@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>FileManipulation.Behavior</AssemblyName>
+    <RootNamespace>FileManipulation</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\FileManipulation.Protocol\FileManipulation.Protocol.csproj" />
+  </ItemGroup>
+</Project>

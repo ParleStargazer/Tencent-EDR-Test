@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>FileManipulation.Controller</AssemblyName>
+    <RootNamespace>FileManipulation</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\EdrTest\EdrTest.csproj" />
+    <ProjectReference Include="..\FileManipulation.Protocol\FileManipulation.Protocol.csproj" />
+  </ItemGroup>
+</Project>

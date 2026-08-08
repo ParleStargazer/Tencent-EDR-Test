@@ -7,5 +7,6 @@
     <Deterministic>true</Deterministic>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RollForward>Major</RollForward>
   </PropertyGroup>
 </Project>

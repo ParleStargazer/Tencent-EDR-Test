@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>FileManipulation.Protocol</AssemblyName>
+    <RootNamespace>FileManipulation</RootNamespace>
+  </PropertyGroup>
+</Project>

@@ -463,7 +463,7 @@ public static class CompareService
     {
         ["requirement_id"] = $"{expectation.Id}-cardinality",
         ["scope"] = "cloud",
-        ["title_zh"] = $"必须找到至少 {expectation.Cardinality.Min} 条 {EventActionTitle(expectation.EventActions)} EDR 事件",
+        ["title_zh"] = $"必须找到至少 {expectation.Cardinality.Min} 条 {EventActionTitle(expectation.EventType, expectation.EventActions)} EDR 事件",
         ["expectation_id"] = expectation.Id,
         ["field"] = "event.count",
         ["operator"] = "range",
@@ -523,14 +523,19 @@ public static class CompareService
         return $"{subject}{requirement}";
     }
 
-    internal static string EventActionTitle(IReadOnlyList<string> actions) => string.Join("/", actions.Select(action => action switch
+    internal static string EventActionTitle(string eventType, IReadOnlyList<string> actions) => string.Join("/", actions.Select(action => (eventType, action) switch
     {
-        "create" => "进程创建",
-        "terminate" => "进程终止",
-        "access" => "进程访问",
-        "image_load" => "镜像或动态库加载",
-        "remote_thread_create" => "远程线程创建",
-        "tamper" => "进程篡改",
+        ("process", "create") => "进程创建",
+        ("process", "terminate") => "进程终止",
+        ("process", "access") => "进程访问",
+        ("process", "image_load") => "镜像或动态库加载",
+        ("process", "remote_thread_create") => "远程线程创建",
+        ("process", "tamper") => "进程篡改",
+        ("file", "create") => "文件创建",
+        ("file", "open") => "文件打开",
+        ("file", "delete") => "文件删除",
+        ("file", "modify") => "文件修改",
+        ("file", "rename") => "文件重命名",
         _ => action,
     }));
 
@@ -854,7 +859,7 @@ public static class CompareService
         {
             "unix_ms" when TryInt64(scalar, out var milliseconds) => DateTimeOffset.FromUnixTimeMilliseconds(milliseconds),
             "unix_s" when TryInt64(scalar, out var seconds) => DateTimeOffset.FromUnixTimeSeconds(seconds),
-            "datetime" when DateTimeOffset.TryParse(scalar?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var timestamp) => timestamp,
+            "iso8601" when DateTimeOffset.TryParse(scalar?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var timestamp) => timestamp,
             _ => null,
         };
     }

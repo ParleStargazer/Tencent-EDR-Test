@@ -484,7 +484,7 @@ internal sealed class LocalApiCatalog
                 new ApiBaselineRequirement(
                     $"{expectation.Id}-cardinality",
                     "cloud",
-                    $"必须找到至少 {expectation.Cardinality.Min} 条 {CompareService.EventActionTitle(expectation.EventActions)} EDR 事件",
+                    $"必须找到至少 {expectation.Cardinality.Min} 条 {CompareService.EventActionTitle(expectation.EventType, expectation.EventActions)} EDR 事件",
                     "event.count",
                     "range",
                     "required"),

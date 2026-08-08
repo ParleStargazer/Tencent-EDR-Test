@@ -150,6 +150,83 @@ test("关键分类约束保持算法、传输协议与专属证据一致", async
   assert.ok(dataSchema.$defs.wmi.allOf.length >= 3);
 });
 
+test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完整", async () => {
+  const normalizedSchema = await readJson("schemas/normalized-event.schema.json");
+  const mapping = await readFile(
+    new URL("mappings/tencent-edr-proc-events-v1.yaml", root),
+    "utf8",
+  );
+  const capabilities = ["create", "open", "delete", "modify", "rename"];
+
+  for (const operation of capabilities) {
+    const manifest = await readJson(
+      `sample-src/FileManipulation/manifests/win.file.${operation}/capability.json`,
+    );
+    assert.equal(manifest.capability_id, `win.file.${operation}`);
+    assert.equal(manifest.version, "0.1.0");
+    assert.equal(manifest.risk_level, "L0");
+    assert.deepEqual(manifest.participants.map((item) => item.role), ["actor"]);
+    assert.ok(manifest.expected_fact_keys.includes(`file.${operation}_succeeded`));
+    assert.ok(manifest.expected_fact_keys.includes("file.occurred_at_utc"));
+    assert.match(mapping, new RegExp(`route_id: file-${operation}`));
+  }
+
+  [
+    "old_path",
+    "created",
+    "modified",
+    "accessed",
+    "operation_name",
+    "content_type",
+    "format",
+    "driver_type",
+    "encrypted",
+    "io",
+  ].forEach((field) => assert.ok(field in normalizedSchema.properties.file.properties));
+  assert.match(mapping, /"Child\.FileCreateOpName": 新建文件/);
+  assert.match(mapping, /"Child\.FileCreateOpName": 打开文件/);
+  assert.match(mapping, /"Child\.FileCreateOpName": 覆盖写文件/);
+  assert.match(mapping, /source: "Child\.OldFilePath"/);
+  assert.match(mapping, /source: "Child\.FileTotalRead"/);
+  assert.match(mapping, /source: "Child\.FileTotalWrite"/);
+});
+
+test("260808 腾讯 EDR 全字段目录完整、脱敏且可复现", async () => {
+  const catalog = await readJson(
+    "docs/reference/tencent-edr-260808-field-catalog.json",
+  );
+  assert.equal(catalog.schema_version, "1.0");
+  assert.equal(catalog.source.event_count, 834);
+  assert.equal(catalog.all_fields.length, 228);
+  assert.equal(catalog.sanitization.applied, true);
+  assert.match(catalog.source.sha256, /^[a-f0-9]{64}$/);
+
+  const allFields = new Map(catalog.all_fields.map((item) => [item.field, item]));
+  [
+    "Common.EventTime",
+    "Common.EventUUId",
+    "Parent.ProcPid",
+    "Parent.ProcCmdline",
+    "Child.FilePath",
+    "Child.OldFilePath",
+    "Child.FileCreateOpName",
+    "Child.FileTotalRead",
+    "Child.FileTotalWrite",
+  ].forEach((field) => assert.ok(allFields.has(field), `字段目录缺少 ${field}`));
+  assert.deepEqual(allFields.get("Child.DstIp").examples, ["203.0.113.10"]);
+  assert.ok(
+    allFields.get("Child.FilePath").examples.every((value) =>
+      value.startsWith("C:\\EDR-Test\\example\\"),
+    ),
+  );
+
+  const fileWriteClose = catalog.event_kinds.find(
+    (item) => item.action_type === "File" && item.action_name === "FileWriteClose",
+  );
+  assert.equal(fileWriteClose.event_count, 465);
+  assert.ok(fileWriteClose.field_names.includes("Child.FileCreateOpName"));
+});
+
 test("进程创建示例的引用、时间、nonce、计数和进程身份一致", async () => {
   const example = await readJson("examples/local-run.process-create.example.json");
   const [capability] = example.capabilities;

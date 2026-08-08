@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.file.delete",
+  "version": "0.1.0",
+  "display_name_zh": "文件删除",
+  "display_name_en": "File Deletion",
+  "description": "Actor 删除 Controller 预置的唯一 nonce 文件，Controller 独立校验删除前元数据与删除后不存在状态。",
+  "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
+  "risk_level": "L0",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "FileDelete.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "FileDelete.Actor.exe" }],
+  "parameters": {
+    "payload_size": { "type": "integer", "required": true, "default": 8192, "minimum": 256, "maximum": 1048576 },
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "file.delete_succeeded", "file.occurred_at_utc", "file.actor_pid", "file.path",
+    "file.before.exists", "file.before.size_bytes", "file.before.md5", "file.after.exists", "correlation.nonce"
+  ]
+}

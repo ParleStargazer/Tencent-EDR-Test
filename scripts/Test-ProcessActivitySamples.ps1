@@ -12,6 +12,7 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
 }
 $OutputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
 $samplesRoot = Join-Path $repositoryRoot "samples"
+[System.IO.Directory]::CreateDirectory($OutputRoot) | Out-Null
 
 & (Join-Path $PSScriptRoot "Build-ProcessActivitySamples.ps1") `
     -Configuration $Configuration -SamplesRoot $samplesRoot
@@ -39,8 +40,9 @@ if (-not (Test-Path $runner)) {
     if ($LASTEXITCODE -ne 0) { throw "框架构建失败。" }
 }
 
-& dotnet $runner @runnerArguments
+& dotnet --roll-forward Major $runner @runnerArguments
 $runnerExitCode = $LASTEXITCODE
+if ($runnerExitCode -ne 0) { throw "Runner 执行失败，退出码：$runnerExitCode" }
 
 $localRunFile = Get-ChildItem (Join-Path $OutputRoot "runs") -Filter "local-run.json" -Recurse |
     Sort-Object LastWriteTimeUtc -Descending |
@@ -120,7 +122,7 @@ $baselineNames = @(
 foreach ($baselineName in $baselineNames) {
     $comparisonArguments += @("--baseline", (Join-Path $repositoryRoot "baselines\windows\$baselineName"))
 }
-& dotnet $runner @comparisonArguments
+& dotnet --roll-forward Major $runner @comparisonArguments
 $comparisonExitCode = $LASTEXITCODE
 $validation = if (Test-Path $validationPath) {
     Get-Content $validationPath -Raw | ConvertFrom-Json -Depth 100

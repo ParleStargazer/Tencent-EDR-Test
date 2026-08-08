@@ -1,21 +1,21 @@
 schema_version: "1.1"
-baseline_id: win.file.create
+baseline_id: win.file.modify
 version: "0.1.0"
-title: Windows 文件创建遥测
-description: 验证 Actor 创建唯一标记文件后，云端是否存在路径、进程、大小及 MD5 一致的文件创建事件。
+title: Windows 文件修改遥测
+description: 验证 Actor 覆盖写既有标记文件后，云端是否存在新内容大小、MD5 和写入字节数一致的修改事件。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
   architectures: [x64]
 risk_level: L0
 capability:
-  id: win.file.create
+  id: win.file.modify
   version: "0.1.0"
   parameters: { payload_size: 8192, post_operation_hold_ms: 1500 }
 local_requirements:
-  - { field: facts.file.create_succeeded, operator: equals, expected: true }
+  - { field: facts.file.modify_succeeded, operator: equals, expected: true }
   - { field: facts.file.path, operator: present }
-  - { field: facts.file.after.size_bytes, operator: present }
+  - { field: facts.file.before.md5, operator: present }
   - { field: facts.file.after.md5, operator: present }
   - { field: programs.actor.pid, operator: present }
 correlation:
@@ -26,9 +26,9 @@ correlation:
     - { local_field: programs.actor.executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
     - { local_field: programs.actor.pid, cloud_field: process.pid, strength: medium }
 cloud_expectations:
-  - id: file-create-event
+  - id: file-modify-event
     event_type: file
-    event_actions: [create]
+    event_actions: [modify]
     cardinality: { min: 1, max: 5 }
     correlation:
       time_from_local: facts.file.occurred_at_utc
@@ -41,11 +41,11 @@ cloud_expectations:
       - { field: process.executable, operator: equals, expected_from_local: programs.actor.executable, severity: required, normalizers: [windows_path] }
       - { field: file.size, operator: equals, expected_from_local: facts.file.after.size_bytes, severity: required }
       - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.after.md5, severity: recommended, normalizers: [lowercase] }
-      - { field: file.operation_name, operator: equals, expected: create_new, severity: recommended }
-      - { field: user.name, operator: present, severity: recommended }
+      - { field: file.operation_name, operator: equals, expected: overwrite_existing, severity: required }
+      - { field: file.io.write_bytes, operator: equals, expected_from_local: facts.file.modify.bytes_written, severity: recommended }
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: 按 260808210300run 完整腾讯 EDR 导出字段重建基准。
-  references: [Tencent EDR FileEvents / FileWriteClose / 新建文件]
+  change_reason: 按 260808210300run 的“覆盖写文件”语义建立基准。
+  references: [Tencent EDR FileEvents / FileWriteClose / 覆盖写文件]

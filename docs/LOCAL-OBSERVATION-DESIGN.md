@@ -33,7 +33,7 @@
 | `ProcessHandleObject` | 13 条 |
 | `RemoteThread` | 3 条 |
 
-参考文件只能直接证明“进程活动”导出格式，不能证明文件、注册表、网络等其他表的真实腾讯字段。其他能力域的本地字段依据 Windows 行为本身和项目能力目录设计；取得相应云端导出后，应该补充 Mapping Profile，而不是改写本地事实语义。
+上述早期参考文件只证明“进程活动”格式。后续 `reference/260808210300run` 新增 834 条全字段导出，覆盖 228 个唯一字段，其中包含 `FileWriteClose`、`FileRename` 和 `FileDelete`，已经可以直接设计五类文件操作映射和 BASELINE。脱敏、可追踪目录见 `docs/reference/tencent-edr-260808-field-catalog.json`；生成规则与字段解释见 `docs/TENCENT-EDR-FIELD-CATALOG.md`。注册表等尚未出现的能力域仍不得猜测腾讯字段。
 
 ### 2.1 云端字段组
 

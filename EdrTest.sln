@@ -12,6 +12,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProcessActivity.Behavior", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ProcessActivity.Controller", "sample-src\ProcessActivity\ProcessActivity.Controller\ProcessActivity.Controller.csproj", "{9535AF5A-5275-41F6-820A-4109489AA715}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileManipulation.Protocol", "sample-src\FileManipulation\FileManipulation.Protocol\FileManipulation.Protocol.csproj", "{AE7384DE-80DF-48C4-89C8-3D628D6A1C5D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileManipulation.Behavior", "sample-src\FileManipulation\FileManipulation.Behavior\FileManipulation.Behavior.csproj", "{324A8054-8D14-426C-B653-A947FFBC8C91}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileManipulation.Controller", "sample-src\FileManipulation\FileManipulation.Controller\FileManipulation.Controller.csproj", "{7D7CB30B-8E52-40B1-8BA2-7FB5A29E242A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -38,5 +44,17 @@ Global
 		{9535AF5A-5275-41F6-820A-4109489AA715}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9535AF5A-5275-41F6-820A-4109489AA715}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9535AF5A-5275-41F6-820A-4109489AA715}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AE7384DE-80DF-48C4-89C8-3D628D6A1C5D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AE7384DE-80DF-48C4-89C8-3D628D6A1C5D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AE7384DE-80DF-48C4-89C8-3D628D6A1C5D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AE7384DE-80DF-48C4-89C8-3D628D6A1C5D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{324A8054-8D14-426C-B653-A947FFBC8C91}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{324A8054-8D14-426C-B653-A947FFBC8C91}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{324A8054-8D14-426C-B653-A947FFBC8C91}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{324A8054-8D14-426C-B653-A947FFBC8C91}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7D7CB30B-8E52-40B1-8BA2-7FB5A29E242A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7D7CB30B-8E52-40B1-8BA2-7FB5A29E242A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7D7CB30B-8E52-40B1-8BA2-7FB5A29E242A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7D7CB30B-8E52-40B1-8BA2-7FB5A29E242A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

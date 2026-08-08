@@ -1,0 +1,55 @@
+schema_version: "1.0"
+profile_id: generic-file-manipulation-v1
+vendor: Generic
+product: File Manipulation Self-Test Fixture
+description: 用于验证五类 File Manipulation BASELINE 与比较器的扁平 JSON 适配；不是任何 EDR 厂商的生产映射。
+
+input:
+  containers:
+    - json-array
+    - jsonl
+  encoding: utf-8
+  record_selector:
+    all:
+      table: FileManipulation
+  event_id_field: event_id
+  host_id_field: host_id
+  event_time:
+    field: event_time
+    format: iso8601
+
+routes:
+  - route_id: file-manipulation
+    when:
+      table: FileManipulation
+    canonical:
+      "event.type": { constant: file }
+      "event.action": { source: action }
+      "event.category": { constant: file }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "process.pid": { source: actor_pid }
+      "process.entity_id": { source: actor_entity_id }
+      "process.name": { source: actor_name }
+      "process.executable": { source: actor_executable, transform: [windows_path] }
+      "process.command_line": { source: actor_command_line }
+      "user.name": { source: user_name }
+      "user.domain": { source: user_domain }
+      "file.path": { source: file_path, transform: [windows_path] }
+      "file.old_path": { source: old_file_path, transform: [windows_path], on_empty: null }
+      "file.name": { source: file_name }
+      "file.size": { source: file_size }
+      "file.hash.md5": { source: file_md5, transform: [lowercase] }
+      "file.hash.sha256": { source: file_sha256, transform: [lowercase], on_empty: null }
+      "file.operation_name": { source: operation_name, on_empty: null }
+      "file.io.read_bytes": { source: read_bytes, on_zero: 0 }
+      "file.io.write_bytes": { source: write_bytes, on_zero: 0 }
+
+raw_reference:
+  id_field: event_id
+  ordinal_base: 0
+
+unmapped_fields:
+  policy: count-and-ignore
+  preserve_in_report: false

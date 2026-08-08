@@ -57,8 +57,25 @@
       "type": ["object", "null"],
       "properties": {
         "path": { "type": ["string", "null"] },
+        "old_path": { "type": ["string", "null"] },
         "name": { "type": ["string", "null"] },
         "size": { "type": ["integer", "null"], "minimum": 0 },
+        "created": { "type": ["string", "null"], "format": "date-time" },
+        "modified": { "type": ["string", "null"], "format": "date-time" },
+        "accessed": { "type": ["string", "null"], "format": "date-time" },
+        "operation_name": { "type": ["string", "null"] },
+        "content_type": { "type": ["string", "null"] },
+        "format": { "type": ["string", "null"] },
+        "driver_type": { "type": ["string", "null"] },
+        "encrypted": { "type": ["string", "boolean", "integer", "null"] },
+        "io": {
+          "type": ["object", "null"],
+          "properties": {
+            "read_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "write_bytes": { "type": ["integer", "null"], "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
         "hash": {
           "type": ["object", "null"],
           "properties": {
