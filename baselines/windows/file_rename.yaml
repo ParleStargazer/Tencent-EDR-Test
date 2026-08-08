@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.file.rename
-version: "0.1.0"
+version: "0.2.0"
 title: Windows 文件重命名遥测
-description: 验证 Actor 重命名标记文件后，云端是否同时记录源路径、目标路径、Actor 与保持不变的文件 MD5。
+description: 同轮重命名 TXT 与有效 JSON 文件；本地验证两者，云端以 JSON 子项的路径、程序、PID 和时间事实反向关联候选事件。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,46 +10,49 @@ platform:
 risk_level: L0
 capability:
   id: win.file.rename
-  version: "0.1.0"
+  version: "0.2.0"
   parameters: { payload_size: 8192, post_operation_hold_ms: 1500 }
 local_requirements:
   - { field: facts.file.rename_succeeded, operator: equals, expected: true }
-  - { field: facts.file.source_path, operator: present }
-  - { field: facts.file.destination_path, operator: present }
-  - { field: facts.file.source_after.exists, operator: equals, expected: false }
-  - { field: facts.file.destination_before.exists, operator: equals, expected: false }
-  - { field: facts.file.after.md5, operator: present }
-  - { field: facts.file.after.size_bytes, operator: present }
-  - { field: programs.actor.pid, operator: present }
+  - { field: facts.file.txt.rename_succeeded, operator: equals, expected: true }
+  - { field: facts.file.json.rename_succeeded, operator: equals, expected: true }
+  - { field: facts.file.json.extension, operator: equals, expected: ".json" }
+  - { field: facts.file.json.source_path, operator: present }
+  - { field: facts.file.json.destination_path, operator: present }
+  - { field: facts.file.json.source_after.exists, operator: equals, expected: false }
+  - { field: facts.file.json.destination_before.exists, operator: equals, expected: false }
+  - { field: facts.file.json.after.md5, operator: present }
+  - { field: facts.file.json.after.size_bytes, operator: present }
+  - { field: facts.file.json.actor_pid, operator: present }
 correlation:
   time_before_seconds: 60
   time_after_seconds: 300
   anchors:
-    - { local_field: facts.file.destination_path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
-    - { local_field: facts.file.source_path, cloud_field: file.old_path, strength: strong, normalizers: [windows_path] }
-    - { local_field: programs.actor.pid, cloud_field: process.pid, strength: medium }
+    - { local_field: facts.file.json.destination_path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.file.json.source_path, cloud_field: file.old_path, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.file.json.actor_pid, cloud_field: process.pid, strength: medium }
 cloud_expectations:
-  - id: file-rename-event
+  - id: file-rename-json-event
     event_type: file
     event_actions: [rename]
     cardinality: { min: 1, max: 5 }
     correlation:
-      time_from_local: facts.file.occurred_at_utc
+      time_from_local: facts.file.json.occurred_at_utc
       anchors:
-        - { local_field: facts.file.destination_path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
-        - { local_field: facts.file.source_path, cloud_field: file.old_path, strength: strong, normalizers: [windows_path] }
-        - { local_field: programs.actor.pid, cloud_field: process.pid, strength: medium }
+        - { local_field: facts.file.json.destination_path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.file.json.source_path, cloud_field: file.old_path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.file.json.actor_pid, cloud_field: process.pid, strength: medium }
     assertions:
-      - { field: file.path, operator: equals, expected_from_local: facts.file.destination_path, severity: required, normalizers: [windows_path] }
-      - { field: file.old_path, operator: equals, expected_from_local: facts.file.source_path, severity: required, normalizers: [windows_path] }
-      - { field: process.pid, operator: equals, expected_from_local: programs.actor.pid, severity: required }
-      - { field: process.executable, operator: equals, expected_from_local: programs.actor.executable, severity: required, normalizers: [windows_path] }
-      - { field: file.size, operator: equals, expected_from_local: facts.file.after.size_bytes, severity: required }
-      - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.after.md5, severity: recommended, normalizers: [lowercase] }
+      - { field: file.path, operator: equals, expected_from_local: facts.file.json.destination_path, severity: required, normalizers: [windows_path] }
+      - { field: file.old_path, operator: equals, expected_from_local: facts.file.json.source_path, severity: required, normalizers: [windows_path] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.file.json.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.file.json.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: file.size, operator: equals, expected_from_local: facts.file.json.after.size_bytes, severity: required }
+      - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.json.after.md5, severity: recommended, normalizers: [lowercase] }
       - { field: user.name, operator: present, severity: recommended }
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: 按 260808210300run 的 FileRename/Child.OldFilePath 字段建立基准。
-  references: [Tencent EDR FileEvents / FileRename]
+  change_reason: 增加有效 JSON 子项，并改为由本地绝对基准反向关联云端记录，不依赖厂商 Action 名称。
+  references: [Tencent EDR FileEvents, Tencent EDR DirOperationEvents]

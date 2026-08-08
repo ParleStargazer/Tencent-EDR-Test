@@ -489,6 +489,48 @@ routes:
       "file.driver_type": { source: "Child.FileDriverType", on_empty: null }
       "file.encrypted": { source: "Child.FileEncrypted", on_empty: null }
 
+  # 候选发现路由不依赖 Action.Name。它保留时间、Child 文件字段和 Parent 程序字段，
+  # 让比较器按本地路径/程序/PID 锚点评分并以时间距离排序；事件类型和 Action 只作展示提示。
+  - route_id: telemetry-candidate-discovery
+    when:
+      "OS": Windows
+    canonical:
+      "event.type": { source: "Action.Type", on_empty: unknown }
+      "event.action": { source: "Action.Name", on_empty: unknown }
+      "event.category": { source: "@table", on_empty: unknown }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "host.os": { source: "Environment.OsVersion" }
+      "host.agent_id": { source: "Common.Guid" }
+      "host.agent_version": { source: "Common.ClientVer" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "process.start": { source: "Parent.ProcCreateTime", transform: [unix_ms_to_utc], on_zero: null }
+      "process.hash.md5": { source: "Parent.FileMd5", transform: [lowercase], on_empty: null }
+      "user.name": { source: "Parent.ProcUserName", on_empty: null }
+      "user.domain": { source: "Parent.ProcDomainName", on_empty: null }
+      "file.path": { source: "Child.FilePath", transform: [windows_path], on_empty: null }
+      "file.old_path": { source: "Child.OldFilePath", transform: [windows_path], on_empty: null }
+      "file.name": { source: "Child.FileName", on_empty: null }
+      "file.size": { source: "Child.FileSize", on_zero: 0 }
+      "file.hash.md5": { source: "Child.FileMd5", transform: [lowercase], on_empty: null }
+      "file.created": { source: "Child.FileCreateTime", transform: [unix_s_to_utc], on_zero: null }
+      "file.modified": { source: "Child.FileModifyTime", transform: [unix_s_to_utc], on_zero: null }
+      "file.accessed": { source: "Child.FileAccessTime", transform: [unix_s_to_utc], on_zero: null }
+      "file.operation_name": { source: "Child.FileCreateOpName", on_empty: null }
+      "file.content_type": { source: "Child.FileContentType", on_empty: null }
+      "file.format": { source: "Child.FileFormat", on_empty: null }
+      "file.driver_type": { source: "Child.FileDriverType", on_empty: null }
+      "file.encrypted": { source: "Child.FileEncrypted", on_empty: null }
+      "file.io.read_bytes": { source: "Child.FileTotalRead", on_zero: 0 }
+      "file.io.write_bytes": { source: "Child.FileTotalWrite", on_zero: 0 }
+
 raw_reference:
   id_field: "Common.EventUUId"
   ordinal_base: 0

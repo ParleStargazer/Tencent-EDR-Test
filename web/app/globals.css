@@ -1343,6 +1343,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .candidate-section-heading > em { color: #496781; font-family: Consolas, monospace; font-size: 10px; font-style: normal; }
 .candidate-list { padding: 0 18px 18px; }
 .candidate-card { margin-top: 8px; border: 1px solid #b9c5d4; background: var(--panel); }
+.candidate-card.exploratory { border-style: dashed; border-color: #c8b98e; }
 .candidate-card:first-child { margin-top: 0; }
 .candidate-card > summary { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto 100px; gap: 12px; align-items: center; padding: 12px 14px; cursor: pointer; list-style: none; }
 .candidate-card > summary::-webkit-details-marker { display: none; }

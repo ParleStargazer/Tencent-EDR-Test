@@ -2,9 +2,9 @@
 
 ## 1. 实现范围
 
-已实现文件创建、打开、删除、修改和重命名五个 Windows L0 能力包。每个包包含独立命名的 Controller 和 Actor 两个 EXE；五个包共享协议、行为和控制源码，构建时直接覆盖 `samples/win.file.*` 的旧能力包。
+已实现文件创建、打开、删除、修改和重命名五个 Windows L0 能力包。每个能力在同一轮依次执行 TXT 与有效 JSON 两个子项，用于观察 EDR 对不同文件类型的采集敏感度。每个包包含独立命名的 Controller 和 Actor 两个 EXE；五个包共享协议、行为和控制源码，构建时直接覆盖 `samples/win.file.*` 的旧能力包。
 
-| 能力 | Actor 行为 | Controller 独立检验 |
+| 能力 | Actor 行为（TXT 与 JSON 各一次） | Controller 独立检验 |
 | --- | --- | --- |
 | 文件创建 | `CreateNew` 写入 8 KiB nonce 载荷并落盘 | 前不存在、后存在，大小及 MD5/SHA-256 |
 | 文件打开 | `Open + ReadWrite`，完整读取并原样回写 | 前后 MD5/SHA-256 相同，读写字节数一致 |
@@ -14,12 +14,14 @@
 
 “文件打开”不是纯只读测试。260808 导出中的“打开文件”属于 `FileWriteClose`，因此样本使用读写打开和原样回写，既形成典型可导出行为，又由本地前后哈希证明内容语义未改变。
 
+JSON 子项不是只修改扩展名：载荷本身是可解析的 JSON 对象，并包含版本、nonce、操作和定长 payload。Controller 会独立解析操作后仍存在的 JSON 文件；删除子项则在 Actor 启动前校验预置 JSON，因此无效 JSON 不会被记为本地通过。
+
 ## 2. 数据库和本地导出
 
 Controller 复用通用 SQLite Schema，无需新增专用表：
 
-- `program_instance`：每项记录 Controller 和 Actor 的 PID、父 PID、绝对路径、命令行、开始/结束时间、退出码及三种哈希；
-- `local_event`：每项写一条 `file/<operation>` 事件及结构化前后状态；
+- `program_instance`：每项记录 Controller，以及 TXT/JSON 两个 Actor 的 PID、父 PID、绝对路径、命令行、开始/结束时间、退出码及三种哈希；
+- `local_event`：每项写两条 `file/<operation>` 事件，并用 `data.subtest` 和 `data.file_extension` 区分 TXT/JSON；
 - `local_fact`：保存 BASELINE 直接引用的路径、Actor PID、发生时间、大小、哈希、读写字节数及状态断言；
 - `artifact`：保存 Actor 的 `behavior-result.json` 哈希和相对路径；
 - `cleanup_result`：记录精确临时文件路径的清理前后状态。
@@ -38,7 +40,9 @@ Controller 复用通用 SQLite Schema，无需新增专用表：
 - `baselines/windows/file_modify.yaml`
 - `baselines/windows/file_rename.yaml`
 
-强关联锚点为文件路径和 Actor 可执行路径；PID 为中等锚点；事件时间优先使用本地事实 `facts.file.occurred_at_utc`。路径、Actor 身份、操作枚举和文件大小是 required；腾讯导出支持 MD5 但少量 `FileWriteClose` 记录为空，因此 MD5 为 recommended，缺失时形成“部分通过”而不是误报整个文件能力失败。本地仍保存 SHA-1/SHA-256 供其他产品映射复用。
+强关联锚点为 JSON 文件路径和对应 Actor 可执行路径；PID 为中等锚点；事件时间使用 `facts.file.json.occurred_at_utc`。TXT 与 JSON 两项本地行为都必须成功，但云端只把 JSON 子项设为必检，避免已知不敏感的 TXT 事件拉低产品能力结论。路径、Actor 身份、操作枚举和文件大小是 required；腾讯导出支持 MD5 但少量记录为空，因此 MD5 为 recommended。本地仍保存 TXT/JSON 两套 SHA-1/SHA-256 供其他产品映射复用。
+
+腾讯映射保留已知的 `File/FileRename` 精确语义，同时增加不依赖 `Action.Name` 的候选发现路由。因此 `InjectHook/MoveFileExW` 或后续未知名称的记录也会先进入时间窗，再依据本地源/目标路径、Actor 路径/PID和时间距离评分；不包含固定 PID、固定目录或固定 nonce，避免针对单次日志过拟合。
 
 ## 4. 构建和验收
 
@@ -47,6 +51,6 @@ pwsh -NoProfile -File scripts/Build-FileManipulationSamples.ps1
 pwsh -NoProfile -File scripts/Test-FileManipulationSamples.ps1
 ```
 
-端到端脚本会在同一轮串行执行五项能力，检查 SQLite 导出的 5 项能力、10 个程序实例、5 条事件、全部清理和清单声明事实，再生成厂商无关云端夹具，通过五份 BASELINE 做离线比较。夹具只验证框架闭环，不代表真实 EDR 检出。
+端到端脚本会在同一轮串行执行五项能力，检查 SQLite 导出的 5 项能力、15 个程序实例、10 条事件、10 项清理和清单声明事实，再从每项 JSON 子测试生成厂商无关与腾讯格式云端夹具，通过五份 BASELINE 做离线比较。重命名腾讯夹具使用 `InjectHook/MoveFileExW`，防止该真实事件类型再次被路由遗漏。夹具只验证框架闭环，不代表真实 EDR 检出。
 
 前端和 API 无需为能力写死新接口：构建后的包由 `/api/capabilities` 自动发现，BASELINE 与映射也按目录自动发现；测试页和离线比较页会复用现有 SQLite 证据、完整候选 JSON 和字段高亮组件。

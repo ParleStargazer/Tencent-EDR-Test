@@ -139,6 +139,9 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /JsonCodeViewer/);
   assert.match(livePage, /correlation_score/);
   assert.match(livePage, /time_distance_ms/);
+  assert.match(livePage, /低置信度排查/);
+  assert.match(livePage, /事件类型与 Action 只作提示/);
+  assert.match(livePage, /eligible_for_validation/);
   assert.match(livePage, /应包含的测试标记/);
   assert.match(livePage, /读取到的 PID/);
   assert.match(livePage, /总体结论/);

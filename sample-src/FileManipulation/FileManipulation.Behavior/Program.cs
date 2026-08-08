@@ -68,7 +68,7 @@ internal static class Program
             case "create":
             {
                 if (before.Exists) throw new IOException($"创建测试要求文件事先不存在：{path}");
-                var payload = Payload(nonce, operation, payloadSize);
+                var payload = Payload(nonce, operation, payloadSize, path);
                 occurred = DateTimeOffset.UtcNow;
                 using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
                 stream.Write(payload);
@@ -97,7 +97,7 @@ internal static class Program
             case "modify":
             {
                 if (!before.Exists) throw new FileNotFoundException("修改测试要求文件事先存在。", path);
-                var payload = Payload(nonce, operation, payloadSize);
+                var payload = Payload(nonce, operation, payloadSize, path);
                 occurred = DateTimeOffset.UtcNow;
                 using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
                 stream.Write(payload);
@@ -158,8 +158,15 @@ internal static class Program
         };
     }
 
-    private static byte[] Payload(string nonce, string operation, int size)
+    private static byte[] Payload(string nonce, string operation, int size, string path)
     {
+        if (string.Equals(Path.GetExtension(path), ".json", StringComparison.OrdinalIgnoreCase))
+        {
+            var prefix = Encoding.UTF8.GetBytes($"{{\"schema_version\":\"1.0\",\"nonce\":\"{nonce}\",\"operation\":\"{operation}\",\"payload\":\"");
+            var suffix = Encoding.UTF8.GetBytes("\"}");
+            if (prefix.Length + suffix.Length > size) throw new ArgumentOutOfRangeException(nameof(size), "JSON 载荷空间不足。");
+            return prefix.Concat(Enumerable.Repeat((byte)'J', size - prefix.Length - suffix.Length)).Concat(suffix).ToArray();
+        }
         var marker = Encoding.UTF8.GetBytes($"EDRTEST|{nonce}|FILE_{operation.ToUpperInvariant()}|");
         return Enumerable.Range(0, size).Select(index => marker[index % marker.Length]).ToArray();
     }

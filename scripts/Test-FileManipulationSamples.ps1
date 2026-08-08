@@ -76,9 +76,9 @@ $invalidEvidenceRefs = @($localRun.local_events | ForEach-Object {
 $syntheticCloud = @()
 $syntheticTencent = @()
 foreach ($capability in $localRun.capabilities) {
-    $event = $localRun.local_events | Where-Object { $_.case_run_id -eq $capability.case_run_id } | Select-Object -First 1
+    $event = $localRun.local_events | Where-Object { $_.case_run_id -eq $capability.case_run_id -and $_.data.subtest -eq "json" } | Select-Object -First 1
     $actor = $event.data.actor
-    $actorProgram = $localRun.programs | Where-Object { $_.case_run_id -eq $capability.case_run_id -and $_.role -eq "actor" } | Select-Object -First 1
+    $actorProgram = $localRun.programs | Where-Object { $_.program_instance_id -eq $event.actor_program_id } | Select-Object -First 1
     $facts = @{}
     $localRun.local_facts | Where-Object { $_.case_run_id -eq $capability.case_run_id } | ForEach-Object {
         $facts[$_.key] = $_.value
@@ -123,23 +123,23 @@ foreach ($capability in $localRun.capabilities) {
         file_name = [System.IO.Path]::GetFileName($filePath)
         file_size = $size
         file_md5 = $md5
-        file_sha256 = if ($event.event_action -eq "create") { $facts["file.after.sha256"] } else { $null }
+        file_sha256 = if ($event.event_action -eq "create") { $facts["file.json.after.sha256"] } else { $null }
         operation_name = $canonicalOperationName
-        read_bytes = $facts["file.open.bytes_read"]
-        write_bytes = if ($event.event_action -eq "modify") { $facts["file.modify.bytes_written"] } else { $facts["file.open.bytes_written"] }
+        read_bytes = $facts["file.json.open.bytes_read"]
+        write_bytes = if ($event.event_action -eq "modify") { $facts["file.json.modify.bytes_written"] } else { $facts["file.json.open.bytes_written"] }
     }
     $actionName = if ($event.event_action -in @("create", "open", "modify")) {
         "FileWriteClose"
     } elseif ($event.event_action -eq "delete") {
         "FileDelete"
     } else {
-        "FileRename"
+        "MoveFileExW"
     }
     $syntheticTencent += [ordered]@{
         OS = "Windows"
-        '@table' = "FileEvents"
+        '@table' = if ($event.event_action -eq "rename") { "DirOperationEvents" } else { "FileEvents" }
         '@timestamp' = $event.observed_at_utc
-        'Action.Type' = "File"
+        'Action.Type' = if ($event.event_action -eq "rename") { "InjectHook" } else { "File" }
         'Action.Name' = $actionName
         'Child.FileCreateOpName' = $tencentOperationName
         'Common.EventUUId' = $event.local_event_id
@@ -163,8 +163,8 @@ foreach ($capability in $localRun.capabilities) {
         'Child.FileName' = [System.IO.Path]::GetFileName($filePath)
         'Child.FileSize' = $size
         'Child.FileMd5' = $md5
-        'Child.FileTotalRead' = $facts["file.open.bytes_read"]
-        'Child.FileTotalWrite' = if ($event.event_action -eq "modify") { $facts["file.modify.bytes_written"] } else { $facts["file.open.bytes_written"] }
+        'Child.FileTotalRead' = $facts["file.json.open.bytes_read"]
+        'Child.FileTotalWrite' = if ($event.event_action -eq "modify") { $facts["file.json.modify.bytes_written"] } else { $facts["file.json.open.bytes_written"] }
     }
 }
 $syntheticCloudPath = Join-Path $OutputRoot "synthetic-cloud.file-manipulation.json"
@@ -211,18 +211,20 @@ $assertions = [ordered]@{
     run_completed = $localRun.run.status -eq "COMPLETED"
     capability_count_is_5 = @($localRun.capabilities).Count -eq 5
     all_capabilities_local_pass = $failedCapabilities.Count -eq 0
-    program_count_is_10 = @($localRun.programs).Count -eq 10
+    program_count_is_15 = @($localRun.programs).Count -eq 15
     controller_count_is_5 = @($localRun.programs | Where-Object { $_.role -eq "controller" }).Count -eq 5
-    actor_count_is_5 = @($localRun.programs | Where-Object { $_.role -eq "actor" }).Count -eq 5
-    event_count_is_5 = @($localRun.local_events).Count -eq 5
+    actor_count_is_10 = @($localRun.programs | Where-Object { $_.role -eq "actor" }).Count -eq 10
+    event_count_is_10 = @($localRun.local_events).Count -eq 10
+    txt_subtest_count_is_5 = @($localRun.local_events | Where-Object { $_.data.subtest -eq "txt" -and $_.data.file_extension -eq ".txt" }).Count -eq 5
+    json_subtest_count_is_5 = @($localRun.local_events | Where-Object { $_.data.subtest -eq "json" -and $_.data.file_extension -eq ".json" }).Count -eq 5
     event_actions_complete = (Compare-Object $expectedActions $actualActions).Count -eq 0
     all_events_high_confidence = @($localRun.local_events | Where-Object { $_.confidence -ne "high" }).Count -eq 0
-    cleanup_count_is_5 = @($localRun.cleanup_results).Count -eq 5
+    cleanup_count_is_10 = @($localRun.cleanup_results).Count -eq 10
     all_cleanup_succeeded = $failedCleanup.Count -eq 0
-    evidence_artifact_count_is_5 = @($localRun.artifacts).Count -eq 5
+    evidence_artifact_count_is_10 = @($localRun.artifacts).Count -eq 10
     all_event_evidence_refs_resolve = $invalidEvidenceRefs.Count -eq 0
     nonce_fact_count_is_5 = @($localRun.local_facts | Where-Object { $_.key -eq "correlation.nonce" }).Count -eq 5
-    occurred_time_fact_count_is_5 = @($localRun.local_facts | Where-Object { $_.key -eq "file.occurred_at_utc" }).Count -eq 5
+    occurred_time_fact_count_is_10 = @($localRun.local_facts | Where-Object { $_.key -match '^file\.(txt|json)\.occurred_at_utc$' }).Count -eq 10
     all_manifest_expected_facts_present = $missingExpectedFacts.Count -eq 0
     synthetic_compare_exit_code_is_0 = $comparisonExitCode -eq 0
     synthetic_compare_pass_count_is_5 = $null -ne $validation -and $validation.summary.pass -eq 5

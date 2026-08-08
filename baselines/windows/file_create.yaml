@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.file.create
-version: "0.1.0"
+version: "0.2.0"
 title: Windows 文件创建遥测
-description: 验证 Actor 创建唯一标记文件后，云端是否存在路径、进程、大小及 MD5 一致的文件创建事件。
+description: 同轮执行 TXT 与有效 JSON 两个创建子项；本地验证两者，云端以更易触发遥测的 JSON 子项作为必检事件。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,42 +10,45 @@ platform:
 risk_level: L0
 capability:
   id: win.file.create
-  version: "0.1.0"
+  version: "0.2.0"
   parameters: { payload_size: 8192, post_operation_hold_ms: 1500 }
 local_requirements:
   - { field: facts.file.create_succeeded, operator: equals, expected: true }
-  - { field: facts.file.path, operator: present }
-  - { field: facts.file.after.size_bytes, operator: present }
-  - { field: facts.file.after.md5, operator: present }
-  - { field: programs.actor.pid, operator: present }
+  - { field: facts.file.txt.create_succeeded, operator: equals, expected: true }
+  - { field: facts.file.json.create_succeeded, operator: equals, expected: true }
+  - { field: facts.file.json.extension, operator: equals, expected: ".json" }
+  - { field: facts.file.json.path, operator: present }
+  - { field: facts.file.json.after.size_bytes, operator: present }
+  - { field: facts.file.json.after.md5, operator: present }
+  - { field: facts.file.json.actor_pid, operator: present }
 correlation:
   time_before_seconds: 60
   time_after_seconds: 300
   anchors:
-    - { local_field: facts.file.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
-    - { local_field: programs.actor.executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
-    - { local_field: programs.actor.pid, cloud_field: process.pid, strength: medium }
+    - { local_field: facts.file.json.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.file.json.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.file.json.actor_pid, cloud_field: process.pid, strength: medium }
 cloud_expectations:
-  - id: file-create-event
+  - id: file-create-json-event
     event_type: file
     event_actions: [create]
     cardinality: { min: 1, max: 5 }
     correlation:
-      time_from_local: facts.file.occurred_at_utc
+      time_from_local: facts.file.json.occurred_at_utc
       anchors:
-        - { local_field: facts.file.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
-        - { local_field: programs.actor.pid, cloud_field: process.pid, strength: medium }
+        - { local_field: facts.file.json.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.file.json.actor_pid, cloud_field: process.pid, strength: medium }
     assertions:
-      - { field: file.path, operator: equals, expected_from_local: facts.file.path, severity: required, normalizers: [windows_path] }
-      - { field: process.pid, operator: equals, expected_from_local: programs.actor.pid, severity: required }
-      - { field: process.executable, operator: equals, expected_from_local: programs.actor.executable, severity: required, normalizers: [windows_path] }
-      - { field: file.size, operator: equals, expected_from_local: facts.file.after.size_bytes, severity: required }
-      - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.after.md5, severity: recommended, normalizers: [lowercase] }
+      - { field: file.path, operator: equals, expected_from_local: facts.file.json.path, severity: required, normalizers: [windows_path] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.file.json.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.file.json.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: file.size, operator: equals, expected_from_local: facts.file.json.after.size_bytes, severity: required }
+      - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.json.after.md5, severity: recommended, normalizers: [lowercase] }
       - { field: file.operation_name, operator: equals, expected: create_new, severity: recommended }
       - { field: user.name, operator: present, severity: recommended }
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: 按 260808210300run 完整腾讯 EDR 导出字段重建基准。
+  change_reason: 增加有效 JSON 子项并将其设为云端必检锚点；TXT 子项保留作产品敏感度对照。
   references: [Tencent EDR FileEvents / FileWriteClose / 新建文件]

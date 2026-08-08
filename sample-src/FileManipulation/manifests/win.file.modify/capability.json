@@ -1,10 +1,10 @@
 {
   "schema_version": "1.1",
   "capability_id": "win.file.modify",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "display_name_zh": "文件修改",
   "display_name_en": "File Modification",
-  "description": "Actor 以 Create 覆盖写既有 nonce 文件，Controller 独立校验内容哈希变化、大小与写入字节数。",
+  "description": "Actor 分别覆盖写既有 TXT 与有效 JSON nonce 文件，Controller 独立校验内容哈希变化、大小与写入字节数。",
   "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
   "risk_level": "L0",
   "required_privilege": "standard_user",
@@ -17,7 +17,10 @@
   "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
   "network": { "required": false },
   "expected_fact_keys": [
-    "file.modify_succeeded", "file.occurred_at_utc", "file.actor_pid", "file.path",
-    "file.before.md5", "file.after.md5", "file.after.size_bytes", "file.modify.bytes_written", "correlation.nonce"
+    "file.modify_succeeded", "correlation.nonce",
+    "file.txt.modify_succeeded", "file.txt.occurred_at_utc", "file.txt.actor_pid", "file.txt.actor_executable", "file.txt.extension", "file.txt.path",
+    "file.txt.before.md5", "file.txt.after.md5", "file.txt.after.size_bytes", "file.txt.modify.bytes_written",
+    "file.json.modify_succeeded", "file.json.occurred_at_utc", "file.json.actor_pid", "file.json.actor_executable", "file.json.extension", "file.json.path",
+    "file.json.before.md5", "file.json.after.md5", "file.json.after.size_bytes", "file.json.modify.bytes_written"
   ]
 }

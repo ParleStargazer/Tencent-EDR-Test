@@ -163,11 +163,14 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
       `sample-src/FileManipulation/manifests/win.file.${operation}/capability.json`,
     );
     assert.equal(manifest.capability_id, `win.file.${operation}`);
-    assert.equal(manifest.version, "0.1.0");
+    assert.equal(manifest.version, "0.2.0");
     assert.equal(manifest.risk_level, "L0");
     assert.deepEqual(manifest.participants.map((item) => item.role), ["actor"]);
     assert.ok(manifest.expected_fact_keys.includes(`file.${operation}_succeeded`));
-    assert.ok(manifest.expected_fact_keys.includes("file.occurred_at_utc"));
+    assert.ok(manifest.expected_fact_keys.includes(`file.txt.${operation}_succeeded`));
+    assert.ok(manifest.expected_fact_keys.includes(`file.json.${operation}_succeeded`));
+    assert.ok(manifest.expected_fact_keys.includes("file.json.occurred_at_utc"));
+    assert.ok(manifest.expected_fact_keys.includes("file.json.extension"));
     assert.match(mapping, new RegExp(`route_id: file-${operation}`));
   }
 
@@ -189,6 +192,8 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
   assert.match(mapping, /source: "Child\.OldFilePath"/);
   assert.match(mapping, /source: "Child\.FileTotalRead"/);
   assert.match(mapping, /source: "Child\.FileTotalWrite"/);
+  assert.match(mapping, /route_id: telemetry-candidate-discovery/);
+  assert.match(mapping, /"event\.action": \{ source: "Action\.Name", on_empty: unknown \}/);
 });
 
 test("260808 腾讯 EDR 全字段目录完整、脱敏且可复现", async () => {

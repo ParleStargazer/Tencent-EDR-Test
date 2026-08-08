@@ -220,6 +220,14 @@ public static class Program
         Assert(inferredMiss["capabilities"]?[0]?["export_coverage"]?.GetValue<string>() == "inferred", "时间窗证据应标记为 inferred。");
         var missingEventRequirement = inferredMiss["capabilities"]?[0]?["baseline_requirements"]?.AsArray().Single(value => value?["field"]?.GetValue<string>() == "event.count");
         Assert(missingEventRequirement?["status"]?.GetValue<string>() == "failed" && missingEventRequirement["actual"]?.GetValue<int>() == 0, "事件缺失应显示为“至少 1 条，实际 0 条”。");
+        var exploratoryCandidates = inferredMiss["capabilities"]?[0]?["edr_candidates"]?.AsArray()
+            ?? throw new InvalidOperationException("低置信度候选结果缺少 edr_candidates。");
+        Assert(exploratoryCandidates.Count == 2
+            && exploratoryCandidates.All(value => value?["eligible_for_validation"]?.GetValue<bool>() == false),
+            "未命中强本地锚点时仍应保留时间相近的低置信度 EDR JSON 块，但不能计为可靠关联。");
+        Assert(exploratoryCandidates[0]?["baseline_matches"]?.AsArray().Any(value => value?["status"]?.GetValue<string>() == "passed") == true
+            && exploratoryCandidates[0]?["baseline_matches"]?.AsArray().Any(value => value?["status"]?.GetValue<string>() == "failed") == true,
+            "低置信度候选也必须继续逐字段比较，不能因部分 EDR 字段不匹配而提前停止。");
 
         var inspect = InspectService.Inspect(result.DatabasePath);
         Assert(inspect["status"]?.GetValue<string>() == "COMPLETED", "Inspect 应看到封存终态。");
@@ -341,12 +349,15 @@ public static class Program
         Assert(validation["summary"]?["pass"]?.GetValue<int>() == 1, "两个同类子项应分别关联并通过。");
         var candidates = validation["capabilities"]?[0]?["edr_candidates"]?.AsArray()
             ?? throw new InvalidOperationException("多子项结果缺少候选事件。");
-        Assert(candidates.Count == 2, "每个子项只能保留匹配自身路径的候选。");
-        Assert(candidates[0]?["expectation_id"]?.GetValue<string>() == "first-event"
-            && candidates[0]?["event_id"]?.GetValue<string>() == "first-event"
-            && candidates[1]?["expectation_id"]?.GetValue<string>() == "second-event"
-            && candidates[1]?["event_id"]?.GetValue<string>() == "second-event", "子项不能互相替代或误排序。");
-        Assert(candidates.All(value => value?["time_distance_ms"]?.GetValue<long>() == 0), "子项应使用自己的本地发生时间计算距离。");
+        Assert(candidates.Count == 4, "每个子项应保留自身强匹配和另一条低置信度候选供排查。");
+        var eligibleCandidates = candidates.Where(value => value?["eligible_for_validation"]?.GetValue<bool>() == true).ToArray();
+        Assert(eligibleCandidates.Length == 2
+            && eligibleCandidates.Any(value => value?["expectation_id"]?.GetValue<string>() == "first-event" && value?["event_id"]?.GetValue<string>() == "first-event")
+            && eligibleCandidates.Any(value => value?["expectation_id"]?.GetValue<string>() == "second-event" && value?["event_id"]?.GetValue<string>() == "second-event"),
+            "每个子项只能让命中自身本地路径的事件进入自动判定。");
+        Assert(candidates.Count(value => value?["eligible_for_validation"]?.GetValue<bool>() == false) == 2,
+            "未命中子项路径的事件仍应作为低置信度 JSON 块展示。");
+        Assert(eligibleCandidates.All(value => value?["time_distance_ms"]?.GetValue<long>() == 0), "子项应使用自己的本地发生时间计算强匹配候选的距离。");
 
         var oldVersionLocal = local.DeepClone().AsObject();
         oldVersionLocal["capabilities"]![0]!["capability_version"] = "0.1.0";

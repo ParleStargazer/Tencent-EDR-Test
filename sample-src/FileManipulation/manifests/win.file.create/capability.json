@@ -1,10 +1,10 @@
 {
   "schema_version": "1.1",
   "capability_id": "win.file.create",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "display_name_zh": "文件创建",
   "display_name_en": "File Creation",
-  "description": "Actor 使用 CreateNew 创建唯一 nonce 文件，Controller 独立校验文件存在、大小与哈希。",
+  "description": "Actor 分别使用 CreateNew 创建 TXT 与有效 JSON 两个唯一 nonce 文件，Controller 独立校验文件存在、大小与哈希。",
   "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
   "risk_level": "L0",
   "required_privilege": "standard_user",
@@ -17,7 +17,10 @@
   "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
   "network": { "required": false },
   "expected_fact_keys": [
-    "file.create_succeeded", "file.occurred_at_utc", "file.actor_pid", "file.path",
-    "file.after.exists", "file.after.size_bytes", "file.after.md5", "file.after.sha256", "correlation.nonce"
+    "file.create_succeeded", "correlation.nonce",
+    "file.txt.create_succeeded", "file.txt.occurred_at_utc", "file.txt.actor_pid", "file.txt.actor_executable", "file.txt.extension", "file.txt.path",
+    "file.txt.after.exists", "file.txt.after.size_bytes", "file.txt.after.md5", "file.txt.after.sha256",
+    "file.json.create_succeeded", "file.json.occurred_at_utc", "file.json.actor_pid", "file.json.actor_executable", "file.json.extension", "file.json.path",
+    "file.json.after.exists", "file.json.after.size_bytes", "file.json.after.md5", "file.json.after.sha256"
   ]
 }

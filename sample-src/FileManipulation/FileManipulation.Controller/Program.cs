@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using EdrTest;
 
@@ -8,6 +9,8 @@ namespace FileManipulation;
 
 internal static class Program
 {
+    private static readonly string[] Subtests = ["txt", "json"];
+
     private static readonly IReadOnlyDictionary<string, string> Operations = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["win.file.create"] = "create",
@@ -21,7 +24,7 @@ internal static class Program
     {
         ControllerInvocation? invocation = null;
         RunDatabase? database = null;
-        ExecutionState? state = null;
+        var states = new List<ExecutionState>();
         var stopwatch = Stopwatch.StartNew();
         try
         {
@@ -36,31 +39,59 @@ internal static class Program
             database.AddProgram(ProgramObservation.CaptureCurrent(invocation.CaseRunId, "controller"));
             var parameters = JsonNode.Parse(File.ReadAllText(invocation.ParametersPath))?.AsObject()
                 ?? throw new InvalidDataException("参数文件不是 JSON 对象。");
-            state = Execute(invocation, package, operation, parameters);
-            var actor = CreateProgram(invocation, state);
-            database.AddProgram(actor);
+            var localSucceeded = true;
+            string? firstError = null;
+            foreach (var (subtest, instanceIndex) in Subtests.Select((value, index) => (value, index)))
+            {
+                var state = Execute(invocation, package, operation, subtest, instanceIndex, parameters);
+                states.Add(state);
+                var actor = CreateProgram(invocation, state);
+                database.AddProgram(actor);
 
-            var verified = VerifyOutcome(operation, state);
-            var localSucceeded = state.Result.Succeeded && verified;
-            var evidence = CreateEvidenceArtifact(invocation, state.ResultPath);
-            database.AddArtifact(evidence);
-            var localEvent = CreateEvent(invocation, operation, stopwatch, state.Result, actor, evidence.ArtifactId);
-            database.AddEvent(localEvent);
-            AddFacts(database, invocation, operation, state.Result, localEvent.LocalEventId, actor, localSucceeded);
+                var verified = VerifyOutcome(operation, state);
+                var subtestSucceeded = state.Result.Succeeded && verified;
+                localSucceeded &= subtestSucceeded;
+                firstError ??= subtestSucceeded ? null : state.Result.Error ?? $"{subtest.ToUpperInvariant()} 子项的独立观察未确认预期文件状态。";
+                var evidence = CreateEvidenceArtifact(invocation, state);
+                database.AddArtifact(evidence);
+                var localEvent = CreateEvent(invocation, operation, stopwatch, state, actor, evidence.ArtifactId);
+                database.AddEvent(localEvent);
+                AddFacts(database, invocation, operation, state, localEvent.LocalEventId, actor, subtestSucceeded);
+            }
 
-            var cleanup = Cleanup(invocation, state);
-            database.AddCleanup(cleanup);
-            if (!string.Equals(cleanup.Status, "succeeded", StringComparison.Ordinal))
+            database.AddFact(new LocalFactObservation
+            {
+                CaseRunId = invocation.CaseRunId,
+                Key = $"file.{operation}_succeeded",
+                Value = JsonValue.Create(localSucceeded),
+                ObservedAtUtc = DateTimeOffset.UtcNow,
+                Source = "file_manipulation_controller",
+                Confidence = "high",
+            });
+            database.AddFact(new LocalFactObservation
+            {
+                CaseRunId = invocation.CaseRunId,
+                Key = "correlation.nonce",
+                Value = JsonValue.Create(invocation.Nonce),
+                ObservedAtUtc = DateTimeOffset.UtcNow,
+                Source = "file_manipulation_controller",
+                Confidence = "high",
+            });
+
+            var cleanups = states.Select(state => Cleanup(invocation, state)).ToArray();
+            foreach (var cleanup in cleanups) database.AddCleanup(cleanup);
+            var failedCleanup = cleanups.FirstOrDefault(value => !string.Equals(value.Status, "succeeded", StringComparison.Ordinal));
+            if (failedCleanup is not null)
             {
                 database.CompleteCapability(invocation.CaseRunId, "CLEANUP_ERROR", DateTimeOffset.UtcNow,
-                    stopwatch.ElapsedMilliseconds, "FILE_CLEANUP_FAILED", cleanup.ErrorMessage);
-                WriteStatus("CLEANUP_ERROR", package.Manifest.CapabilityId, operation, cleanup.ErrorMessage);
+                    stopwatch.ElapsedMilliseconds, "FILE_CLEANUP_FAILED", failedCleanup.ErrorMessage);
+                WriteStatus("CLEANUP_ERROR", package.Manifest.CapabilityId, operation, failedCleanup.ErrorMessage);
                 return 30;
             }
 
             var status = localSucceeded ? "LOCAL_PASS" : "SAMPLE_ERROR";
-            var errorCode = localSucceeded ? null : verified ? "BEHAVIOR_OPERATION_FAILED" : "INDEPENDENT_OBSERVATION_FAILED";
-            var errorMessage = localSucceeded ? null : state.Result.Error ?? "Controller 独立观察未确认预期文件状态。";
+            var errorCode = localSucceeded ? null : "FILE_SUBTEST_FAILED";
+            var errorMessage = localSucceeded ? null : firstError;
             database.CompleteCapability(invocation.CaseRunId, status, DateTimeOffset.UtcNow,
                 stopwatch.ElapsedMilliseconds, errorCode, errorMessage);
             WriteStatus(status, package.Manifest.CapabilityId, operation, errorMessage);
@@ -71,12 +102,15 @@ internal static class Program
             Console.Error.WriteLine(exception);
             if (invocation is not null && database is not null)
             {
-                var cleanup = state is null ? EmptyCleanup(invocation) : Cleanup(invocation, state);
+                CleanupObservation[] cleanups = states.Count == 0
+                    ? [EmptyCleanup(invocation)]
+                    : states.Select(state => Cleanup(invocation, state)).ToArray();
                 try
                 {
-                    database.AddCleanup(cleanup);
+                    foreach (var cleanup in cleanups) database.AddCleanup(cleanup);
+                    var cleanupSucceeded = cleanups.All(value => value.Status == "succeeded");
                     database.CompleteCapability(invocation.CaseRunId,
-                        cleanup.Status == "succeeded" ? "SAMPLE_ERROR" : "CLEANUP_ERROR",
+                        cleanupSucceeded ? "SAMPLE_ERROR" : "CLEANUP_ERROR",
                         DateTimeOffset.UtcNow, stopwatch.ElapsedMilliseconds,
                         "FILE_MANIPULATION_CONTROLLER_ERROR", exception.Message);
                 }
@@ -84,13 +118,13 @@ internal static class Program
                 {
                     Console.Error.WriteLine(databaseException);
                 }
-                return cleanup.Status == "succeeded" ? 20 : 30;
+                return cleanups.All(value => value.Status == "succeeded") ? 20 : 30;
             }
             return 20;
         }
         finally
         {
-            state?.Dispose();
+            foreach (var state in states) state.Dispose();
             database?.Dispose();
         }
     }
@@ -99,16 +133,18 @@ internal static class Program
         ControllerInvocation invocation,
         CapabilityPackage package,
         string operation,
+        string subtest,
+        int instanceIndex,
         JsonObject parameters)
     {
         var actorDefinition = package.Manifest.Participants.Single(participant => participant.Role == "actor");
         var actorPath = package.ResolveProgram(actorDefinition.Executable);
         var tag = new string(invocation.Nonce.Where(char.IsLetterOrDigit).Take(12).ToArray()).ToLowerInvariant();
-        var path = Path.Combine(invocation.WorkDir, $"edrtest_{tag}_file_{operation}.txt");
+        var path = Path.Combine(invocation.WorkDir, $"edrtest_{tag}_file_{operation}.{subtest}");
         var destination = operation == "rename"
-            ? Path.Combine(invocation.WorkDir, $"edrtest_{tag}_file_renamed.txt")
+            ? Path.Combine(invocation.WorkDir, $"edrtest_{tag}_file_renamed.{subtest}")
             : null;
-        var resultPath = Path.Combine(invocation.WorkDir, "behavior-result.json");
+        var resultPath = Path.Combine(invocation.WorkDir, $"behavior-result-{subtest}.json");
         Directory.CreateDirectory(invocation.WorkDir);
 
         if (File.Exists(path) || destination is not null && File.Exists(destination))
@@ -120,9 +156,12 @@ internal static class Program
         var holdMs = parameters["post_operation_hold_ms"]?.GetValue<int>() ?? 1_500;
         if (operation != "create")
         {
-            File.WriteAllBytes(path, Payload(invocation.Nonce, "seed", payloadSize));
-            using var seed = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
-            seed.Flush(flushToDisk: true);
+            File.WriteAllBytes(path, Payload(invocation.Nonce, "seed", payloadSize, subtest));
+            using (var seed = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
+            {
+                seed.Flush(flushToDisk: true);
+            }
+            if (subtest == "json" && !IsValidJson(path)) throw new InvalidDataException("Controller 生成的 JSON 预置文件无效。");
         }
 
         var arguments = new List<string>
@@ -147,7 +186,7 @@ internal static class Program
             process.Kill(entireProcessTree: true);
             throw new TimeoutException($"等待文件行为 Actor 退出超时：PID {process.Id}");
         }
-        return new ExecutionState(actorPath, [.. arguments], process, resultPath, path, destination, result);
+        return new ExecutionState(subtest, instanceIndex, actorPath, [.. arguments], process, resultPath, path, destination, result);
     }
 
     private static ProgramObservation CreateProgram(ControllerInvocation invocation, ExecutionState state)
@@ -172,6 +211,8 @@ internal static class Program
         {
             CaseRunId = invocation.CaseRunId,
             Role = "actor",
+            InstanceName = state.Subtest,
+            InstanceIndex = state.InstanceIndex,
             ExecutablePath = state.ActorPath,
             Sha256 = Hashing.FileSha256(state.ActorPath),
             Sha1 = Hashing.FileSha1(state.ActorPath),
@@ -196,6 +237,7 @@ internal static class Program
             {
                 ["captured_by"] = "FileManipulation.Controller",
                 ["nonce_in_command_line"] = true,
+                ["subtest"] = state.Subtest,
             },
         };
     }
@@ -204,14 +246,17 @@ internal static class Program
         ControllerInvocation invocation,
         string operation,
         Stopwatch stopwatch,
-        BehaviorResult result,
+        ExecutionState state,
         ProgramObservation actor,
         string evidenceArtifactId)
     {
+        var result = state.Result;
         var data = new JsonObject
         {
             ["kind"] = "file",
             ["operation"] = operation,
+            ["subtest"] = state.Subtest,
+            ["file_extension"] = "." + state.Subtest,
             ["actor"] = ProcessReference(actor),
             ["before"] = FileState(result.Before),
             ["after"] = FileState(result.After),
@@ -253,6 +298,7 @@ internal static class Program
         return new LocalEventObservation
         {
             CaseRunId = invocation.CaseRunId,
+            Sequence = state.InstanceIndex + 1,
             EventType = "file",
             EventAction = operation,
             Nonce = invocation.Nonce,
@@ -277,60 +323,65 @@ internal static class Program
         RunDatabase database,
         ControllerInvocation invocation,
         string operation,
-        BehaviorResult result,
+        ExecutionState state,
         string eventId,
         ProgramObservation actor,
         bool succeeded)
     {
+        var result = state.Result;
+        var prefix = $"file.{state.Subtest}";
         var values = new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
         {
-            [$"file.{operation}_succeeded"] = JsonValue.Create(succeeded),
-            ["file.occurred_at_utc"] = JsonValue.Create(Values.Utc(result.OccurredAtUtc)),
-            ["file.actor_pid"] = JsonValue.Create(actor.Pid),
-            ["correlation.nonce"] = JsonValue.Create(invocation.Nonce),
+            [$"{prefix}.{operation}_succeeded"] = JsonValue.Create(succeeded),
+            [$"{prefix}.occurred_at_utc"] = JsonValue.Create(Values.Utc(result.OccurredAtUtc)),
+            [$"{prefix}.actor_pid"] = JsonValue.Create(actor.Pid),
+            [$"{prefix}.actor_executable"] = JsonValue.Create(actor.ExecutablePath),
+            [$"{prefix}.actor_command_line"] = JsonValue.Create(actor.CommandLine),
+            [$"{prefix}.extension"] = JsonValue.Create("." + state.Subtest),
+            [$"{prefix}.nonce"] = JsonValue.Create(invocation.Nonce),
         };
         if (operation == "rename")
         {
-            values["file.source_path"] = JsonValue.Create(result.SourcePath);
-            values["file.destination_path"] = JsonValue.Create(result.DestinationPath);
-            values["file.before.md5"] = JsonValue.Create(result.Before.Md5);
-            values["file.after.md5"] = JsonValue.Create(result.After.Md5);
-            values["file.after.size_bytes"] = JsonValue.Create(result.After.SizeBytes);
-            values["file.source_after.exists"] = JsonValue.Create(result.SourceAfter?.Exists);
-            values["file.destination_before.exists"] = JsonValue.Create(result.DestinationBefore?.Exists);
+            values[$"{prefix}.source_path"] = JsonValue.Create(result.SourcePath);
+            values[$"{prefix}.destination_path"] = JsonValue.Create(result.DestinationPath);
+            values[$"{prefix}.before.md5"] = JsonValue.Create(result.Before.Md5);
+            values[$"{prefix}.after.md5"] = JsonValue.Create(result.After.Md5);
+            values[$"{prefix}.after.size_bytes"] = JsonValue.Create(result.After.SizeBytes);
+            values[$"{prefix}.source_after.exists"] = JsonValue.Create(result.SourceAfter?.Exists);
+            values[$"{prefix}.destination_before.exists"] = JsonValue.Create(result.DestinationBefore?.Exists);
         }
         else
         {
-            values["file.path"] = JsonValue.Create(result.Path);
+            values[$"{prefix}.path"] = JsonValue.Create(result.Path);
         }
 
         switch (operation)
         {
             case "create":
-                values["file.after.exists"] = JsonValue.Create(result.After.Exists);
-                values["file.after.size_bytes"] = JsonValue.Create(result.After.SizeBytes);
-                values["file.after.md5"] = JsonValue.Create(result.After.Md5);
-                values["file.after.sha256"] = JsonValue.Create(result.After.Sha256);
+                values[$"{prefix}.after.exists"] = JsonValue.Create(result.After.Exists);
+                values[$"{prefix}.after.size_bytes"] = JsonValue.Create(result.After.SizeBytes);
+                values[$"{prefix}.after.md5"] = JsonValue.Create(result.After.Md5);
+                values[$"{prefix}.after.sha256"] = JsonValue.Create(result.After.Sha256);
                 break;
             case "open":
-                values["file.before.md5"] = JsonValue.Create(result.Before.Md5);
-                values["file.after.md5"] = JsonValue.Create(result.After.Md5);
-                values["file.after.size_bytes"] = JsonValue.Create(result.After.SizeBytes);
-                values["file.open.content_unchanged"] = JsonValue.Create(result.Before.Md5 == result.After.Md5);
-                values["file.open.bytes_read"] = JsonValue.Create(result.BytesRead);
-                values["file.open.bytes_written"] = JsonValue.Create(result.BytesWritten);
+                values[$"{prefix}.before.md5"] = JsonValue.Create(result.Before.Md5);
+                values[$"{prefix}.after.md5"] = JsonValue.Create(result.After.Md5);
+                values[$"{prefix}.after.size_bytes"] = JsonValue.Create(result.After.SizeBytes);
+                values[$"{prefix}.open.content_unchanged"] = JsonValue.Create(result.Before.Md5 == result.After.Md5);
+                values[$"{prefix}.open.bytes_read"] = JsonValue.Create(result.BytesRead);
+                values[$"{prefix}.open.bytes_written"] = JsonValue.Create(result.BytesWritten);
                 break;
             case "delete":
-                values["file.before.exists"] = JsonValue.Create(result.Before.Exists);
-                values["file.before.size_bytes"] = JsonValue.Create(result.Before.SizeBytes);
-                values["file.before.md5"] = JsonValue.Create(result.Before.Md5);
-                values["file.after.exists"] = JsonValue.Create(result.After.Exists);
+                values[$"{prefix}.before.exists"] = JsonValue.Create(result.Before.Exists);
+                values[$"{prefix}.before.size_bytes"] = JsonValue.Create(result.Before.SizeBytes);
+                values[$"{prefix}.before.md5"] = JsonValue.Create(result.Before.Md5);
+                values[$"{prefix}.after.exists"] = JsonValue.Create(result.After.Exists);
                 break;
             case "modify":
-                values["file.before.md5"] = JsonValue.Create(result.Before.Md5);
-                values["file.after.md5"] = JsonValue.Create(result.After.Md5);
-                values["file.after.size_bytes"] = JsonValue.Create(result.After.SizeBytes);
-                values["file.modify.bytes_written"] = JsonValue.Create(result.BytesWritten);
+                values[$"{prefix}.before.md5"] = JsonValue.Create(result.Before.Md5);
+                values[$"{prefix}.after.md5"] = JsonValue.Create(result.After.Md5);
+                values[$"{prefix}.after.size_bytes"] = JsonValue.Create(result.After.SizeBytes);
+                values[$"{prefix}.modify.bytes_written"] = JsonValue.Create(result.BytesWritten);
                 break;
         }
 
@@ -356,22 +407,40 @@ internal static class Program
         var currentDestination = state.Destination is null ? null : Snapshot(state.Destination);
         return operation switch
         {
-            "create" => !result.Before.Exists && currentSource.Exists
+            "create" => !result.Before.Exists && currentSource.Exists && ValidSubtestContent(state, currentSource.Path)
                 && currentSource.SizeBytes == result.BytesWritten && currentSource.Sha256 == result.After.Sha256,
-            "open" => result.Before.Exists && currentSource.Exists && result.BytesRead > 0
+            "open" => result.Before.Exists && currentSource.Exists && ValidSubtestContent(state, currentSource.Path) && result.BytesRead > 0
                 && result.BytesWritten == result.BytesRead && result.Before.Sha256 == result.After.Sha256
                 && currentSource.Sha256 == result.After.Sha256,
             "delete" => result.Before.Exists && !currentSource.Exists,
-            "modify" => result.Before.Exists && currentSource.Exists && result.Before.Sha256 != result.After.Sha256
+            "modify" => result.Before.Exists && currentSource.Exists && ValidSubtestContent(state, currentSource.Path) && result.Before.Sha256 != result.After.Sha256
                 && currentSource.SizeBytes == result.BytesWritten && currentSource.Sha256 == result.After.Sha256,
             "rename" => result.Before.Exists && !currentSource.Exists && currentDestination?.Exists == true
+                && ValidSubtestContent(state, currentDestination.Path)
                 && result.DestinationBefore?.Exists == false && currentDestination.Sha256 == result.Before.Sha256,
             _ => false,
         };
     }
 
-    private static ArtifactObservation CreateEvidenceArtifact(ControllerInvocation invocation, string resultPath)
+    private static bool ValidSubtestContent(ExecutionState state, string path) => state.Subtest != "json" || IsValidJson(path);
+
+    private static bool IsValidJson(string path)
     {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            using var document = JsonDocument.Parse(stream);
+            return document.RootElement.ValueKind == JsonValueKind.Object;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static ArtifactObservation CreateEvidenceArtifact(ControllerInvocation invocation, ExecutionState state)
+    {
+        var resultPath = state.ResultPath;
         var runDirectory = Directory.GetParent(Directory.GetParent(invocation.WorkDir)!.FullName)!.FullName;
         return new ArtifactObservation
         {
@@ -383,7 +452,11 @@ internal static class Program
             SizeBytes = new FileInfo(resultPath).Length,
             CreatedAtUtc = File.GetCreationTimeUtc(resultPath),
             Sensitive = false,
-            Metadata = new JsonObject { ["operation"] = JsonNode.Parse(File.ReadAllText(resultPath))?["operation"]?.GetValue<string>() },
+            Metadata = new JsonObject
+            {
+                ["operation"] = JsonNode.Parse(File.ReadAllText(resultPath))?["operation"]?.GetValue<string>(),
+                ["subtest"] = state.Subtest,
+            },
         };
     }
 
@@ -411,7 +484,8 @@ internal static class Program
         return new CleanupObservation
         {
             CaseRunId = invocation.CaseRunId,
-            Action = "stop_actor_and_remove_controlled_files",
+            Sequence = state.InstanceIndex + 1,
+            Action = $"stop_{state.Subtest}_actor_and_remove_controlled_files",
             Status = succeeded ? "succeeded" : "failed",
             StartedAtUtc = started,
             EndedAtUtc = DateTimeOffset.UtcNow,
@@ -523,8 +597,15 @@ internal static class Program
         return ProtocolJson.Read<BehaviorResult>(path);
     }
 
-    private static byte[] Payload(string nonce, string operation, int size)
+    private static byte[] Payload(string nonce, string operation, int size, string subtest)
     {
+        if (subtest == "json")
+        {
+            var prefix = Encoding.UTF8.GetBytes($"{{\"schema_version\":\"1.0\",\"nonce\":\"{nonce}\",\"operation\":\"{operation}\",\"payload\":\"");
+            var suffix = Encoding.UTF8.GetBytes("\"}");
+            if (prefix.Length + suffix.Length > size) throw new ArgumentOutOfRangeException(nameof(size), "JSON 载荷空间不足。");
+            return prefix.Concat(Enumerable.Repeat((byte)'J', size - prefix.Length - suffix.Length)).Concat(suffix).ToArray();
+        }
         var marker = Encoding.UTF8.GetBytes($"EDRTEST|{nonce}|FILE_{operation.ToUpperInvariant()}|");
         return Enumerable.Range(0, size).Select(index => marker[index % marker.Length]).ToArray();
     }
@@ -575,6 +656,8 @@ internal static class Program
     private sealed class ExecutionState : IDisposable
     {
         public ExecutionState(
+            string subtest,
+            int instanceIndex,
             string actorPath,
             IReadOnlyList<string> actorArguments,
             Process actor,
@@ -583,6 +666,8 @@ internal static class Program
             string? destination,
             BehaviorResult result)
         {
+            Subtest = subtest;
+            InstanceIndex = instanceIndex;
             ActorPath = actorPath;
             ActorArguments = actorArguments;
             Actor = actor;
@@ -592,6 +677,8 @@ internal static class Program
             Result = result;
         }
 
+        public string Subtest { get; }
+        public int InstanceIndex { get; }
         public string ActorPath { get; }
         public IReadOnlyList<string> ActorArguments { get; }
         public Process Actor { get; }

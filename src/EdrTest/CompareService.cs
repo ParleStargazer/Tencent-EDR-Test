@@ -183,12 +183,22 @@ internal sealed record CanonicalEvent(
     public string? SourceField(string field) => SourceFields.TryGetValue(field, out var value) ? value : null;
 }
 
-internal sealed record Candidate(CanonicalEvent Event, double Score, long TimeDistanceMs, IReadOnlyList<string> MatchedAnchors);
+internal sealed record Candidate(
+    CanonicalEvent Event,
+    double Score,
+    long TimeDistanceMs,
+    IReadOnlyList<string> MatchedAnchors,
+    bool Qualified,
+    bool TypeHintMatched,
+    bool ActionHintMatched,
+    string QualificationReason);
 internal sealed record CloudRecordObservation(DateTimeOffset? EventTime, string? HostId, string? HostName);
 internal sealed record CloudLoadResult(IReadOnlyList<CanonicalEvent> Events, IReadOnlyList<CloudRecordObservation> Observations);
 
 public static class CompareService
 {
+    private const int MaximumDisplayedCandidates = 50;
+
     private static readonly IDeserializer Yaml = new DeserializerBuilder()
         .WithNamingConvention(UnderscoredNamingConvention.Instance)
         .IgnoreUnmatchedProperties()
@@ -315,21 +325,21 @@ public static class CompareService
         {
             outputRequirements.Add(RequirementJson($"local-{item.Index + 1}", "local", null, item.Evaluation));
         }
-        if (localStatus != "LOCAL_PASS")
-        {
-            AddUnevaluatedCloudRequirements(outputRequirements, baseline, resolver, "本地能力未通过，因此未检查云端要求。");
-            return CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", "insufficient", 0, null, new JsonArray(), new JsonArray(), outputRequirements, new JsonArray("本地能力未达到 LOCAL_PASS。"));
-        }
-
         var failedLocal = localEvaluations
             .Select(value => value.Evaluation)
             .Where(x => x.Status != "passed")
             .ToArray();
+        var overallStatus = "PASS";
+        if (localStatus != "LOCAL_PASS")
+        {
+            warnings.Add("本地能力未达到 LOCAL_PASS；仍继续执行可完成的 EDR 候选关联与字段检查，最终结论至少为无法判定。");
+            overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+        }
         if (failedLocal.Length > 0)
         {
             foreach (var assertion in failedLocal) warnings.Add($"本地前置断言未通过：{assertion.Field}");
-            AddUnevaluatedCloudRequirements(outputRequirements, baseline, resolver, "本地前置要求未满足，因此未检查云端要求。");
-            return CapabilityResult(caseRunId, capabilityId, localStatus, "INCONCLUSIVE", "insufficient", 0, null, new JsonArray(), new JsonArray(), outputRequirements, warnings);
+            warnings.Add("本地基准字段异常缺失，能力不能判定通过；比较器仍保留云端候选与逐字段结果，便于诊断采集链路。");
+            overallStatus = Worse(overallStatus, "INCONCLUSIVE");
         }
 
         var start = DateTimeOffset.Parse(RequiredString(capability, "started_at_utc"), CultureInfo.InvariantCulture);
@@ -340,8 +350,6 @@ public static class CompareService
         var outputAssertions = new JsonArray();
         var outputCandidates = new JsonArray();
         JsonObject? firstSelected = null;
-        var overallStatus = "PASS";
-
         foreach (var expectation in baseline.CloudExpectations)
         {
             var expectationAnchors = expectation.Correlation?.Anchors is { Count: > 0 }
@@ -349,13 +357,16 @@ public static class CompareService
                 : baseline.Correlation.Anchors;
             var correlationTime = ResolveCorrelationTime(expectation.Correlation?.TimeFromLocal, resolver, defaultCorrelationTime);
             var candidates = cloud.Events
-                .Where(item => EventMatches(item, expectation, start, end, baseline.Correlation))
-                .Select(item => Score(item, expectationAnchors, resolver, correlationTime))
-                .Where(item => item.Score > 0)
+                .Where(item => EventWithinWindow(item, start, end, baseline.Correlation))
+                .Select(item => Score(item, expectation, expectationAnchors, resolver, correlationTime))
+                .GroupBy(item => item.Event.RawRef, StringComparer.Ordinal)
+                .Select(group => group.OrderByDescending(item => item.Score).ThenBy(item => item.TimeDistanceMs).First())
                 .OrderByDescending(item => item.Score)
                 .ThenBy(item => item.TimeDistanceMs)
                 .ThenBy(item => item.Event.RawRef, StringComparer.Ordinal)
+                .Take(MaximumDisplayedCandidates)
                 .ToArray();
+            var qualifiedCandidates = candidates.Where(item => item.Qualified).ToArray();
             totalCandidates += candidates.Length;
             for (var candidateIndex = 0; candidateIndex < candidates.Length; candidateIndex++)
             {
@@ -367,55 +378,62 @@ public static class CompareService
                     expectationAnchors,
                     resolver));
             }
-            var cardinalityStatus = candidates.Length < expectation.Cardinality.Min
+            var cardinalityStatus = qualifiedCandidates.Length < expectation.Cardinality.Min
                 ? exportCoverage is "verified" or "inferred" or "assumed" ? "failed" : "not_evaluated"
-                : expectation.Cardinality.Max is { } cardinalityMaximum && candidates.Length > cardinalityMaximum
+                : expectation.Cardinality.Max is { } cardinalityMaximum && qualifiedCandidates.Length > cardinalityMaximum
                     ? "not_evaluated"
                     : "passed";
             var cardinalityMessage = cardinalityStatus switch
             {
-                "failed" => "EDR 日志范围足以形成判断，但没有找到要求数量的事件。",
-                "not_evaluated" when candidates.Length < expectation.Cardinality.Min => "日志范围不足，无法确认事件是否真的缺失。",
+                "failed" => $"EDR 日志范围足以形成判断，但只有 {qualifiedCandidates.Length} 条候选达到关联阈值；另展示 {candidates.Length - qualifiedCandidates.Length} 条低置信度记录供排查。",
+                "not_evaluated" when qualifiedCandidates.Length < expectation.Cardinality.Min => $"日志范围或关联证据不足；已展示 {candidates.Length} 条时间相近记录供继续核对。",
                 "not_evaluated" => "候选事件过多，无法唯一关联。",
                 _ => null,
             };
-            outputRequirements.Add(CardinalityRequirementJson(expectation, candidates.Length, cardinalityStatus, cardinalityMessage));
-            if (candidates.Length < expectation.Cardinality.Min)
+            outputRequirements.Add(CardinalityRequirementJson(expectation, qualifiedCandidates.Length, cardinalityStatus, cardinalityMessage));
+            if (qualifiedCandidates.Length < expectation.Cardinality.Min)
             {
-                AddUnevaluatedExpectationRequirements(outputRequirements, expectation, resolver, "没有找到可关联的 EDR 事件，无法检查该项。", includeCardinality: false);
                 if (exportCoverage is "verified" or "inferred" or "assumed")
                 {
-                    warnings.Add($"未找到满足“{baseline.Title ?? capabilityId}”基准的 EDR 云端事件（{expectation.Id}：找到 {candidates.Length} 条，至少需要 {expectation.Cardinality.Min} 条；导出覆盖状态：{exportCoverage}）。");
+                    warnings.Add($"未找到达到关联阈值的“{baseline.Title ?? capabilityId}”EDR 事件（{expectation.Id}：合格 {qualifiedCandidates.Length} 条，时间窗候选 {candidates.Length} 条；导出覆盖状态：{exportCoverage}）。");
                     overallStatus = Worse(overallStatus, "FAIL");
                 }
                 else
                 {
-                    warnings.Add($"未找到满足“{baseline.Title ?? capabilityId}”基准的 EDR 云端事件，但当前日志不足以证明导出范围完整（{expectation.Id}：找到 {candidates.Length} 条，至少需要 {expectation.Cardinality.Min} 条）。");
+                    warnings.Add($"没有候选达到关联阈值，但仍保留时间窗内低置信度记录供核对（{expectation.Id}：合格 {qualifiedCandidates.Length} 条，时间窗候选 {candidates.Length} 条）。");
                     overallStatus = Worse(overallStatus, "INCONCLUSIVE");
                 }
-                continue;
             }
-            if (expectation.Cardinality.Max is { } maximum && candidates.Length > maximum)
+            if (expectation.Cardinality.Max is { } maximum && qualifiedCandidates.Length > maximum)
             {
-                warnings.Add($"“{baseline.Title ?? capabilityId}”的候选事件过多，无法唯一判定（{expectation.Id}：找到 {candidates.Length} 条，最多允许 {maximum} 条）。");
+                warnings.Add($"“{baseline.Title ?? capabilityId}”的合格候选事件过多，无法唯一判定（{expectation.Id}：找到 {qualifiedCandidates.Length} 条，最多允许 {maximum} 条）。");
                 overallStatus = Worse(overallStatus, "INCONCLUSIVE");
             }
-            if (candidates.Length == 0) continue;
-            if (candidates.Length > 1 && candidates[0].Score == candidates[1].Score && candidates[0].TimeDistanceMs == candidates[1].TimeDistanceMs)
+            if (candidates.Length == 0)
+            {
+                AddUnevaluatedExpectationRequirements(outputRequirements, expectation, resolver, "时间窗内没有可展示的 EDR 记录，无法检查该项。", includeCardinality: false);
+                continue;
+            }
+            if (qualifiedCandidates.Length > 1 && qualifiedCandidates[0].Score == qualifiedCandidates[1].Score && qualifiedCandidates[0].TimeDistanceMs == qualifiedCandidates[1].TimeDistanceMs)
             {
                 warnings.Add($"“{baseline.Title ?? capabilityId}”存在多个同分候选事件，无法唯一关联（{expectation.Id}）。");
                 overallStatus = Worse(overallStatus, "INCONCLUSIVE");
-                AddUnevaluatedExpectationRequirements(outputRequirements, expectation, resolver, "存在多个同分候选事件，无法确定应检查哪一条。", includeCardinality: false);
-                continue;
             }
 
-            var selected = candidates[0];
+            var selected = qualifiedCandidates.FirstOrDefault() ?? candidates[0];
+            if (!selected.Qualified)
+            {
+                warnings.Add($"{expectation.Id} 当前使用低置信度候选继续展示可验证字段，不会把该候选当作已可靠关联。");
+                overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+            }
             firstSelected ??= new JsonObject
             {
                 ["raw_ref"] = selected.Event.RawRef,
                 ["event_id"] = Values.ToNode(selected.Event.Get("event.id")),
                 ["correlation_score"] = selected.Score,
                 ["confidence"] = CandidateConfidence(selected),
+                ["eligible_for_validation"] = selected.Qualified,
+                ["qualification_reason"] = selected.QualificationReason,
                 ["time_distance_ms"] = selected.TimeDistanceMs,
                 ["matched_anchors"] = new JsonArray(selected.MatchedAnchors.Select(x => (JsonNode)x).ToArray()),
             };
@@ -589,26 +607,50 @@ public static class CompareService
             && string.Equals(localHostname, observation.HostName, StringComparison.OrdinalIgnoreCase))
         || (!string.IsNullOrWhiteSpace(observation.HostId) && localIds.Contains(observation.HostId));
 
-    private static Candidate Score(CanonicalEvent item, IReadOnlyList<CorrelationAnchor> anchors, LocalResolver resolver, DateTimeOffset correlationTime)
+    private static Candidate Score(
+        CanonicalEvent item,
+        CloudExpectation expectation,
+        IReadOnlyList<CorrelationAnchor> anchors,
+        LocalResolver resolver,
+        DateTimeOffset correlationTime)
     {
         double score = 0;
         var matched = new List<string>();
         var matchedStrong = false;
-        var requiresStrong = anchors.Any(anchor => anchor.Strength == "strong");
+        var matchedMedium = false;
+        var availableStrong = false;
+        var availableMedium = false;
         foreach (var anchor in anchors)
         {
             var local = Normalize(resolver.Resolve(anchor.LocalField), anchor.Normalizers);
+            if (local is null) continue;
+            if (anchor.Strength == "strong") availableStrong = true;
+            if (anchor.Strength == "medium") availableMedium = true;
             var cloud = Normalize(item.Get(anchor.CloudField), anchor.Normalizers);
-            if (!Equivalent(local, cloud) || local is null) continue;
+            if (!Equivalent(local, cloud)) continue;
             score += anchor.Strength switch { "strong" => 100, "medium" => 25, "weak" => 5, _ => 0 };
             if (anchor.Strength == "strong") matchedStrong = true;
+            if (anchor.Strength == "medium") matchedMedium = true;
             matched.Add($"{anchor.LocalField}={anchor.CloudField}");
         }
         var eventTime = CanonicalEventTime(item);
         var distance = eventTime is null
             ? long.MaxValue
             : (long)Math.Min(long.MaxValue, Math.Abs((eventTime.Value - correlationTime).TotalMilliseconds));
-        return new Candidate(item, requiresStrong && !matchedStrong ? 0 : score, distance, matched);
+        var typeHintMatched = Equivalent(item.Get("event.type"), expectation.EventType);
+        var actionHintMatched = expectation.EventActions.Any(action => Equivalent(item.Get("event.action"), action));
+
+        var qualified = matchedStrong || (!availableStrong && matchedMedium);
+        var reason = qualified
+            ? matchedStrong
+                ? "命中至少一个强本地锚点"
+                : "强锚点缺失，命中可用的中等本地锚点"
+            : availableStrong
+                ? "未命中可用的强本地锚点，仅作为低置信度候选展示"
+                : availableMedium
+                    ? "未命中可用的中等本地锚点，仅作为低置信度候选展示"
+                    : "本地关联锚点未采集完整，仅按时间距离展示；本地基准异常会阻止能力通过";
+        return new Candidate(item, score, distance, matched, qualified, typeHintMatched, actionHintMatched, reason);
     }
 
     private static DateTimeOffset LocalCorrelationTime(JsonObject localRoot, string caseRunId, DateTimeOffset fallback)
@@ -692,6 +734,10 @@ public static class CompareService
             ["rank"] = rank,
             ["confidence"] = CandidateConfidence(candidate),
             ["correlation_score"] = candidate.Score,
+            ["eligible_for_validation"] = candidate.Qualified,
+            ["qualification_reason"] = candidate.QualificationReason,
+            ["event_type_hint_matched"] = candidate.TypeHintMatched,
+            ["event_action_hint_matched"] = candidate.ActionHintMatched,
             ["time_distance_ms"] = candidate.TimeDistanceMs,
             ["event_time_utc"] = Values.ToNode(candidate.Event.Get("event.created")),
             ["raw_ref"] = candidate.Event.RawRef,
@@ -732,10 +778,8 @@ public static class CompareService
         .Replace("~", "~0", StringComparison.Ordinal)
         .Replace("/", "~1", StringComparison.Ordinal);
 
-    private static bool EventMatches(CanonicalEvent item, CloudExpectation expectation, DateTimeOffset start, DateTimeOffset end, CorrelationDefinition correlation)
+    private static bool EventWithinWindow(CanonicalEvent item, DateTimeOffset start, DateTimeOffset end, CorrelationDefinition correlation)
     {
-        if (!Equivalent(item.Get("event.type"), expectation.EventType)) return false;
-        if (!expectation.EventActions.Any(action => Equivalent(item.Get("event.action"), action))) return false;
         if (item.Get("event.created") is not string createdText || !DateTimeOffset.TryParse(createdText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var created)) return false;
         return created >= start.AddSeconds(-correlation.TimeBeforeSeconds) && created <= end.AddSeconds(correlation.TimeAfterSeconds);
     }
@@ -873,9 +917,18 @@ public static class CompareService
     {
         foreach (var (field, expected) in conditions)
         {
-            if (!record.TryGetProperty(field, out var actual) || !Equivalent(Scalar(actual), expected)) return false;
+            if (!record.TryGetProperty(field, out var actual) || !ConditionMatches(Scalar(actual), expected)) return false;
         }
         return true;
+    }
+
+    private static bool ConditionMatches(object? actual, object? expected)
+    {
+        if (expected is System.Collections.IEnumerable values and not string)
+        {
+            return values.Cast<object?>().Any(value => Equivalent(actual, value));
+        }
+        return Equivalent(actual, expected);
     }
 
     private static object? Transform(object? value, string transform) => transform switch
