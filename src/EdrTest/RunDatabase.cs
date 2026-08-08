@@ -317,6 +317,93 @@ public sealed class RunDatabase : IDisposable
         return command.ExecuteScalar() as string ?? throw new InvalidOperationException($"找不到能力轮次：{caseRunId}");
     }
 
+    public JsonObject ReadCapabilityEvidence(string caseRunId)
+    {
+        JsonObject capability;
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT case_run_id, capability_id, status, started_at_utc, ended_at_utc,
+                  monotonic_duration_ms, observer_started_at_utc, observer_ended_at_utc
+                FROM capability_run WHERE case_run_id = $case_id;
+                """;
+            command.Parameters.AddWithValue("$case_id", caseRunId);
+            using var reader = command.ExecuteReader();
+            if (!reader.Read()) throw new InvalidOperationException($"找不到能力轮次：{caseRunId}");
+            capability = new JsonObject
+            {
+                ["case_run_id"] = reader.String("case_run_id"),
+                ["capability_id"] = reader.String("capability_id"),
+                ["status"] = reader.String("status"),
+                ["started_at_utc"] = reader.NullableString("started_at_utc"),
+                ["ended_at_utc"] = reader.NullableString("ended_at_utc"),
+                ["duration_ms"] = reader.NullableInt64("monotonic_duration_ms"),
+                ["observer_started_at_utc"] = reader.NullableString("observer_started_at_utc"),
+                ["observer_ended_at_utc"] = reader.NullableString("observer_ended_at_utc"),
+            };
+        }
+
+        var programs = new JsonArray();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT role, instance_index, executable_path, pid, parent_pid, command_line,
+                  started_at_utc, ended_at_utc, exit_code, md5, sha1, sha256
+                FROM program_instance WHERE case_run_id = $case_id
+                ORDER BY role, instance_index;
+                """;
+            command.Parameters.AddWithValue("$case_id", caseRunId);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                programs.Add(new JsonObject
+                {
+                    ["role"] = reader.String("role"),
+                    ["instance_index"] = reader.Int32("instance_index"),
+                    ["executable"] = reader.String("executable_path"),
+                    ["pid"] = reader.Int32("pid"),
+                    ["parent_pid"] = reader.Int32("parent_pid"),
+                    ["command_line"] = reader.String("command_line"),
+                    ["started_at_utc"] = reader.String("started_at_utc"),
+                    ["ended_at_utc"] = reader.NullableString("ended_at_utc"),
+                    ["exit_code"] = reader.NullableInt32("exit_code"),
+                    ["md5"] = reader.NullableString("md5"),
+                    ["sha1"] = reader.NullableString("sha1"),
+                    ["sha256"] = reader.String("sha256"),
+                });
+            }
+        }
+
+        var facts = new JsonArray();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT fact_key, value_json, observed_at_utc, source, confidence
+                FROM local_fact WHERE case_run_id = $case_id ORDER BY fact_key;
+                """;
+            command.Parameters.AddWithValue("$case_id", caseRunId);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                facts.Add(new JsonObject
+                {
+                    ["field"] = $"facts.{reader.String("fact_key")}",
+                    ["value"] = JsonNode.Parse(reader.String("value_json")),
+                    ["observed_at_utc"] = reader.String("observed_at_utc"),
+                    ["source"] = reader.String("source"),
+                    ["confidence"] = reader.String("confidence"),
+                });
+            }
+        }
+
+        return new JsonObject
+        {
+            ["capability"] = capability,
+            ["programs"] = programs,
+            ["facts"] = facts,
+        };
+    }
+
     public void AddProgram(ProgramObservation value)
     {
         var file = new FileInfo(value.ExecutablePath);

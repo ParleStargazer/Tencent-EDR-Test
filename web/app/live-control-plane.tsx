@@ -52,6 +52,35 @@ type ApiRunStep = {
   sequence: number;
   status: "pending" | "running" | "passed" | "error" | "skipped" | "cancelled";
   status_label: string;
+  local_evidence?: ApiLocalEvidence;
+};
+
+type ApiLocalEvidence = {
+  capability: {
+    case_run_id: string;
+    capability_id: string;
+    status: string;
+    started_at_utc?: string;
+    ended_at_utc?: string;
+    duration_ms?: number;
+    observer_started_at_utc?: string;
+    observer_ended_at_utc?: string;
+  };
+  programs: Array<{
+    role: string;
+    instance_index: number;
+    executable: string;
+    pid: number;
+    parent_pid: number;
+    command_line: string;
+    started_at_utc: string;
+    ended_at_utc?: string;
+    exit_code?: number;
+    md5?: string;
+    sha1?: string;
+    sha256: string;
+  }>;
+  facts: Array<{ field: string; value: unknown; observed_at_utc: string; source: string; confidence: string }>;
 };
 
 type ApiRunLog = {
@@ -106,8 +135,23 @@ type ValidationEntry = {
   validation_status: ValidationStatus;
   export_coverage: string;
   candidate_count: number;
+  edr_candidates?: EdrCandidate[];
   baseline_requirements?: BaselineRequirementResult[];
   warnings?: string[];
+};
+
+type EdrCandidate = {
+  expectation_id: string;
+  rank: number;
+  confidence: "high" | "medium" | "low";
+  correlation_score: number;
+  time_distance_ms: number;
+  event_time_utc?: string;
+  raw_ref: string;
+  event_id?: string;
+  matched_anchors: string[];
+  canonical_event: Record<string, unknown>;
+  raw_event: Record<string, unknown>;
 };
 
 type ValidationResult = {
@@ -171,6 +215,26 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDurationMs(value?: number): string {
+  if (value === null || value === undefined) return "—";
+  if (value < 1000) return `${value} ms`;
+  if (value < 60_000) return `${(value / 1000).toFixed(2)} 秒`;
+  return `${Math.floor(value / 60_000)} 分 ${Math.round((value % 60_000) / 1000)} 秒`;
+}
+
+function formatDistance(value: number): string {
+  if (!Number.isFinite(value) || value >= Number.MAX_SAFE_INTEGER) return "时间未知";
+  return `相差 ${formatDurationMs(value)}`;
+}
+
+function roleLabel(role: string): string {
+  return { controller: "编排程序", actor: "行为执行程序", target: "被测目标", helper: "辅助程序" }[role] ?? role;
+}
+
+function confidenceLabel(value: EdrCandidate["confidence"]): string {
+  return { high: "高置信度", medium: "中置信度", low: "低置信度" }[value];
 }
 
 function runStatusLabel(status: RunStatus): string {
@@ -560,8 +624,26 @@ function RunLogPanel({ run }: { run: ApiRun | null }) {
       const logCount = run?.logs.filter((log) => log.capability_id === step.capability_id).length ?? 0;
       return <button className={`completed-queue-item ${step.status}`} type="button" key={step.capability_id} onClick={() => setSelectedCapabilityId(step.capability_id)}><span className="queue-sequence">{step.sequence}</span><span className="queue-copy"><strong>{step.name_zh}</strong><code>{step.capability_id}</code></span><span className="queue-meta"><em>{step.status_label}</em><small>{logCount} 条日志</small></span><span className="queue-open" aria-hidden="true">查看 →</span></button>;
     }) : <div className="table-empty">能力完成后会按执行顺序显示在这里。</div>}</div></article></section>
-    {selectedStep && <div className="log-modal-backdrop" onClick={() => setSelectedCapabilityId(null)}><section className="log-modal" role="dialog" aria-modal="true" aria-labelledby="capability-log-title" onClick={(event) => event.stopPropagation()}><header className="log-modal-header"><div><p className="section-index">能力详细日志</p><h2 id="capability-log-title">{selectedStep.name_zh}</h2><code>{selectedStep.capability_id}</code></div><div><span className={`queue-status ${selectedStep.status}`}>{selectedStep.status_label}</span><button className="modal-close" type="button" autoFocus aria-label="关闭能力详细日志" onClick={() => setSelectedCapabilityId(null)}>×</button></div></header><div className="log-console" role="log">{selectedLogs.length ? selectedLogs.map((log, index) => <div className={`log-line ${log.level}`} key={`${log.timestamp_utc}-${index}`}><time>{formatTime(log.timestamp_utc)}</time><span>{log.level.toUpperCase()}</span><code>{log.source}</code><p>{log.message}</p></div>) : <div className="log-empty">该能力没有可用的详细输出。</div>}</div></section></div>}
+    {selectedStep && <div className="log-modal-backdrop" onClick={() => setSelectedCapabilityId(null)}><section className="log-modal" role="dialog" aria-modal="true" aria-labelledby="capability-log-title" onClick={(event) => event.stopPropagation()}><header className="log-modal-header"><div><p className="section-index">能力详细日志</p><h2 id="capability-log-title">{selectedStep.name_zh}</h2><code>{selectedStep.capability_id}</code></div><div><span className={`queue-status ${selectedStep.status}`}>{selectedStep.status_label}</span><button className="modal-close" type="button" autoFocus aria-label="关闭能力详细日志" onClick={() => setSelectedCapabilityId(null)}>×</button></div></header><div className="capability-log-content"><LocalEvidencePanel evidence={selectedStep.local_evidence} /><section className="runner-log-section"><div className="subsection-heading"><div><span>执行输出</span><h3>Runner 与 Controller 日志</h3></div><em>{selectedLogs.length} 条</em></div><div className="log-console" role="log">{selectedLogs.length ? selectedLogs.map((log, index) => <div className={`log-line ${log.level}`} key={`${log.timestamp_utc}-${index}`}><time>{formatTime(log.timestamp_utc)}</time><span>{log.level.toUpperCase()}</span><code>{log.source}</code><p>{log.message}</p></div>) : <div className="log-empty">该能力没有可用的详细输出。</div>}</div></section></div></section></div>}
   </>;
+}
+
+function LocalEvidencePanel({ evidence }: { evidence?: ApiLocalEvidence }) {
+  if (!evidence) return <section className="local-evidence-panel"><div className="subsection-heading"><div><span>本地 BASELINE</span><h3>已提取证据</h3></div></div><div className="local-evidence-empty">当前轮次没有可恢复的结构化本地证据。</div></section>;
+  const baselineValues: Array<{ field: string; value: unknown }> = evidence.programs.flatMap((program) => [
+    { field: `programs.${program.role}.pid`, value: program.pid },
+    { field: `programs.${program.role}.parent_pid`, value: program.parent_pid },
+    { field: `programs.${program.role}.executable`, value: program.executable },
+    { field: `programs.${program.role}.command_line`, value: program.command_line },
+    ...(program.md5 ? [{ field: `programs.${program.role}.md5`, value: program.md5 }] : []),
+    { field: `programs.${program.role}.sha256`, value: program.sha256 },
+  ]);
+  baselineValues.push(...evidence.facts.map((fact) => ({ field: fact.field, value: fact.value })));
+  return <section className="local-evidence-panel"><div className="subsection-heading"><div><span>本地 BASELINE</span><h3>已提取证据</h3><p>字段名可直接对应本地检验基准；时间用于后续关联 EDR 事件。</p></div><em>{baselineValues.length} 个字段</em></div>
+    <div className="evidence-time-grid"><div><span>能力开始</span><strong>{formatTime(evidence.capability.started_at_utc)}</strong></div><div><span>能力结束</span><strong>{formatTime(evidence.capability.ended_at_utc)}</strong></div><div><span>执行耗时</span><strong>{formatDurationMs(evidence.capability.duration_ms)}</strong></div><div><span>观察窗口</span><strong>{formatTime(evidence.capability.observer_started_at_utc)} → {formatTime(evidence.capability.observer_ended_at_utc)}</strong></div></div>
+    <div className="baseline-value-list">{baselineValues.map((item, index) => <div key={`${item.field}-${index}`}><code>{item.field}</code><span>{displayValue(item.value)}</span></div>)}</div>
+    <div className="program-evidence-grid">{evidence.programs.map((program) => <article key={`${program.role}-${program.instance_index}`}><header><strong>{roleLabel(program.role)}</strong><code>PID {program.pid}</code></header><dl><div><dt>父 PID</dt><dd>{program.parent_pid}</dd></div><div><dt>开始时间</dt><dd>{formatTime(program.started_at_utc)}</dd></div><div><dt>停止时间</dt><dd>{formatTime(program.ended_at_utc)}</dd></div><div><dt>退出码</dt><dd>{program.exit_code ?? "—"}</dd></div></dl></article>)}</div>
+  </section>;
 }
 
 function RunHistory({ runs, onInspect, onDownload, onRefresh }: { runs: ApiRun[]; onInspect: (run: ApiRun) => void; onDownload: (run: ApiRun) => void; onRefresh: () => void }) {
@@ -596,7 +678,7 @@ function BaselineGuide({ baselines }: { baselines: ApiBaseline[] }) {
 }
 
 function ComparisonResultPanel({ result, onDownloadJson, onDownloadConclusion }: { result: ValidationResult | null; onDownloadJson: () => void; onDownloadConclusion: () => void }) {
-  return <section className="panel comparison-detail-panel"><div className="panel-heading"><div><p className="section-index">C / 比较结果</p><h2>要求满足情况</h2><p className="panel-description">结果先按能力折叠；展开后查看每项要求的状态、校验条件和实际观测。</p></div></div>{result ? <>
+  return <section className="panel comparison-detail-panel"><div className="panel-heading"><div><p className="section-index">C / 比较结果</p><h2>要求满足情况</h2><p className="panel-description">结果先按能力折叠；能力展开后，本地条件默认收起，EDR 条件与关联候选日志默认展开。</p></div></div>{result ? <>
     <div className={`conclusion-card ${result.conclusion.verdict.toLowerCase()}`}><div><span>总体结论</span><strong>{result.conclusion.label_zh}</strong><em>{result.conclusion.pass_rate === null ? "通过率不可计算" : `完整通过率 ${(result.conclusion.pass_rate * 100).toFixed(1)}%`}</em></div><p>{result.conclusion.statement_zh}</p></div>
     <div className="result-summary"><div><span>通过</span><strong className="pass-text">{result.summary.pass}</strong></div><div><span>部分通过</span><strong>{result.summary.partial}</strong></div><div><span>失败</span><strong className="fail-text">{result.summary.fail}</strong></div><div><span>无法判定</span><strong>{result.summary.inconclusive}</strong></div></div>
     <div className="capability-result-stack">{result.capabilities.map((entry) => <CapabilityComparison key={entry.case_run_id} entry={entry} />)}</div>
@@ -607,7 +689,20 @@ function ComparisonResultPanel({ result, onDownloadJson, onDownloadConclusion }:
 function CapabilityComparison({ entry }: { entry: ValidationEntry }) {
   const requirements = entry.baseline_requirements ?? [];
   const passed = requirements.filter((item) => item.status === "passed").length;
-  return <details className="capability-result-card"><summary><div className="capability-summary-main"><span className={`result-status ${entry.validation_status.toLowerCase()}`}>{validationStatusLabel(entry.validation_status)}</span><div><h3>{entry.display_name_zh ?? entry.capability_id}</h3><p>{entry.baseline_title ?? entry.baseline_id ?? "没有匹配的检验基准"}</p></div></div><div className="requirement-count"><strong>{passed}/{requirements.length}</strong><span>要求已满足</span></div></summary><div className="capability-result-body"><div className="evidence-strip"><span>{coverageLabel(entry.export_coverage)}</span><span>{entry.candidate_count} 条候选事件</span><span>本地状态 {entry.local_status}</span></div>{entry.warnings?.length ? <div className="plain-warning"><strong>需要注意</strong><p>{entry.warnings.join("；")}</p></div> : null}<div className="requirement-table"><div className="requirement-head"><span>来源</span><span>要求</span><span>结果</span><span>依据</span></div>{requirements.map((requirement) => <RequirementRow key={requirement.requirement_id} requirement={requirement} />)}</div></div></details>;
+  const localRequirements = requirements.filter((item) => item.scope === "local");
+  const cloudRequirements = requirements.filter((item) => item.scope === "cloud");
+  const candidates = [...(entry.edr_candidates ?? [])].sort((left, right) => right.correlation_score - left.correlation_score || left.time_distance_ms - right.time_distance_ms || left.rank - right.rank);
+  return <details className="capability-result-card"><summary><div className="capability-summary-main"><span className={`result-status ${entry.validation_status.toLowerCase()}`}>{validationStatusLabel(entry.validation_status)}</span><div><h3>{entry.display_name_zh ?? entry.capability_id}</h3><p>{entry.baseline_title ?? entry.baseline_id ?? "没有匹配的检验基准"}</p></div></div><div className="requirement-count"><strong>{passed}/{requirements.length}</strong><span>要求已满足</span></div></summary><div className="capability-result-body"><div className="evidence-strip"><span>{coverageLabel(entry.export_coverage)}</span><span>{entry.candidate_count} 条候选事件</span><span>本地状态 {entry.local_status}</span></div>{entry.warnings?.length ? <div className="plain-warning"><strong>需要注意</strong><p>{entry.warnings.join("；")}</p></div> : null}<RequirementGroup scope="local" requirements={localRequirements} /><RequirementGroup scope="cloud" requirements={cloudRequirements} candidates={candidates} /></div></details>;
+}
+
+function RequirementGroup({ scope, requirements, candidates = [] }: { scope: "local" | "cloud"; requirements: BaselineRequirementResult[]; candidates?: EdrCandidate[] }) {
+  const passed = requirements.filter((item) => item.status === "passed").length;
+  const isCloud = scope === "cloud";
+  return <details className={`requirement-group ${scope}`} open={isCloud}><summary><div><span className={`scope-chip ${scope}`}>{isCloud ? "EDR" : "本地"}</span><strong>{isCloud ? "EDR 条件与匹配日志" : "本地条件"}</strong><em>{isCloud ? "默认展开，优先核对产品遥测" : "默认折叠，本地采集通常更稳定"}</em></div><span>{passed}/{requirements.length} 已满足</span></summary><div className="requirement-group-body"><div className="requirement-table"><div className="requirement-head"><span>来源</span><span>要求</span><span>结果</span><span>依据</span></div>{requirements.length ? requirements.map((requirement) => <RequirementRow key={requirement.requirement_id} requirement={requirement} />) : <div className="table-empty">没有可展示的{isCloud ? " EDR" : "本地"}条件。</div>}</div>{isCloud && <EdrCandidateList candidates={candidates} />}</div></details>;
+}
+
+function EdrCandidateList({ candidates }: { candidates: EdrCandidate[] }) {
+  return <section className="edr-candidate-section"><div className="candidate-section-heading"><div><span>完整 EDR 日志</span><h4>关联候选事件</h4><p>先按关联得分从高到低，再按与本地行为时间的距离从近到远排列。</p></div><em>{candidates.length} 条</em></div>{candidates.length ? <div className="candidate-list">{candidates.map((candidate, index) => <details className="candidate-card" key={`${candidate.expectation_id}-${candidate.raw_ref}-${index}`}><summary><span className="candidate-rank">#{index + 1}</span><div><strong>{candidate.event_id || "无事件 ID"}</strong><code>{candidate.expectation_id}</code></div><span className={`confidence-badge ${candidate.confidence}`}>{confidenceLabel(candidate.confidence)}</span><div className="candidate-score"><strong>{candidate.correlation_score} 分</strong><span>{formatDistance(candidate.time_distance_ms)}</span></div></summary><div className="candidate-detail"><div className="candidate-meta"><span>事件时间：{formatTime(candidate.event_time_utc)}</span><span>来源：{candidate.raw_ref}</span></div><div className="matched-anchor-list"><strong>命中的关联锚点</strong>{candidate.matched_anchors.length ? candidate.matched_anchors.map((anchor) => <code key={anchor}>{anchor}</code>) : <span>没有记录关联锚点</span>}</div><div className="candidate-json-grid"><section><h5>规范化字段</h5><pre>{JSON.stringify(candidate.canonical_event, null, 2)}</pre></section><section><h5>EDR 原始完整日志</h5><pre>{JSON.stringify(candidate.raw_event, null, 2)}</pre></section></div></div></details>)}</div> : <div className="candidate-empty">没有找到可关联的 EDR 候选日志。</div>}</section>;
 }
 
 function RequirementRow({ requirement }: { requirement: BaselineRequirementResult }) {

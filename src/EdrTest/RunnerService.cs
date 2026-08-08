@@ -31,7 +31,8 @@ public sealed record RunProgressUpdate(
     int? CapabilityIndex = null,
     string? CapabilityStatus = null,
     int? WaitRemainingSeconds = null,
-    bool Important = false);
+    bool Important = false,
+    JsonObject? LocalEvidence = null);
 
 public sealed class RunnerService
 {
@@ -92,21 +93,21 @@ public sealed class RunnerService
                     if (Precheck(package.Manifest) is { } failure)
                     {
                         SkipCapability(database, caseRunId, failure.Code, failure.Message);
-                        ReportCapabilityCompleted(request, package, index, packages.Length, "SKIPPED", failure.Message);
+                        ReportCapabilityCompleted(request, package, index, packages.Length, "SKIPPED", failure.Message, database.ReadCapabilityEvidence(caseRunId));
                         await WaitBeforeNextAsync(request, package, index, packages.Length, cancellationToken);
                         continue;
                     }
                     if (package.Manifest.RiskLevel is "L2" or "L3" && !request.AllowHighRisk)
                     {
                         SkipCapability(database, caseRunId, "RISK_APPROVAL_REQUIRED", "L2/L3 能力需要 --allow-high-risk。");
-                        ReportCapabilityCompleted(request, package, index, packages.Length, "SKIPPED", "未确认高风险执行，能力已跳过。");
+                        ReportCapabilityCompleted(request, package, index, packages.Length, "SKIPPED", "未确认高风险执行，能力已跳过。", database.ReadCapabilityEvidence(caseRunId));
                         await WaitBeforeNextAsync(request, package, index, packages.Length, cancellationToken);
                         continue;
                     }
 
                     var capabilityStatus = await ExecuteControllerAsync(database, package, runId, caseRunId, nonce, databasePath, caseDirectory, parameterPath, request, index, packages.Length, cancellationToken);
                     if (capabilityStatus is not ("LOCAL_PASS" or "SKIPPED")) runStatus = "COMPLETED_WITH_ERRORS";
-                    ReportCapabilityCompleted(request, package, index, packages.Length, capabilityStatus, CapabilityStatusMessage(capabilityStatus));
+                    ReportCapabilityCompleted(request, package, index, packages.Length, capabilityStatus, CapabilityStatusMessage(capabilityStatus), database.ReadCapabilityEvidence(caseRunId));
                     if (capabilityStatus == "CLEANUP_ERROR") break;
                     await WaitBeforeNextAsync(request, package, index, packages.Length, cancellationToken);
                 }
@@ -243,12 +244,12 @@ public sealed class RunnerService
 
     private static string TruncateLine(string value) => value.Length <= 1_000 ? value : value[..1_000] + "…";
 
-    private static void ReportCapabilityCompleted(RunRequest request, CapabilityPackage package, int index, int total, string status, string message)
+    private static void ReportCapabilityCompleted(RunRequest request, CapabilityPackage package, int index, int total, string status, string message, JsonObject localEvidence)
     {
         var name = package.Manifest.DisplayNameZh ?? package.Manifest.DisplayName ?? package.Manifest.CapabilityId;
         var level = status is "LOCAL_PASS" or "SKIPPED" ? "info" : "warning";
         var progress = 5 + (int)Math.Floor((index + 1) * 90d / total);
-        Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "capability_completed", level, $"{name}：{message}", progress, total, package.Manifest.CapabilityId, name, index + 1, status, Important: true));
+        Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "capability_completed", level, $"{name}：{message}", progress, total, package.Manifest.CapabilityId, name, index + 1, status, Important: true, LocalEvidence: localEvidence));
     }
 
     private static async Task WaitBeforeNextAsync(RunRequest request, CapabilityPackage current, int index, int total, CancellationToken cancellationToken)

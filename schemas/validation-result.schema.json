@@ -137,6 +137,8 @@
                   "raw_ref": { "type": "string", "minLength": 1 },
                   "event_id": { "type": ["string", "null"] },
                   "correlation_score": { "type": "number", "minimum": 0 },
+                  "confidence": { "enum": ["high", "medium", "low"] },
+                  "time_distance_ms": { "type": "integer", "minimum": 0 },
                   "matched_anchors": {
                     "type": "array",
                     "items": { "type": "string" }
@@ -145,6 +147,40 @@
               },
               { "type": "null" }
             ]
+          },
+          "edr_candidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "expectation_id",
+                "rank",
+                "confidence",
+                "correlation_score",
+                "time_distance_ms",
+                "raw_ref",
+                "matched_anchors",
+                "canonical_event",
+                "raw_event"
+              ],
+              "properties": {
+                "expectation_id": { "type": "string", "minLength": 1 },
+                "rank": { "type": "integer", "minimum": 1 },
+                "confidence": { "enum": ["high", "medium", "low"] },
+                "correlation_score": { "type": "number", "minimum": 0 },
+                "time_distance_ms": { "type": "integer", "minimum": 0 },
+                "event_time_utc": { "type": ["string", "null"], "format": "date-time" },
+                "raw_ref": { "type": "string", "minLength": 1 },
+                "event_id": { "type": ["string", "null"] },
+                "matched_anchors": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "canonical_event": { "type": "object" },
+                "raw_event": { "type": "object" }
+              }
+            }
           },
           "assertions": {
             "type": "array",

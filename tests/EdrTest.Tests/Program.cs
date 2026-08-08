@@ -70,7 +70,14 @@ public static class Program
         var manifestPath = Path.Combine(packageDirectory, "capability.json");
         File.WriteAllText(manifestPath, CreateManifest(executableName, "L0").ToJsonString(JsonDefaults.Options));
 
-        var result = await new RunnerService().RunAsync(new RunRequest([manifestPath], Path.Combine(fixture.Path, "runs"), null, false, "framework-e2e"));
+        var progress = new List<RunProgressUpdate>();
+        var result = await new RunnerService().RunAsync(new RunRequest(
+            [manifestPath],
+            Path.Combine(fixture.Path, "runs"),
+            null,
+            false,
+            SuiteId: "framework-e2e",
+            ProgressCallback: progress.Add));
         Assert(result.Status == "COMPLETED", "轮次应完成。");
         Assert(File.Exists(result.DatabasePath), "应生成 SQLite 数据库。");
         Assert(File.Exists(result.LocalExportPath), "应自动生成 local-run.json。");
@@ -84,6 +91,11 @@ public static class Program
         Assert(local["execution_logs"]?.AsArray().Count >= 1, "本地导出应保存运行日志，供历史轮次按能力查看。");
         Assert(local["local_events"]?.AsArray().Count == 1, "应记录一个进程创建事件。");
         Assert(local["cleanup_results"]?.AsArray().Count == 1, "应记录清理结果。");
+        var completedProgress = progress.Single(value => value.Kind == "capability_completed");
+        var progressEvidence = completedProgress.LocalEvidence ?? throw new InvalidOperationException("能力完成进度应携带本地证据。");
+        Assert(progressEvidence["capability"]?["started_at_utc"]?.GetValue<string>() is { Length: > 0 }
+            && progressEvidence["capability"]?["ended_at_utc"]?.GetValue<string>() is { Length: > 0 }, "已完成队列应取得能力开始与结束时间。");
+        Assert(progressEvidence["programs"]?.AsArray().Any(value => value?["role"]?.GetValue<string>() == "actor" && value?["pid"]?.GetValue<int>() > 0) == true, "已完成队列应取得 Actor PID。");
 
         var cloudPath = Path.Combine(fixture.Path, "cloud.json");
         File.WriteAllText(cloudPath, CreateCloudExport(local).ToJsonString(JsonDefaults.Options));
@@ -103,6 +115,9 @@ public static class Program
         var requirements = validation["capabilities"]?[0]?["baseline_requirements"]?.AsArray() ?? throw new InvalidOperationException("结果应包含 BASELINE 要求。");
         Assert(requirements.Count == 13, "进程创建应展示 5 项本地要求、1 项事件数量要求和 7 项云端字段要求。");
         Assert(requirements.Where(value => value?["severity"]?.GetValue<string>() == "required").All(value => value?["status"]?.GetValue<string>() == "passed"), "所有必需 BASELINE 要求都应通过。");
+        var firstCandidate = validation["capabilities"]?[0]?["edr_candidates"]?.AsArray().Single()
+            ?? throw new InvalidOperationException("结果应包含完整 EDR 候选日志。");
+        Assert(firstCandidate["rank"]?.GetValue<int>() == 1 && firstCandidate["raw_event"]?["@table"]?.GetValue<string>() == "ProcEvents", "EDR 候选应保留排名和原始完整日志。");
         var actorPidRequirement = requirements.Single(value => value?["field"]?.GetValue<string>() == "programs.actor.pid");
         Assert(actorPidRequirement?["operator"]?.GetValue<string>() == "present" && actorPidRequirement["expected"] is null && actorPidRequirement["actual"]?.GetValue<int>() > 0, "PID 存在性规则应在 actual 中保留本地 PID，expected 为空表示没有固定 PID。");
         var actorCommandRequirement = requirements.Single(value => value?["field"]?.GetValue<string>() == "programs.actor.command_line");
@@ -128,6 +143,33 @@ public static class Program
         var md5Requirement = missingMd5["capabilities"]?[0]?["baseline_requirements"]?.AsArray().Single(value => value?["field"]?.GetValue<string>() == "process.hash.md5");
         Assert(md5Requirement?["status"]?.GetValue<string>() == "not_evaluated", "本地未采集 MD5 时应标记为未检查，而不是用空值判定失败。");
         Assert(missingMd5["capabilities"]?[0]?["validation_status"]?.GetValue<string>() == "PASS", "信息级 MD5 未检查不应降低必需字段全部通过的能力结论。");
+
+        var multipleCloud = CreateCloudExport(local);
+        var fartherCandidate = multipleCloud[0]!.DeepClone().AsObject();
+        fartherCandidate["Common.EventUUId"] = Ids.NewUuid7();
+        fartherCandidate["Common.EventTime"] = DateTimeOffset.Parse(local["capabilities"]![0]!["started_at_utc"]!.GetValue<string>()).AddMinutes(2).ToUnixTimeMilliseconds();
+        multipleCloud.Add(fartherCandidate);
+        var lowerConfidenceCandidate = multipleCloud[0]!.DeepClone().AsObject();
+        lowerConfidenceCandidate["Common.EventUUId"] = Ids.NewUuid7();
+        lowerConfidenceCandidate["Common.EventTime"] = DateTimeOffset.Parse(local["capabilities"]![0]!["started_at_utc"]!.GetValue<string>()).AddSeconds(1).ToUnixTimeMilliseconds();
+        lowerConfidenceCandidate["Parent.FilePath"] = "C:\\different-parent.exe";
+        multipleCloud.Add(lowerConfidenceCandidate);
+        var multipleCloudPath = Path.Combine(fixture.Path, "multiple-cloud.json");
+        File.WriteAllText(multipleCloudPath, multipleCloud.ToJsonString(JsonDefaults.Options));
+        var multipleCandidates = CompareService.Compare(new CompareRequest(
+            result.LocalExportPath,
+            [multipleCloudPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"),
+            [Path.Combine(repository, "baselines", "windows", "process_create.yaml")],
+            Path.Combine(fixture.Path, "multiple-candidates-result.json")));
+        var rankedCandidates = multipleCandidates["capabilities"]?[0]?["edr_candidates"]?.AsArray()
+            ?? throw new InvalidOperationException("多候选结果缺少 edr_candidates。");
+        Assert(rankedCandidates.Count == 3, "应保留全部三条符合关联条件的 EDR 完整日志。");
+        Assert(rankedCandidates[0]?["correlation_score"]?.GetValue<double>() == rankedCandidates[1]?["correlation_score"]?.GetValue<double>()
+            && rankedCandidates[0]?["time_distance_ms"]?.GetValue<long>() < rankedCandidates[1]?["time_distance_ms"]?.GetValue<long>(), "同关联得分候选应按与本地行为时间的距离由近到远排序。");
+        Assert(rankedCandidates[1]?["correlation_score"]?.GetValue<double>() > rankedCandidates[2]?["correlation_score"]?.GetValue<double>()
+            && rankedCandidates[2]?["time_distance_ms"]?.GetValue<long>() < rankedCandidates[1]?["time_distance_ms"]?.GetValue<long>(), "关联得分应优先于时间距离决定候选置信度顺序。");
+        Assert(multipleCandidates["capabilities"]?[0]?["validation_status"]?.GetValue<string>() == "PASS", "时间距离可以消除同分候选歧义。");
 
         var emptyCloudPath = Path.Combine(fixture.Path, "empty-cloud.json");
         File.WriteAllText(emptyCloudPath, "[]");

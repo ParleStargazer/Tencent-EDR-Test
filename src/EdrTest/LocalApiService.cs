@@ -66,7 +66,8 @@ public sealed record ApiRunCapabilityStep(
     string NameZh,
     int Sequence,
     string Status,
-    string StatusLabel);
+    string StatusLabel,
+    JsonObject? LocalEvidence);
 
 public sealed record ApiRunLogEntry(
     DateTimeOffset TimestampUtc,
@@ -641,7 +642,8 @@ internal sealed class ApiRunCoordinator
                         value["display_name_zh"]?.GetValue<string>() ?? value["capability_id"]?.GetValue<string>() ?? "未知能力",
                         index + 1,
                         StepStatus(capabilityStatus),
-                        StepStatusLabel(capabilityStatus));
+                        StepStatusLabel(capabilityStatus),
+                        BuildLocalEvidence(root!, value));
                 }).ToArray();
                 var started = DateTimeOffset.Parse(run?["started_at_utc"]?.GetValue<string>() ?? throw new InvalidDataException());
                 var endedText = run?["ended_at_utc"]?.GetValue<string>();
@@ -697,6 +699,52 @@ internal sealed class ApiRunCoordinator
         _ => "状态未知",
     };
 
+    private static JsonObject BuildLocalEvidence(JsonObject root, JsonObject capability)
+    {
+        var caseRunId = capability["case_run_id"]?.GetValue<string>() ?? throw new InvalidDataException("能力缺少 case_run_id。");
+        var capabilityEvidence = new JsonObject
+        {
+            ["case_run_id"] = caseRunId,
+            ["capability_id"] = capability["capability_id"]?.DeepClone(),
+            ["status"] = capability["status"]?.DeepClone(),
+            ["started_at_utc"] = capability["started_at_utc"]?.DeepClone(),
+            ["ended_at_utc"] = capability["ended_at_utc"]?.DeepClone(),
+            ["duration_ms"] = capability["duration_ms"]?.DeepClone(),
+            ["observer_started_at_utc"] = capability["observation_window"]?["started_at_utc"]?.DeepClone(),
+            ["observer_ended_at_utc"] = capability["observation_window"]?["ended_at_utc"]?.DeepClone(),
+        };
+        var programs = new JsonArray((root["programs"]?.AsArray()
+            .Select(value => value?.AsObject())
+            .Where(value => value?["case_run_id"]?.GetValue<string>() == caseRunId)
+            .Select(value => (JsonNode)new JsonObject
+            {
+                ["role"] = value!["role"]?.DeepClone(),
+                ["instance_index"] = value["instance_index"]?.DeepClone(),
+                ["executable"] = value["executable"]?.DeepClone(),
+                ["pid"] = value["pid"]?.DeepClone(),
+                ["parent_pid"] = value["parent_pid"]?.DeepClone(),
+                ["command_line"] = value["command_line"]?.DeepClone(),
+                ["started_at_utc"] = value["started_at_utc"]?.DeepClone(),
+                ["ended_at_utc"] = value["ended_at_utc"]?.DeepClone(),
+                ["exit_code"] = value["exit_code"]?.DeepClone(),
+                ["md5"] = value["md5"]?.DeepClone(),
+                ["sha1"] = value["sha1"]?.DeepClone(),
+                ["sha256"] = value["sha256"]?.DeepClone(),
+            }).ToArray() ?? []));
+        var facts = new JsonArray((root["local_facts"]?.AsArray()
+            .Select(value => value?.AsObject())
+            .Where(value => value?["case_run_id"]?.GetValue<string>() == caseRunId)
+            .Select(value => (JsonNode)new JsonObject
+            {
+                ["field"] = $"facts.{value!["key"]?.GetValue<string>()}",
+                ["value"] = value["value"]?.DeepClone(),
+                ["observed_at_utc"] = value["observed_at_utc"]?.DeepClone(),
+                ["source"] = value["source"]?.DeepClone(),
+                ["confidence"] = value["confidence"]?.DeepClone(),
+            }).ToArray() ?? []));
+        return new JsonObject { ["capability"] = capabilityEvidence, ["programs"] = programs, ["facts"] = facts };
+    }
+
     private sealed record HistoricalRun(string RunId, string ExportPath, ApiRunSnapshot Snapshot);
 }
 
@@ -731,7 +779,8 @@ internal sealed class ApiRunState
             value.Manifest.DisplayNameZh ?? value.Manifest.DisplayName ?? value.Manifest.CapabilityId,
             index + 1,
             "pending",
-            "等待执行")).ToList();
+            "等待执行",
+            null)).ToList();
         AddLog(new ApiRunLogEntry(startedAt, "info", "queue", $"轮次已进入队列，共 {steps.Count} 项能力。", null, true));
     }
 
@@ -780,7 +829,7 @@ internal sealed class ApiRunState
                             "CLEANUP_ERROR" => ("error", "清理失败"),
                             _ => ("error", "本地验证失败"),
                         };
-                        steps[index] = step with { Status = mapped.Item1, StatusLabel = mapped.Item2 };
+                        steps[index] = step with { Status = mapped.Item1, StatusLabel = mapped.Item2, LocalEvidence = update.LocalEvidence?.DeepClone().AsObject() };
                         completedCapabilities = steps.Count(value => value.Status is "passed" or "error" or "skipped" or "cancelled");
                     }
                 }

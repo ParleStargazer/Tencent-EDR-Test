@@ -166,12 +166,12 @@ public sealed class CardinalityDefinition
     public int? Max { get; init; }
 }
 
-internal sealed record CanonicalEvent(string RawRef, Dictionary<string, object?> Fields)
+internal sealed record CanonicalEvent(string RawRef, Dictionary<string, object?> Fields, JsonObject Raw)
 {
     public object? Get(string field) => Fields.TryGetValue(field, out var value) ? value : null;
 }
 
-internal sealed record Candidate(CanonicalEvent Event, double Score, IReadOnlyList<string> MatchedAnchors);
+internal sealed record Candidate(CanonicalEvent Event, double Score, long TimeDistanceMs, IReadOnlyList<string> MatchedAnchors);
 internal sealed record CloudRecordObservation(DateTimeOffset? EventTime, string? HostId, string? HostName);
 internal sealed record CloudLoadResult(IReadOnlyList<CanonicalEvent> Events, IReadOnlyList<CloudRecordObservation> Observations);
 
@@ -285,7 +285,7 @@ public static class CompareService
         if (localStatus != "LOCAL_PASS")
         {
             AddUnevaluatedCloudRequirements(outputRequirements, baseline, resolver, "本地能力未通过，因此未检查云端要求。");
-            return CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", "insufficient", 0, null, new JsonArray(), outputRequirements, new JsonArray("本地能力未达到 LOCAL_PASS。"));
+            return CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", "insufficient", 0, null, new JsonArray(), new JsonArray(), outputRequirements, new JsonArray("本地能力未达到 LOCAL_PASS。"));
         }
 
         var failedLocal = localEvaluations
@@ -296,14 +296,16 @@ public static class CompareService
         {
             foreach (var assertion in failedLocal) warnings.Add($"本地前置断言未通过：{assertion.Field}");
             AddUnevaluatedCloudRequirements(outputRequirements, baseline, resolver, "本地前置要求未满足，因此未检查云端要求。");
-            return CapabilityResult(caseRunId, capabilityId, localStatus, "INCONCLUSIVE", "insufficient", 0, null, new JsonArray(), outputRequirements, warnings);
+            return CapabilityResult(caseRunId, capabilityId, localStatus, "INCONCLUSIVE", "insufficient", 0, null, new JsonArray(), new JsonArray(), outputRequirements, warnings);
         }
 
         var start = DateTimeOffset.Parse(RequiredString(capability, "started_at_utc"), CultureInfo.InvariantCulture);
         var end = DateTimeOffset.Parse(RequiredString(capability, "ended_at_utc"), CultureInfo.InvariantCulture);
         var exportCoverage = DetermineExportCoverage(localRoot, start, end, cloud.Observations, cloudManifest, manifestFilesVerified);
+        var correlationTime = LocalCorrelationTime(localRoot, caseRunId, start);
         var totalCandidates = 0;
         var outputAssertions = new JsonArray();
+        var outputCandidates = new JsonArray();
         JsonObject? firstSelected = null;
         var overallStatus = "PASS";
 
@@ -311,12 +313,17 @@ public static class CompareService
         {
             var candidates = cloud.Events
                 .Where(item => EventMatches(item, expectation, start, end, baseline.Correlation))
-                .Select(item => Score(item, baseline.Correlation.Anchors, resolver))
+                .Select(item => Score(item, baseline.Correlation.Anchors, resolver, correlationTime))
                 .Where(item => item.Score > 0)
                 .OrderByDescending(item => item.Score)
+                .ThenBy(item => item.TimeDistanceMs)
                 .ThenBy(item => item.Event.RawRef, StringComparer.Ordinal)
                 .ToArray();
             totalCandidates += candidates.Length;
+            for (var candidateIndex = 0; candidateIndex < candidates.Length; candidateIndex++)
+            {
+                outputCandidates.Add(CandidateJson(expectation.Id, candidateIndex + 1, candidates[candidateIndex]));
+            }
             var cardinalityStatus = candidates.Length < expectation.Cardinality.Min
                 ? exportCoverage is "verified" or "inferred" or "assumed" ? "failed" : "not_evaluated"
                 : expectation.Cardinality.Max is { } cardinalityMaximum && candidates.Length > cardinalityMaximum
@@ -351,7 +358,7 @@ public static class CompareService
                 overallStatus = Worse(overallStatus, "INCONCLUSIVE");
             }
             if (candidates.Length == 0) continue;
-            if (candidates.Length > 1 && candidates[0].Score == candidates[1].Score)
+            if (candidates.Length > 1 && candidates[0].Score == candidates[1].Score && candidates[0].TimeDistanceMs == candidates[1].TimeDistanceMs)
             {
                 warnings.Add($"“{baseline.Title ?? capabilityId}”存在多个同分候选事件，无法唯一关联（{expectation.Id}）。");
                 overallStatus = Worse(overallStatus, "INCONCLUSIVE");
@@ -365,6 +372,8 @@ public static class CompareService
                 ["raw_ref"] = selected.Event.RawRef,
                 ["event_id"] = Values.ToNode(selected.Event.Get("event.id")),
                 ["correlation_score"] = selected.Score,
+                ["confidence"] = CandidateConfidence(selected),
+                ["time_distance_ms"] = selected.TimeDistanceMs,
                 ["matched_anchors"] = new JsonArray(selected.MatchedAnchors.Select(x => (JsonNode)x).ToArray()),
             };
             foreach (var assertion in expectation.Assertions)
@@ -385,7 +394,7 @@ public static class CompareService
             warnings.Add("BASELINE 没有 cloud_expectations。");
             overallStatus = "INCONCLUSIVE";
         }
-        return CapabilityResult(caseRunId, capabilityId, localStatus, overallStatus, exportCoverage, totalCandidates, firstSelected, outputAssertions, outputRequirements, warnings);
+        return CapabilityResult(caseRunId, capabilityId, localStatus, overallStatus, exportCoverage, totalCandidates, firstSelected, outputCandidates, outputAssertions, outputRequirements, warnings);
     }
 
     private static void AddUnevaluatedCloudRequirements(JsonArray output, BaselineDefinition baseline, LocalResolver resolver, string message)
@@ -532,7 +541,7 @@ public static class CompareService
             && string.Equals(localHostname, observation.HostName, StringComparison.OrdinalIgnoreCase))
         || (!string.IsNullOrWhiteSpace(observation.HostId) && localIds.Contains(observation.HostId));
 
-    private static Candidate Score(CanonicalEvent item, IReadOnlyList<CorrelationAnchor> anchors, LocalResolver resolver)
+    private static Candidate Score(CanonicalEvent item, IReadOnlyList<CorrelationAnchor> anchors, LocalResolver resolver, DateTimeOffset correlationTime)
     {
         double score = 0;
         var matched = new List<string>();
@@ -547,7 +556,58 @@ public static class CompareService
             if (anchor.Strength == "strong") matchedStrong = true;
             matched.Add($"{anchor.LocalField}={anchor.CloudField}");
         }
-        return new Candidate(item, requiresStrong && !matchedStrong ? 0 : score, matched);
+        var eventTime = CanonicalEventTime(item);
+        var distance = eventTime is null
+            ? long.MaxValue
+            : (long)Math.Min(long.MaxValue, Math.Abs((eventTime.Value - correlationTime).TotalMilliseconds));
+        return new Candidate(item, requiresStrong && !matchedStrong ? 0 : score, distance, matched);
+    }
+
+    private static DateTimeOffset LocalCorrelationTime(JsonObject localRoot, string caseRunId, DateTimeOffset fallback)
+    {
+        var eventTime = localRoot["local_events"]?.AsArray()
+            .Select(value => value?.AsObject())
+            .Where(value => value?["case_run_id"]?.GetValue<string>() == caseRunId)
+            .OrderBy(value => value?["sequence"]?.GetValue<int>() ?? int.MaxValue)
+            .Select(value => value?["occurred_at_utc"]?.GetValue<string>())
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        return DateTimeOffset.TryParse(eventTime, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed) ? parsed : fallback;
+    }
+
+    private static DateTimeOffset? CanonicalEventTime(CanonicalEvent item) =>
+        item.Get("event.created") is string text
+        && DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
+            ? parsed
+            : null;
+
+    private static string CandidateConfidence(Candidate candidate) => candidate.Score switch
+    {
+        >= 200 => "high",
+        >= 100 => "medium",
+        _ => "low",
+    };
+
+    private static JsonObject CandidateJson(string expectationId, int rank, Candidate candidate)
+    {
+        var canonical = new JsonObject();
+        foreach (var (field, value) in candidate.Event.Fields.OrderBy(value => value.Key, StringComparer.Ordinal))
+        {
+            canonical[field] = Values.ToNode(value);
+        }
+        return new JsonObject
+        {
+            ["expectation_id"] = expectationId,
+            ["rank"] = rank,
+            ["confidence"] = CandidateConfidence(candidate),
+            ["correlation_score"] = candidate.Score,
+            ["time_distance_ms"] = candidate.TimeDistanceMs,
+            ["event_time_utc"] = Values.ToNode(candidate.Event.Get("event.created")),
+            ["raw_ref"] = candidate.Event.RawRef,
+            ["event_id"] = Values.ToNode(candidate.Event.Get("event.id")),
+            ["matched_anchors"] = new JsonArray(candidate.MatchedAnchors.Select(value => (JsonNode)value).ToArray()),
+            ["canonical_event"] = canonical,
+            ["raw_event"] = candidate.Event.Raw.DeepClone(),
+        };
     }
 
     private static bool EventMatches(CanonicalEvent item, CloudExpectation expectation, DateTimeOffset start, DateTimeOffset end, CorrelationDefinition correlation)
@@ -659,7 +719,10 @@ public static class CompareService
                 }
                 fields[field] = value;
             }
-            output.Add(new CanonicalEvent(rawRef, fields));
+            output.Add(new CanonicalEvent(
+                rawRef,
+                fields,
+                JsonNode.Parse(record.GetRawText())?.AsObject() ?? throw new InvalidDataException("EDR 日志记录必须是 JSON 对象。")));
         }
     }
 
@@ -826,7 +889,7 @@ public static class CompareService
         return false;
     }
 
-    private static JsonObject CapabilityResult(string caseRunId, string capabilityId, string localStatus, string validationStatus, string exportCoverage, int candidateCount, JsonObject? selected, JsonArray assertions, JsonArray requirements, JsonArray warnings) => new()
+    private static JsonObject CapabilityResult(string caseRunId, string capabilityId, string localStatus, string validationStatus, string exportCoverage, int candidateCount, JsonObject? selected, JsonArray candidates, JsonArray assertions, JsonArray requirements, JsonArray warnings) => new()
     {
         ["case_run_id"] = caseRunId,
         ["capability_id"] = capabilityId,
@@ -835,13 +898,14 @@ public static class CompareService
         ["export_coverage"] = exportCoverage,
         ["candidate_count"] = candidateCount,
         ["selected_event"] = selected,
+        ["edr_candidates"] = candidates,
         ["assertions"] = assertions,
         ["baseline_requirements"] = requirements,
         ["warnings"] = warnings,
     };
 
     private static JsonObject NotCompared(string capabilityId, string caseRunId, string localStatus, string warning) =>
-        CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", "insufficient", 0, null, new JsonArray(), new JsonArray(), new JsonArray(warning));
+        CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", "insufficient", 0, null, new JsonArray(), new JsonArray(), new JsonArray(), new JsonArray(warning));
 
     private static string Worse(string current, string candidate)
     {
