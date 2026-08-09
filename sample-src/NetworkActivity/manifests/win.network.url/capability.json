@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.network.url",
+  "version": "0.1.0",
+  "display_name_zh": "URL 访问",
+  "display_name_en": "URL",
+  "description": "Actor 使用原始 HTTP GET 访问 Controller 编排的本机 URL，Helper 以唯一 nonce 响应并确认完整请求路径。",
+  "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
+  "risk_level": "L0",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "NetworkUrl.Controller.exe" },
+  "participants": [
+    { "role": "actor", "executable": "NetworkUrl.Actor.exe" },
+    { "role": "helper", "executable": "NetworkUrl.Helper.exe" }
+  ],
+  "parameters": {
+    "setup_delay_ms": { "type": "integer", "required": true, "default": 250, "minimum": 0, "maximum": 5000 },
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 },
+    "payload_size": { "type": "integer", "required": true, "default": 8192, "minimum": 256, "maximum": 1048576 }
+  },
+  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "network.url_access_succeeded", "network.occurred_at_utc", "network.actor_pid", "network.actor_executable",
+    "network.local.address", "network.local.port", "network.remote.address", "network.remote.port",
+    "network.http.url", "network.http.host", "network.http.path", "network.http.method", "network.http.status_code", "correlation.nonce"
+  ]
+}

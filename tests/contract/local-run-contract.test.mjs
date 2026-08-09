@@ -302,6 +302,81 @@ test("User Account Activity 五项清单、BASELINE、Canonical 字段和权限�
   assert.match(accountController, /contains_password.*false/s);
 });
 
+test("Network Activity 五项清单、BASELINE、回环编排和腾讯路由完整", async () => {
+  const normalizedSchema = await readJson("schemas/normalized-event.schema.json");
+  const mapping = await readFile(
+    new URL("mappings/tencent-edr-proc-events-v1.yaml", root),
+    "utf8",
+  );
+  const genericMapping = await readFile(
+    new URL("mappings/generic-network-activity-v1.yaml", root),
+    "utf8",
+  );
+  const controller = await readFile(
+    new URL("sample-src/NetworkActivity/NetworkActivity.Controller/Program.cs", root),
+    "utf8",
+  );
+  const behavior = await readFile(
+    new URL("sample-src/NetworkActivity/NetworkActivity.Behavior/Program.cs", root),
+    "utf8",
+  );
+  const startScript = await readFile(new URL("scripts/Start-EdrTest.ps1", root), "utf8");
+  const capabilities = [
+    ["win.network.tcp", "network_tcp.yaml", "tcp_connect"],
+    ["win.network.udp", "network_udp.yaml", "udp_connect"],
+    ["win.network.url", "network_url.yaml", "url_access"],
+    ["win.network.dns", "network_dns.yaml", "dns_query"],
+    ["win.network.file_download", "network_file_download.yaml", "file_download"],
+  ];
+
+  for (const [capabilityId, baselineName, operation] of capabilities) {
+    const manifest = await readJson(
+      `sample-src/NetworkActivity/manifests/${capabilityId}/capability.json`,
+    );
+    const baseline = await readFile(
+      new URL(`baselines/windows/${baselineName}`, root),
+      "utf8",
+    );
+    assert.equal(manifest.capability_id, capabilityId);
+    assert.equal(manifest.version, "0.1.0");
+    assert.equal(manifest.risk_level, "L0");
+    assert.equal(manifest.required_privilege, "standard_user");
+    assert.equal(manifest.network.required, false);
+    assert.deepEqual(manifest.participants.map((item) => item.role), ["actor", "helper"]);
+    assert.ok(manifest.expected_fact_keys.includes(`network.${operation}_succeeded`));
+    assert.ok(manifest.expected_fact_keys.includes("network.occurred_at_utc"));
+    assert.ok(manifest.expected_fact_keys.includes("network.actor_pid"));
+    assert.ok(manifest.expected_fact_keys.includes("network.remote.port"));
+    assert.match(baseline, /max_time_difference_ms: 15/);
+    assert.match(baseline, new RegExp(`baseline_id: ${capabilityId.replaceAll(".", "\\.")}`));
+  }
+
+  assert.ok("url" in normalizedSchema.properties);
+  assert.ok("http" in normalizedSchema.properties);
+  assert.match(mapping, /route_id: network-tcp-socket-request/);
+  assert.match(mapping, /route_id: network-udp-socket-request/);
+  assert.match(mapping, /route_id: network-dns-socket-request/);
+  assert.match(mapping, /route_id: network-http-url-access/);
+  assert.match(mapping, /route_id: network-candidate-discovery/);
+  assert.match(mapping, /transform: \[network_direction\]/);
+  assert.match(mapping, /transform: \[http_method\]/);
+  assert.match(mapping, /"Child\.DstPort": 53/);
+  assert.match(mapping, /"url\.full": \{ source: "Child\.Url" \}/);
+  assert.match(genericMapping, /route_id: downloaded-file/);
+  const downloadBaseline = await readFile(
+    new URL("baselines/windows/network_file_download.yaml", root),
+    "utf8",
+  );
+  assert.match(downloadBaseline, /id: download-http-event[\s\S]*event_actions: \[url_access\]/);
+  assert.match(downloadBaseline, /id: downloaded-file-event[\s\S]*event_actions: \[create\]/);
+  assert.match(controller, /actor_helper_protocol_and_endpoint_cross_check/);
+  assert.match(controller, /Hashing\.FileSha256\(state\.Destination\)/);
+  assert.match(behavior, /new IPEndPoint\(IPAddress\.Loopback, 53\)/);
+  assert.match(behavior, /192\.0\.2\.123/);
+  assert.doesNotMatch(behavior, /8\.8\.8\.8|1\.1\.1\.1/);
+  assert.match(startScript, /Build-NetworkActivitySamples\.ps1/);
+});
+
 test("260808 腾讯 EDR 全字段目录完整、脱敏且可复现", async () => {
   const catalog = await readJson(
     "docs/reference/tencent-edr-260808-field-catalog.json",

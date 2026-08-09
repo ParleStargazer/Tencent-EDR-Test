@@ -98,7 +98,7 @@
         "transform": {
           "type": "array",
           "items": {
-            "enum": ["unix_s_to_utc", "unix_ms_to_utc", "parse_datetime_to_utc", "windows_path", "lowercase", "trim"]
+            "enum": ["unix_s_to_utc", "unix_ms_to_utc", "parse_datetime_to_utc", "windows_path", "network_direction", "http_method", "lowercase", "trim"]
           }
         },
         "on_error": {},

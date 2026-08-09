@@ -1,0 +1,51 @@
+schema_version: "1.1"
+baseline_id: win.network.udp
+version: "0.1.0"
+title: Windows UDP 连接遥测
+description: 以本机 Actor 与受控 UDP Helper 交叉确认的数据报端点和时间为绝对基准，验证 EDR 出站 UDP 遥测。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L0
+capability:
+  id: win.network.udp
+  version: "0.1.0"
+  parameters: { setup_delay_ms: 250, post_operation_hold_ms: 1500, payload_size: 8192 }
+local_requirements:
+  - { field: facts.network.udp_connect_succeeded, operator: equals, expected: true }
+  - { field: facts.network.occurred_at_utc, operator: present }
+  - { field: facts.network.actor_pid, operator: present }
+  - { field: facts.network.actor_executable, operator: present }
+  - { field: facts.network.local.port, operator: present }
+  - { field: facts.network.remote.port, operator: present }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.network.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.network.actor_pid, cloud_field: process.pid, strength: medium }
+    - { local_field: facts.network.remote.port, cloud_field: network.destination_port, strength: medium }
+cloud_expectations:
+  - id: udp-connection-event
+    event_type: network
+    event_actions: [udp_connect]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.network.occurred_at_utc
+      anchors:
+        - { local_field: facts.network.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: process.pid, operator: equals, expected_from_local: facts.network.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.network.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: network.transport, operator: equals, expected: udp, severity: required, normalizers: [lowercase] }
+      - { field: network.direction, operator: equals, expected: outbound, severity: recommended, normalizers: [lowercase] }
+      - { field: network.source_port, operator: equals, expected_from_local: facts.network.local.port, severity: required }
+      - { field: network.destination_ip, operator: equals, expected_from_local: facts.network.remote.address, severity: required }
+      - { field: network.destination_port, operator: equals, expected_from_local: facts.network.remote.port, severity: required }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: active
+  references: [Tencent EDR NetworkEvents / SocketRequest]

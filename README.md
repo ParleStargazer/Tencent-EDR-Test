@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目已实现可运行的首版 Windows 框架：能力包发现与校验、Controller 串行调度、每轮独立 SQLite、确定性本地 JSON 导出、云端日志映射和 BASELINE 离线比较已经形成闭环。Process Activity 六项、File Manipulation 五项和 User Account Activity 五项真实能力样本均已实现；中文前端通过本机回环 API 直接编排 Runner、查看轮次并提交离线比较。
+项目已实现可运行的首版 Windows 框架：能力包发现与校验、Controller 串行调度、每轮独立 SQLite、确定性本地 JSON 导出、云端日志映射和 BASELINE 离线比较已经形成闭环。Process Activity 六项、File Manipulation 五项、User Account Activity 五项和 Network Activity 五项真实能力样本均已实现；中文前端通过本机回环 API 直接编排 Runner、查看轮次并提交离线比较。
 
 - 中文前端控制面：[web/README.md](web/README.md)
 - 详细设计：[docs/DESIGN.md](docs/DESIGN.md)
@@ -19,6 +19,7 @@
 - Process Activity 六项能力样本：[docs/PROCESS-ACTIVITY-SAMPLES.md](docs/PROCESS-ACTIVITY-SAMPLES.md)
 - File Manipulation 五项能力样本：[docs/FILE-MANIPULATION-SAMPLES.md](docs/FILE-MANIPULATION-SAMPLES.md)
 - User Account Activity 五项能力样本：[docs/USER-ACCOUNT-ACTIVITY-SAMPLES.md](docs/USER-ACCOUNT-ACTIVITY-SAMPLES.md)
+- Network Activity 五项能力样本：[docs/NETWORK-ACTIVITY-SAMPLES.md](docs/NETWORK-ACTIVITY-SAMPLES.md)
 - 腾讯 EDR 260808 全字段目录说明：[docs/TENCENT-EDR-FIELD-CATALOG.md](docs/TENCENT-EDR-FIELD-CATALOG.md)
 - 腾讯 EDR 脱敏字段与示例数据：[docs/reference/tencent-edr-260808-field-catalog.json](docs/reference/tencent-edr-260808-field-catalog.json)
 - 本地前后端与一键启动说明：[docs/LOCAL-CONTROL-PLANE.md](docs/LOCAL-CONTROL-PLANE.md)
@@ -27,7 +28,7 @@
 - 验证结果 Schema：[schemas/validation-result.schema.json](schemas/validation-result.schema.json)
 - 规范化事件 Schema：[schemas/normalized-event.schema.json](schemas/normalized-event.schema.json)
 - 云端映射 Schema：[schemas/mapping-profile.schema.json](schemas/mapping-profile.schema.json)
-- 腾讯 EDR 进程与文件日志映射：[mappings/tencent-edr-proc-events-v1.yaml](mappings/tencent-edr-proc-events-v1.yaml)
+- 腾讯 EDR 进程、文件、账号与网络日志映射：[mappings/tencent-edr-proc-events-v1.yaml](mappings/tencent-edr-proc-events-v1.yaml)
 - 环境配置示例：[configs/environments.example.yaml](configs/environments.example.yaml)
 - 云端导出清单示例：[configs/cloud-export-manifest.example.json](configs/cloud-export-manifest.example.json)
 - 第三方参考说明：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
@@ -67,9 +68,12 @@ dotnet run --project src/EdrTest -- serve --repo-root .
 pwsh -NoProfile -File scripts/Build-ProcessActivitySamples.ps1
 pwsh -NoProfile -File scripts/Build-FileManipulationSamples.ps1
 pwsh -NoProfile -File scripts/Build-UserAccountActivitySamples.ps1
+pwsh -NoProfile -File scripts/Build-NetworkActivitySamples.ps1
 
 pwsh -NoProfile -File scripts/Test-ProcessActivitySamples.ps1
 pwsh -NoProfile -File scripts/Test-FileManipulationSamples.ps1
+pwsh -NoProfile -File scripts/Test-UserAccountActivitySamples.ps1
+pwsh -NoProfile -File scripts/Test-NetworkActivitySamples.ps1
 
 dotnet run --project src/EdrTest -- run `
   --capability win.process.create `
@@ -86,7 +90,7 @@ dotnet run --project src/EdrTest -- compare `
   --conclusion-out .\validation-conclusion.md
 ```
 
-Process Activity、File Manipulation 和 User Account Activity 构建会直接清理并覆盖 `samples/` 下的同名旧能力包。`win.process.image_load@0.3.0` 包含三个原生 DLL 加载子项和一个由真实 `dotnet.exe` Helper 执行的托管程序集加载子项；比较器仅使用与本地能力版本完全匹配的 BASELINE。
+Process Activity、File Manipulation、User Account Activity 和 Network Activity 构建会直接清理并覆盖 `samples/` 下的同名旧能力包。网络五项只使用本机回环端点，由 Controller 同时编排 Actor 与 Helper；`win.process.image_load@0.3.0` 包含三个原生 DLL 加载子项和一个由真实 `dotnet.exe` Helper 执行的托管程序集加载子项。比较器仅使用与本地能力版本完全匹配的 BASELINE。
 
 比较命令会同时生成结构化 `validation-result.json` 和中文 `validation-conclusion.md`；未指定 `--conclusion-out` 时，Markdown 结论自动写入 JSON 同目录。同一个 `EdrTest.exe` 还提供 `export` 和 `inspect` 子命令。运行 `dotnet run --project src/EdrTest -- help` 可查看完整参数。
 

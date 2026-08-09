@@ -145,6 +145,33 @@
       },
       "additionalProperties": false
     },
+    "url": {
+      "type": ["object", "null"],
+      "properties": {
+        "full": { "type": ["string", "null"] },
+        "domain": { "type": ["string", "null"] },
+        "path": { "type": ["string", "null"] },
+        "scheme": { "type": ["string", "null"] },
+        "port": { "type": ["integer", "null"], "minimum": 0, "maximum": 65535 }
+      },
+      "additionalProperties": false
+    },
+    "http": {
+      "type": ["object", "null"],
+      "properties": {
+        "request": {
+          "type": ["object", "null"],
+          "properties": { "method": { "type": ["string", "null"] } },
+          "additionalProperties": false
+        },
+        "response": {
+          "type": ["object", "null"],
+          "properties": { "status_code": { "type": ["integer", "null"], "minimum": 100, "maximum": 599 } },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "correlation": {
       "type": ["object", "null"],
       "properties": {

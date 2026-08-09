@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.network.udp",
+  "version": "0.1.0",
+  "display_name_zh": "UDP 连接",
+  "display_name_en": "UDP Connection",
+  "description": "Actor 向 Controller 编排的本机 UDP Helper 发送唯一 nonce 数据报，并交叉确认源端点与目标端点。",
+  "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
+  "risk_level": "L0",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "NetworkUdp.Controller.exe" },
+  "participants": [
+    { "role": "actor", "executable": "NetworkUdp.Actor.exe" },
+    { "role": "helper", "executable": "NetworkUdp.Helper.exe" }
+  ],
+  "parameters": {
+    "setup_delay_ms": { "type": "integer", "required": true, "default": 250, "minimum": 0, "maximum": 5000 },
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 },
+    "payload_size": { "type": "integer", "required": true, "default": 8192, "minimum": 256, "maximum": 1048576 }
+  },
+  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "network.udp_connect_succeeded", "network.occurred_at_utc", "network.completed_at_utc",
+    "network.actor_pid", "network.actor_executable", "network.actor_command_line", "network.helper_pid",
+    "network.transport", "network.direction", "network.local.address", "network.local.port",
+    "network.remote.address", "network.remote.port", "network.bytes_sent", "network.bytes_received", "correlation.nonce"
+  ]
+}

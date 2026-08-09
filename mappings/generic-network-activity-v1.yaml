@@ -1,0 +1,69 @@
+schema_version: "1.0"
+profile_id: generic-network-activity-v1
+vendor: Generic
+product: Network Activity Self-Test Fixture
+description: 用于验证五项 Network Activity BASELINE 与比较器的扁平 JSON 适配；不是任何 EDR 厂商的生产映射。
+
+input:
+  containers: [json-array, jsonl]
+  encoding: utf-8
+  record_selector:
+    all: { fixture: NetworkActivity }
+  event_id_field: event_id
+  host_id_field: host_id
+  event_time: { field: event_time, format: iso8601 }
+
+routes:
+  - route_id: network-activity
+    when: { table: NetworkActivity }
+    canonical:
+      "event.type": { constant: network }
+      "event.action": { source: action }
+      "event.category": { constant: network }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "process.pid": { source: actor_pid }
+      "process.entity_id": { source: actor_entity_id }
+      "process.name": { source: actor_name }
+      "process.executable": { source: actor_executable, transform: [windows_path] }
+      "process.command_line": { source: actor_command_line }
+      "network.transport": { source: transport, transform: [lowercase] }
+      "network.direction": { source: direction, transform: [lowercase] }
+      "network.source_ip": { source: source_ip }
+      "network.source_port": { source: source_port }
+      "network.destination_ip": { source: destination_ip }
+      "network.destination_port": { source: destination_port }
+      "url.full": { source: url, on_empty: null }
+      "url.domain": { source: host, transform: [lowercase], on_empty: null }
+      "http.request.method": { source: method, on_empty: null }
+      "dns.question": { source: dns_question, transform: [lowercase], on_empty: null }
+      "dns.answers": { source: dns_answers, on_empty: null }
+
+  - route_id: downloaded-file
+    when: { table: NetworkDownloadedFile }
+    canonical:
+      "event.type": { constant: file }
+      "event.action": { constant: create }
+      "event.category": { constant: file }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "process.pid": { source: actor_pid }
+      "process.entity_id": { source: actor_entity_id }
+      "process.name": { source: actor_name }
+      "process.executable": { source: actor_executable, transform: [windows_path] }
+      "process.command_line": { source: actor_command_line }
+      "file.path": { source: file_path, transform: [windows_path] }
+      "file.name": { source: file_name }
+      "file.size": { source: file_size }
+      "file.hash.md5": { source: file_md5, transform: [lowercase] }
+      "file.hash.sha256": { source: file_sha256, transform: [lowercase] }
+
+raw_reference:
+  id_field: event_id
+  ordinal_base: 0
+
+unmapped_fields:
+  policy: count-and-ignore
+  preserve_in_report: false

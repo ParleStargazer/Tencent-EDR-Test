@@ -2,7 +2,7 @@ schema_version: "1.0"
 profile_id: tencent-edr-proc-events-v1
 vendor: Tencent
 product: Tencent EDR
-description: 将控制台导出的 Windows 进程、注入、模块与文件事件映射为平台 Canonical Event。
+description: 将控制台导出的 Windows 进程、注入、模块、文件、账号与网络事件映射为平台 Canonical Event。
 
 input:
   containers:
@@ -20,6 +20,113 @@ input:
     format: unix_ms
 
 routes:
+  - route_id: network-dns-socket-request
+    when:
+      "Action.Type": Network
+      "Action.Name": SocketRequest
+      "Child.Protocol": udp
+      "Child.DstPort": 53
+    canonical:
+      "event.type": { constant: network }
+      "event.action": { constant: dns_query }
+      "event.category": { constant: network }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid" }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName" }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path] }
+      "process.command_line": { source: "Parent.ProcCmdline" }
+      "network.transport": { constant: udp }
+      "network.direction": { source: "Child.Direct", transform: [network_direction], on_empty: null }
+      "network.source_ip": { source: "Child.SrcIp" }
+      "network.source_port": { source: "Child.SrcPort" }
+      "network.destination_ip": { source: "Child.DstIp" }
+      "network.destination_port": { source: "Child.DstPort" }
+
+  - route_id: network-udp-socket-request
+    when:
+      "Action.Type": Network
+      "Action.Name": SocketRequest
+      "Child.Protocol": udp
+    canonical:
+      "event.type": { constant: network }
+      "event.action": { constant: udp_connect }
+      "event.category": { constant: network }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid" }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName" }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path] }
+      "process.command_line": { source: "Parent.ProcCmdline" }
+      "network.transport": { constant: udp }
+      "network.direction": { source: "Child.Direct", transform: [network_direction], on_empty: null }
+      "network.source_ip": { source: "Child.SrcIp" }
+      "network.source_port": { source: "Child.SrcPort" }
+      "network.destination_ip": { source: "Child.DstIp" }
+      "network.destination_port": { source: "Child.DstPort" }
+
+  - route_id: network-tcp-socket-request
+    when:
+      "Action.Type": Network
+      "Action.Name": SocketRequest
+      "Child.Protocol": tcp
+    canonical:
+      "event.type": { constant: network }
+      "event.action": { constant: tcp_connect }
+      "event.category": { constant: network }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid" }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName" }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path] }
+      "process.command_line": { source: "Parent.ProcCmdline" }
+      "network.transport": { constant: tcp }
+      "network.direction": { source: "Child.Direct", transform: [network_direction], on_empty: null }
+      "network.source_ip": { source: "Child.SrcIp" }
+      "network.source_port": { source: "Child.SrcPort" }
+      "network.destination_ip": { source: "Child.DstIp" }
+      "network.destination_port": { source: "Child.DstPort" }
+
+  - route_id: network-http-url-access
+    when:
+      "Action.Type": Network
+      "Action.Name": HttpRequest
+    canonical:
+      "event.type": { constant: network }
+      "event.action": { constant: url_access }
+      "event.category": { constant: network }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid" }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName" }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path] }
+      "process.command_line": { source: "Parent.ProcCmdline" }
+      "network.transport": { constant: tcp }
+      "network.direction": { source: "Child.Direct", transform: [network_direction], on_empty: null }
+      "network.source_ip": { source: "Child.SrcIp" }
+      "network.source_port": { source: "Child.SrcPort" }
+      "network.destination_ip": { source: "Child.DstIp" }
+      "network.destination_port": { source: "Child.DstPort" }
+      "url.full": { source: "Child.Url" }
+      "url.domain": { source: "Child.Host", transform: [lowercase], on_empty: null }
+      "http.request.method": { constant: GET }
+
   - route_id: process-create
     when:
       "Action.Type": Proc
@@ -649,6 +756,37 @@ routes:
       "parent_process.start": { source: "Parent.ProcCreateTime", transform: [unix_ms_to_utc], on_zero: null }
       "user.name": { source: "Child.ProcUserName", on_empty: null }
       "user.domain": { source: "Child.ProcDomainName", on_empty: null }
+
+  # 网络候选发现不依赖 Action.Name。未知或新版厂商动作仍可依靠本地 Actor、端点、URL
+  # 和 15 ms 时间证据进入比较；Action.Name 只保留为语义提示或可选消歧字段。
+  - route_id: network-candidate-discovery
+    when:
+      "OS": Windows
+      "@table": NetworkEvents
+    canonical:
+      "event.type": { constant: network }
+      "event.action": { source: "Action.Name", on_empty: unknown }
+      "event.category": { constant: network }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "host.os": { source: "Environment.OsVersion" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "network.transport": { source: "Child.Protocol", transform: [lowercase], on_empty: null }
+      "network.direction": { source: "Child.Direct", transform: [network_direction], on_empty: null }
+      "network.source_ip": { source: "Child.SrcIp", on_empty: null }
+      "network.source_port": { source: "Child.SrcPort", on_zero: null }
+      "network.destination_ip": { source: "Child.DstIp", on_empty: null }
+      "network.destination_port": { source: "Child.DstPort", on_zero: null }
+      "url.full": { source: "Child.Url", on_empty: null }
+      "url.domain": { source: "Child.Host", transform: [lowercase], on_empty: null }
+      "http.request.method": { source: "Child.FlowTags", transform: [http_method], on_empty: null }
 
   # 通用文件候选发现路由不依赖 Action.Name。它保留时间、Child 文件字段和 Parent 程序字段，
   # 让比较器按本地路径/程序/PID 锚点评分并以时间距离排序；事件类型和 Action 只作展示提示。

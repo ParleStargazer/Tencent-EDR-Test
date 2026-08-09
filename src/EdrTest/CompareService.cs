@@ -1415,6 +1415,8 @@ public static class CompareService
         "lowercase" => value?.ToString()?.ToLowerInvariant(),
         "trim" => value?.ToString()?.Trim(),
         "windows_path" => NormalizeWindowsPath(value?.ToString()),
+        "network_direction" => NormalizeNetworkDirection(value?.ToString()),
+        "http_method" => NormalizeHttpMethod(value?.ToString()),
         "unix_ms_to_utc" when TryInt64(value, out var milliseconds) => Values.Utc(DateTimeOffset.FromUnixTimeMilliseconds(milliseconds)),
         "unix_s_to_utc" when TryInt64(value, out var seconds) => Values.Utc(DateTimeOffset.FromUnixTimeSeconds(seconds)),
         "parse_datetime_to_utc" when DateTimeOffset.TryParse(value?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var timestamp) => Values.Utc(timestamp),
@@ -1442,6 +1444,23 @@ public static class CompareService
     private static string? NormalizeWindowsPath(string? value) => string.IsNullOrWhiteSpace(value)
         ? value
         : value.Trim().Replace('/', '\\').TrimEnd('\\').ToLowerInvariant();
+
+    private static string? NormalizeNetworkDirection(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "出站" or "outbound" or "egress" => "outbound",
+        "入站" or "inbound" or "ingress" => "inbound",
+        var direction => direction,
+    };
+
+    private static string? NormalizeHttpMethod(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "httpget" or "get" => "GET",
+        "httppost" or "post" => "POST",
+        "httpput" or "put" => "PUT",
+        "httpdelete" or "delete" => "DELETE",
+        "httphead" or "head" => "HEAD",
+        var method => method?.ToUpperInvariant(),
+    };
 
     private static bool Equivalent(object? left, object? right)
     {
