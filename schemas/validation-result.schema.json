@@ -132,7 +132,9 @@
           "candidate_count",
           "local_export_block",
           "local_baseline_matches",
-          "assertions"
+          "assertions",
+          "method_selection",
+          "method_results"
         ],
         "properties": {
           "case_run_id": { "type": "string", "minLength": 16 },
@@ -150,6 +152,57 @@
           },
           "export_coverage": { "enum": ["verified", "inferred", "assumed", "insufficient"] },
           "candidate_count": { "type": "integer", "minimum": 0 },
+          "method_selection": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["strategy", "selected_method_id", "selected_method_title", "selected_method_status", "notice"],
+                "properties": {
+                  "strategy": { "const": "best" },
+                  "selected_method_id": { "type": "string", "minLength": 1 },
+                  "selected_method_title": { "type": "string", "minLength": 1 },
+                  "selected_method_status": { "enum": ["PASS", "PARTIAL", "FAIL", "INCONCLUSIVE"] },
+                  "notice": { "type": "string", "minLength": 1 }
+                }
+              },
+              { "type": "null" }
+            ]
+          },
+          "method_results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "method_id",
+                "method_title",
+                "expectation_id",
+                "status",
+                "selected_for_conclusion",
+                "candidate_count",
+                "qualified_candidate_count",
+                "passed_requirement_count",
+                "requirement_count",
+                "warnings"
+              ],
+              "properties": {
+                "method_id": { "type": "string", "minLength": 1 },
+                "method_title": { "type": "string", "minLength": 1 },
+                "expectation_id": { "type": "string", "minLength": 1 },
+                "status": { "enum": ["PASS", "PARTIAL", "FAIL", "INCONCLUSIVE"] },
+                "selected_for_conclusion": { "type": "boolean" },
+                "candidate_count": { "type": "integer", "minimum": 0 },
+                "qualified_candidate_count": { "type": "integer", "minimum": 0 },
+                "passed_requirement_count": { "type": "integer", "minimum": 0 },
+                "requirement_count": { "type": "integer", "minimum": 0 },
+                "warnings": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            }
+          },
           "selected_event": {
             "oneOf": [
               {

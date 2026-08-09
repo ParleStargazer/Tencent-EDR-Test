@@ -119,7 +119,13 @@ public sealed class BaselineDefinition
     public required BaselineCapability Capability { get; init; }
     public List<BaselineAssertion> LocalRequirements { get; init; } = [];
     public required CorrelationDefinition Correlation { get; init; }
+    public MethodSelectionDefinition? MethodSelection { get; init; }
     public List<CloudExpectation> CloudExpectations { get; init; } = [];
+}
+
+public sealed class MethodSelectionDefinition
+{
+    public string Strategy { get; init; } = "all";
 }
 
 public sealed class BaselineCapability
@@ -164,11 +170,18 @@ public sealed class CorrelationAnchor
 public sealed class CloudExpectation
 {
     public required string Id { get; init; }
+    public MethodDefinition? Method { get; init; }
     public required string EventType { get; init; }
     public List<string> EventActions { get; init; } = [];
     public required CardinalityDefinition Cardinality { get; init; }
     public ExpectationCorrelationDefinition? Correlation { get; init; }
     public List<BaselineAssertion> Assertions { get; init; } = [];
+}
+
+public sealed class MethodDefinition
+{
+    public required string Id { get; init; }
+    public required string Title { get; init; }
 }
 
 public sealed class ExpectationCorrelationDefinition
@@ -222,6 +235,14 @@ internal sealed record CorrelationTimeReference(
     string? LocalJsonPointer);
 internal sealed record CloudRecordObservation(DateTimeOffset? EventTime, string? HostId, string? HostName);
 internal sealed record CloudLoadResult(IReadOnlyList<CanonicalEvent> Events, IReadOnlyList<CloudRecordObservation> Observations);
+internal sealed record MethodOutcome(
+    CloudExpectation Expectation,
+    string Status,
+    JsonObject Result,
+    JsonObject? SelectedEvent,
+    double SelectedScore,
+    long SelectedTimeDistanceMs,
+    IReadOnlyList<string> Warnings);
 
 public static class CompareService
 {
@@ -425,8 +446,15 @@ public static class CompareService
             childFileCreateOpNameStandards.Count > 0 ? "Child.FileCreateOpName" : null,
         }.Where(value => value is not null).Cast<string>().ToArray();
         var customFilterDescription = string.Join(" 与 ", customFilterNames);
+        var methodOutcomes = new List<MethodOutcome>();
+        var exposesMethods = baseline.MethodSelection is not null || baseline.CloudExpectations.Any(expectation => expectation.Method is not null);
         foreach (var expectation in baseline.CloudExpectations)
         {
+            var requirementStartIndex = outputRequirements.Count;
+            var expectationStatus = "PASS";
+            var methodWarnings = new List<string>();
+            JsonObject? expectationSelectedEvent = null;
+            Candidate? expectationSelectedCandidate = null;
             var expectationAnchors = expectation.Correlation?.Anchors is { Count: > 0 }
                 ? expectation.Correlation.Anchors
                 : baseline.Correlation.Anchors;
@@ -496,8 +524,8 @@ public static class CompareService
                     candidate => candidate.VendorActionName,
                     candidate => candidate.CustomActionNameMatched);
                 outputRequirements.Add(actionRequirement);
-                if (actionRequirement["status"]?.GetValue<string>() == "failed") overallStatus = Worse(overallStatus, "FAIL");
-                else if (actionRequirement["status"]?.GetValue<string>() == "not_evaluated") overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+                if (actionRequirement["status"]?.GetValue<string>() == "failed") expectationStatus = Worse(expectationStatus, "FAIL");
+                else if (actionRequirement["status"]?.GetValue<string>() == "not_evaluated") expectationStatus = Worse(expectationStatus, "INCONCLUSIVE");
             }
             if (childFileCreateOpNameStandards.Count > 0)
             {
@@ -510,37 +538,39 @@ public static class CompareService
                     candidate => candidate.ChildFileCreateOpName,
                     candidate => candidate.CustomChildFileCreateOpNameMatched);
                 outputRequirements.Add(fileOperationRequirement);
-                if (fileOperationRequirement["status"]?.GetValue<string>() == "failed") overallStatus = Worse(overallStatus, "FAIL");
-                else if (fileOperationRequirement["status"]?.GetValue<string>() == "not_evaluated") overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+                if (fileOperationRequirement["status"]?.GetValue<string>() == "failed") expectationStatus = Worse(expectationStatus, "FAIL");
+                else if (fileOperationRequirement["status"]?.GetValue<string>() == "not_evaluated") expectationStatus = Worse(expectationStatus, "INCONCLUSIVE");
             }
             if (qualifiedCandidates.Length < expectation.Cardinality.Min)
             {
                 if (exportCoverage is "verified" or "inferred" or "assumed")
                 {
-                    warnings.Add($"未找到达到关联阈值的“{baseline.Title ?? capabilityId}”EDR 事件（{expectation.Id}：合格 {qualifiedCandidates.Length} 条，时间窗候选 {candidates.Length} 条；导出覆盖状态：{exportCoverage}）。");
-                    overallStatus = Worse(overallStatus, "FAIL");
+                    methodWarnings.Add($"未找到达到关联阈值的 EDR 事件（合格 {qualifiedCandidates.Length} 条，时间窗候选 {candidates.Length} 条；导出覆盖状态：{exportCoverage}）。");
+                    expectationStatus = Worse(expectationStatus, "FAIL");
                 }
                 else
                 {
-                    warnings.Add($"没有候选达到关联阈值，但仍保留时间窗内低置信度记录供核对（{expectation.Id}：合格 {qualifiedCandidates.Length} 条，时间窗候选 {candidates.Length} 条）。");
-                    overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+                    methodWarnings.Add($"没有候选达到关联阈值，但仍保留时间窗内低置信度记录供核对（合格 {qualifiedCandidates.Length} 条，时间窗候选 {candidates.Length} 条）。");
+                    expectationStatus = Worse(expectationStatus, "INCONCLUSIVE");
                 }
             }
             if (expectation.Cardinality.Max is { } maximum && qualifiedCandidates.Length > maximum)
             {
-                warnings.Add($"“{baseline.Title ?? capabilityId}”的合格候选事件过多，无法唯一判定（{expectation.Id}：找到 {qualifiedCandidates.Length} 条，最多允许 {maximum} 条）。");
-                overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+                methodWarnings.Add($"合格候选事件过多，无法唯一判定（找到 {qualifiedCandidates.Length} 条，最多允许 {maximum} 条）。");
+                expectationStatus = Worse(expectationStatus, "INCONCLUSIVE");
             }
             if (candidates.Length == 0)
             {
                 outputRequirements.Add(TimeDifferenceRequirementJson(expectation, maximumTimeDifferenceMs, null));
                 AddUnevaluatedExpectationRequirements(outputRequirements, expectation, resolver, "时间窗内没有可展示的 EDR 记录，无法检查该项。", includeCardinality: false);
+                methodOutcomes.Add(CreateMethodOutcome(expectation, expectationStatus, requirementStartIndex, outputRequirements,
+                    candidates.Length, qualifiedCandidates.Length, null, null, methodWarnings));
                 continue;
             }
             if (qualifiedCandidates.Length > 1 && qualifiedCandidates[0].Score == qualifiedCandidates[1].Score && qualifiedCandidates[0].TimeDistanceMs == qualifiedCandidates[1].TimeDistanceMs)
             {
-                warnings.Add($"“{baseline.Title ?? capabilityId}”存在多个同分候选事件，无法唯一关联（{expectation.Id}）。");
-                overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+                methodWarnings.Add("存在多个同分候选事件，无法唯一关联。");
+                expectationStatus = Worse(expectationStatus, "INCONCLUSIVE");
             }
 
             var selected = qualifiedCandidates.FirstOrDefault() ?? candidates[0];
@@ -551,12 +581,13 @@ public static class CompareService
                     selected.CustomActionNameMatched is false ? "Action.Name" : null,
                     selected.CustomChildFileCreateOpNameMatched is false ? "Child.FileCreateOpName" : null,
                 }.Where(value => value is not null).Cast<string>().ToArray();
-                warnings.Add(selected.AnchorQualified && rejectedFilters.Length > 0
+                methodWarnings.Add(selected.AnchorQualified && rejectedFilters.Length > 0
                     ? $"{expectation.Id} 已找到命中本地锚点的记录，但原始 {string.Join("、", rejectedFilters)} 不符合自定义标准；仍保留该记录和逐字段结果供核对。"
                     : $"{expectation.Id} 当前使用低置信度候选继续展示可验证字段，不会把该候选当作已可靠关联。");
-                overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+                expectationStatus = Worse(expectationStatus, "INCONCLUSIVE");
             }
-            firstSelected ??= new JsonObject
+            expectationSelectedCandidate = selected;
+            expectationSelectedEvent = new JsonObject
             {
                 ["raw_ref"] = selected.Event.RawRef,
                 ["event_id"] = Values.ToNode(selected.Event.Get("event.id")),
@@ -578,21 +609,24 @@ public static class CompareService
                 ["local_event_time_utc"] = Values.Utc(selected.LocalCorrelationTime),
                 ["matched_anchors"] = new JsonArray(selected.MatchedAnchors.Select(x => (JsonNode)x).ToArray()),
             };
+            firstSelected ??= expectationSelectedEvent.DeepClone().AsObject();
             var timeRequirement = TimeDifferenceRequirementJson(expectation, maximumTimeDifferenceMs, selected);
             outputRequirements.Add(timeRequirement);
-            if (timeRequirement["status"]?.GetValue<string>() == "failed") overallStatus = Worse(overallStatus, "FAIL");
-            else if (timeRequirement["status"]?.GetValue<string>() == "not_evaluated") overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+            if (timeRequirement["status"]?.GetValue<string>() == "failed") expectationStatus = Worse(expectationStatus, "FAIL");
+            else if (timeRequirement["status"]?.GetValue<string>() == "not_evaluated") expectationStatus = Worse(expectationStatus, "INCONCLUSIVE");
             foreach (var assertion in expectation.Assertions)
             {
                 var evaluated = Evaluate(assertion, selected.Event.Get(assertion.Field), resolver);
                 var fieldName = baseline.CloudExpectations.Count == 1 ? evaluated.Field : $"{expectation.Id}:{evaluated.Field}";
                 outputAssertions.Add(evaluated.ToJson(fieldName));
                 outputRequirements.Add(RequirementJson($"{expectation.Id}-{expectation.Assertions.IndexOf(assertion) + 1}", "cloud", expectation.Id, evaluated));
-                if (evaluated.Status == "not_evaluated" && assertion.Severity == "required") overallStatus = Worse(overallStatus, "INCONCLUSIVE");
-                else if (evaluated.Status == "not_evaluated" && assertion.Severity == "recommended") overallStatus = Worse(overallStatus, "PARTIAL");
-                else if (evaluated.Status == "failed" && assertion.Severity == "required") overallStatus = Worse(overallStatus, "FAIL");
-                else if (evaluated.Status == "failed" && assertion.Severity == "recommended") overallStatus = Worse(overallStatus, "PARTIAL");
+                if (evaluated.Status == "not_evaluated" && assertion.Severity == "required") expectationStatus = Worse(expectationStatus, "INCONCLUSIVE");
+                else if (evaluated.Status == "not_evaluated" && assertion.Severity == "recommended") expectationStatus = Worse(expectationStatus, "PARTIAL");
+                else if (evaluated.Status == "failed" && assertion.Severity == "required") expectationStatus = Worse(expectationStatus, "FAIL");
+                else if (evaluated.Status == "failed" && assertion.Severity == "recommended") expectationStatus = Worse(expectationStatus, "PARTIAL");
             }
+            methodOutcomes.Add(CreateMethodOutcome(expectation, expectationStatus, requirementStartIndex, outputRequirements,
+                candidates.Length, qualifiedCandidates.Length, expectationSelectedEvent, expectationSelectedCandidate, methodWarnings));
         }
 
         if (baseline.CloudExpectations.Count == 0)
@@ -600,7 +634,44 @@ public static class CompareService
             warnings.Add("BASELINE 没有 cloud_expectations。");
             overallStatus = "INCONCLUSIVE";
         }
-        return CapabilityResult(caseRunId, capabilityId, localStatus, overallStatus, exportCoverage, totalCandidates, firstSelected, outputCandidates, outputAssertions, outputRequirements, warnings);
+        JsonObject? methodSelection = null;
+        var outputMethods = new JsonArray();
+        if (methodOutcomes.Count > 0)
+        {
+            if (baseline.MethodSelection?.Strategy == "best")
+            {
+                var selectedMethod = methodOutcomes
+                    .OrderBy(outcome => StatusRank(outcome.Status))
+                    .ThenByDescending(outcome => outcome.SelectedScore)
+                    .ThenBy(outcome => outcome.SelectedTimeDistanceMs)
+                    .First();
+                selectedMethod.Result["selected_for_conclusion"] = true;
+                firstSelected = selectedMethod.SelectedEvent?.DeepClone().AsObject();
+                overallStatus = Worse(overallStatus, selectedMethod.Status);
+                var selectedTitle = selectedMethod.Expectation.Method?.Title ?? selectedMethod.Expectation.Id;
+                methodSelection = new JsonObject
+                {
+                    ["strategy"] = "best",
+                    ["selected_method_id"] = selectedMethod.Expectation.Method?.Id ?? selectedMethod.Expectation.Id,
+                    ["selected_method_title"] = selectedTitle,
+                    ["selected_method_status"] = selectedMethod.Status,
+                    ["notice"] = $"该能力包含 {methodOutcomes.Count} 种测试方法，EDR 结论默认采用结果最好的“{selectedTitle}”（{ValidationStatusLabel(selectedMethod.Status)}）；其他方法仍完整展示，不会拉低所选方法的结论。",
+                };
+            }
+            else
+            {
+                foreach (var outcome in methodOutcomes)
+                {
+                    overallStatus = Worse(overallStatus, outcome.Status);
+                    foreach (var warning in outcome.Warnings) warnings.Add($"{outcome.Expectation.Id}：{warning}");
+                }
+            }
+            if (exposesMethods)
+            {
+                foreach (var outcome in methodOutcomes) outputMethods.Add(outcome.Result);
+            }
+        }
+        return CapabilityResult(caseRunId, capabilityId, localStatus, overallStatus, exportCoverage, totalCandidates, firstSelected, outputCandidates, outputAssertions, outputRequirements, methodSelection, outputMethods, warnings);
     }
 
     private static void AddUnevaluatedCloudRequirements(JsonArray output, BaselineDefinition baseline, LocalResolver resolver, string message)
@@ -1475,7 +1546,47 @@ public static class CompareService
         return false;
     }
 
-    private static JsonObject CapabilityResult(string caseRunId, string capabilityId, string localStatus, string validationStatus, string exportCoverage, int candidateCount, JsonObject? selected, JsonArray candidates, JsonArray assertions, JsonArray requirements, JsonArray warnings) => new()
+    private static MethodOutcome CreateMethodOutcome(
+        CloudExpectation expectation,
+        string status,
+        int requirementStartIndex,
+        JsonArray requirements,
+        int candidateCount,
+        int qualifiedCandidateCount,
+        JsonObject? selectedEvent,
+        Candidate? selectedCandidate,
+        IReadOnlyList<string> warnings)
+    {
+        var methodRequirements = requirements
+            .Skip(requirementStartIndex)
+            .Select(value => value?.AsObject())
+            .Where(value => value is not null)
+            .Cast<JsonObject>()
+            .ToArray();
+        var result = new JsonObject
+        {
+            ["method_id"] = expectation.Method?.Id ?? expectation.Id,
+            ["method_title"] = expectation.Method?.Title ?? expectation.Id,
+            ["expectation_id"] = expectation.Id,
+            ["status"] = status,
+            ["selected_for_conclusion"] = false,
+            ["candidate_count"] = candidateCount,
+            ["qualified_candidate_count"] = qualifiedCandidateCount,
+            ["passed_requirement_count"] = methodRequirements.Count(value => value["status"]?.GetValue<string>() == "passed"),
+            ["requirement_count"] = methodRequirements.Length,
+            ["warnings"] = new JsonArray(warnings.Select(value => (JsonNode)value).ToArray()),
+        };
+        return new MethodOutcome(
+            expectation,
+            status,
+            result,
+            selectedEvent?.DeepClone().AsObject(),
+            selectedCandidate?.Score ?? double.MinValue,
+            selectedCandidate?.TimeDistanceMs ?? long.MaxValue,
+            warnings);
+    }
+
+    private static JsonObject CapabilityResult(string caseRunId, string capabilityId, string localStatus, string validationStatus, string exportCoverage, int candidateCount, JsonObject? selected, JsonArray candidates, JsonArray assertions, JsonArray requirements, JsonObject? methodSelection, JsonArray methods, JsonArray warnings) => new()
     {
         ["case_run_id"] = caseRunId,
         ["capability_id"] = capabilityId,
@@ -1487,17 +1598,29 @@ public static class CompareService
         ["edr_candidates"] = candidates,
         ["assertions"] = assertions,
         ["baseline_requirements"] = requirements,
+        ["method_selection"] = methodSelection,
+        ["method_results"] = methods,
         ["warnings"] = warnings,
     };
 
     private static JsonObject NotCompared(string capabilityId, string caseRunId, string localStatus, string warning) =>
-        CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", "insufficient", 0, null, new JsonArray(), new JsonArray(), new JsonArray(), new JsonArray(warning));
+        CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", "insufficient", 0, null, new JsonArray(), new JsonArray(), new JsonArray(), null, new JsonArray(), new JsonArray(warning));
 
     private static string Worse(string current, string candidate)
     {
-        static int Rank(string value) => value switch { "PASS" => 0, "PARTIAL" => 1, "INCONCLUSIVE" => 2, "FAIL" => 3, _ => 4 };
-        return Rank(candidate) > Rank(current) ? candidate : current;
+        return StatusRank(candidate) > StatusRank(current) ? candidate : current;
     }
+
+    private static int StatusRank(string value) => value switch { "PASS" => 0, "PARTIAL" => 1, "INCONCLUSIVE" => 2, "FAIL" => 3, _ => 4 };
+
+    private static string ValidationStatusLabel(string value) => value switch
+    {
+        "PASS" => "通过",
+        "PARTIAL" => "部分通过",
+        "INCONCLUSIVE" => "无法判定",
+        "FAIL" => "失败",
+        _ => value,
+    };
 
     private static JsonObject Summarize(JsonArray results)
     {
@@ -1771,8 +1894,23 @@ public static class CompareService
         if (baseline.Correlation?.Anchors is not { Count: > 0 }) throw new InvalidDataException($"BASELINE {baseline.BaselineId} 缺少 correlation.anchors。");
         if (baseline.Correlation.MaxTimeDifferenceMs is < 1 or > 60_000) throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 correlation.max_time_difference_ms 必须在 1..60000 内。");
         if (baseline.CloudExpectations is not { Count: > 0 }) throw new InvalidDataException($"BASELINE {baseline.BaselineId} 缺少 cloud_expectations。");
+        if (baseline.MethodSelection is { } selection)
+        {
+            if (selection.Strategy is not ("all" or "best")) throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 method_selection.strategy 无效。");
+            if (selection.Strategy == "best"
+                && (baseline.CloudExpectations.Count < 2
+                    || baseline.CloudExpectations.Any(expectation => expectation.Method is null)
+                    || baseline.CloudExpectations.Select(expectation => expectation.Method!.Id).Distinct(StringComparer.Ordinal).Count() != baseline.CloudExpectations.Count))
+            {
+                throw new InvalidDataException($"BASELINE {baseline.BaselineId} 使用 best 方法选择时必须声明至少两个 method.id 唯一的 cloud_expectations。");
+            }
+        }
         foreach (var expectation in baseline.CloudExpectations)
         {
+            if (expectation.Method is { } method && (string.IsNullOrWhiteSpace(method.Id) || string.IsNullOrWhiteSpace(method.Title)))
+            {
+                throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 cloud_expectation.method 缺少 id 或 title。");
+            }
             if (expectation.EventActions.Count == 0 || expectation.Assertions.Count == 0 || expectation.Cardinality.Min < 0)
             {
                 throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 cloud_expectation 无效。");

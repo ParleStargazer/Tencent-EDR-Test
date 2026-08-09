@@ -1,6 +1,6 @@
 schema_version: "1.1"
 baseline_id: win.process.image_load
-version: "0.3.0"
+version: "0.3.1"
 title: Windows 镜像或动态库加载遥测
 description: 验证三个原生 DLL 加载子项和一个复现腾讯 EDR 0807 LoadDll 事件形态的 dotnet 托管程序集加载子项。
 platform:
@@ -65,8 +65,11 @@ correlation:
     - local_field: programs.target.pid
       cloud_field: process.pid
       strength: medium
+method_selection:
+  strategy: best
 cloud_expectations:
   - id: system-loadlibrary-event
+    method: { id: system-loadlibrary, title: 系统目录 DLL · LoadLibraryW }
     event_type: process
     event_actions: [image_load]
     cardinality: { min: 1, max: 3 }
@@ -100,6 +103,7 @@ cloud_expectations:
         severity: required
         normalizers: [windows_path]
   - id: application-local-loadlibrary-event
+    method: { id: application-local-loadlibrary, title: 应用目录 DLL · LoadLibraryW }
     event_type: process
     event_actions: [image_load]
     cardinality: { min: 1, max: 3 }
@@ -133,6 +137,7 @@ cloud_expectations:
         severity: required
         normalizers: [windows_path]
   - id: application-local-loadlibraryex-event
+    method: { id: application-local-loadlibraryex, title: 应用目录 DLL · LoadLibraryExW }
     event_type: process
     event_actions: [image_load]
     cardinality: { min: 1, max: 3 }
@@ -166,6 +171,7 @@ cloud_expectations:
         severity: required
         normalizers: [windows_path]
   - id: managed-assembly-load-event
+    method: { id: managed-assembly-load-context, title: 托管程序集 · AssemblyLoadContext }
     event_type: process
     event_actions: [image_load]
     cardinality: { min: 1, max: 3 }
@@ -202,5 +208,5 @@ scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.
 metadata:
   owner: edr-validation-team
   status: draft
-  change_reason: 覆盖旧能力包，并增加 dotnet.exe 加载刚落盘托管 DLL 的第四子项，以复现 0807 导出的真实 LoadDll 事件形态。
+  change_reason: 四种加载方法分别判定，能力结论默认采用 EDR 遥测结果最好的方法；所有方法仍保留完整条件、候选和状态。
   references: [EDR-Telemetry / Windows / Process Activity / Image Library Loaded]

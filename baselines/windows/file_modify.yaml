@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.file.modify
-version: "0.2.0"
+version: "0.2.1"
 title: Windows 文件修改遥测
-description: 同轮覆盖写 TXT 与有效 JSON 文件；本地验证两者，云端以 JSON 子项作为必检事件。
+description: 同轮覆盖写 TXT 与有效 JSON 文件；本地验证两者，云端分别判定并采用结果最好的文件类型形成能力结论。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -29,8 +29,28 @@ correlation:
     - { local_field: facts.file.json.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
     - { local_field: facts.file.json.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
     - { local_field: facts.file.json.actor_pid, cloud_field: process.pid, strength: medium }
+method_selection: { strategy: best }
 cloud_expectations:
+  - id: file-modify-txt-event
+    method: { id: txt, title: TXT 文件 }
+    event_type: file
+    event_actions: [modify]
+    cardinality: { min: 1, max: 5 }
+    correlation:
+      time_from_local: facts.file.txt.occurred_at_utc
+      anchors:
+        - { local_field: facts.file.txt.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.file.txt.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: file.path, operator: equals, expected_from_local: facts.file.txt.path, severity: required, normalizers: [windows_path] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.file.txt.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.file.txt.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: file.size, operator: equals, expected_from_local: facts.file.txt.after.size_bytes, severity: required }
+      - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.txt.after.md5, severity: recommended, normalizers: [lowercase] }
+      - { field: file.operation_name, operator: equals, expected: overwrite_existing, severity: required }
+      - { field: file.io.write_bytes, operator: equals, expected_from_local: facts.file.txt.modify.bytes_written, severity: recommended }
   - id: file-modify-json-event
+    method: { id: json, title: JSON 文件 }
     event_type: file
     event_actions: [modify]
     cardinality: { min: 1, max: 5 }
@@ -51,5 +71,5 @@ scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: 增加有效 JSON 子项并将其设为云端必检锚点；TXT 子项保留作产品敏感度对照。
+  change_reason: TXT 与 JSON 子项分别形成方法结果，能力结论默认采用通过情况更好的文件类型。
   references: [Tencent EDR FileEvents / FileWriteClose / 覆盖写文件]

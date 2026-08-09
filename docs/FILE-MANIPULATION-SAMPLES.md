@@ -40,11 +40,11 @@ Controller 复用通用 SQLite Schema，无需新增专用表：
 - `baselines/windows/file_modify.yaml`
 - `baselines/windows/file_rename.yaml`
 
-强关联锚点为 JSON 文件路径和对应 Actor 可执行路径；PID 为中等锚点；事件时间使用 `facts.file.json.occurred_at_utc`，五项 BASELINE 均要求 EDR 时间差不超过 15 ms。15 ms 内的时间差计为强证据，但必须与至少一个文件、程序或 PID 锚点共同出现。TXT 与 JSON 两项本地行为都必须成功，但云端只把 JSON 子项设为必检，避免已知不敏感的 TXT 事件拉低产品能力结论。路径、Actor 身份、操作枚举和文件大小是 required；腾讯导出支持 MD5 但少量记录为空，因此 MD5 为 recommended。本地仍保存 TXT/JSON 两套 SHA-1/SHA-256 供其他产品映射复用。
+TXT 与 JSON 子项分别使用自己的文件路径、Actor 可执行路径和发生时间作为关联依据，PID 为中等锚点；五项 BASELINE 均要求 EDR 时间差不超过 15 ms。15 ms 内的时间差计为强证据，但必须与至少一个文件、程序或 PID 锚点共同出现。TXT 与 JSON 两项本地行为都必须成功，云端则分别形成两种测试方法的独立结果。能力结论默认采用通过情况最好的方法，状态优先级为 `PASS > PARTIAL > INCONCLUSIVE > FAIL`；状态相同时再按关联分数、时间差绝对值和 BASELINE 声明顺序选择。未被采用的方法仍完整保留，便于观察产品对文件类型的敏感度。路径、Actor 身份、操作枚举和文件大小是 required；腾讯导出支持 MD5 但少量记录为空，因此 MD5 为 recommended。本地仍保存 TXT/JSON 两套 SHA-1/SHA-256 供其他产品映射复用。
 
 腾讯映射保留已知的 `File/FileRename` 精确语义，同时增加不依赖 `Action.Name` 的候选发现路由。因此 `InjectHook/MoveFileExW` 或后续未知名称的记录也会先进入时间窗，再依据本地源/目标路径、Actor 路径/PID和时间距离评分；不包含固定 PID、固定目录或固定 nonce，避免针对单次日志过拟合。
 
-如果同一 JSON 文件行为关联出多条强候选，可在离线比较页为对应能力填写一个或多个原始 `Action.Name`，五项文件能力还可填写一个或多个原始 `Child.FileCreateOpName`。单字段多值为“任选其一”；两个字段均填写时，候选必须同时满足。默认规则为：创建 `FileWriteClose + 新建文件`、修改 `FileWriteClose + 覆盖写文件`、打开 `FileWriteClose + 打开文件`、重命名 `FileRename`，删除留空。该设置只筛选 EDR 候选，不会改变本地运行规则、`LOCAL_PASS`，也不会代替本地路径、Actor、PID 和时间条件；清空任一字段后不会对该字段进行筛选，未选中的强候选仍会显示完整 JSON。
+如果同一文件行为关联出多条强候选，可在离线比较页为对应能力填写一个或多个原始 `Action.Name`，五项文件能力还可填写一个或多个原始 `Child.FileCreateOpName`。筛选规则同时作用于 TXT 与 JSON 方法：单字段多值为“任选其一”；两个字段均填写时，候选必须同时满足。默认规则为：创建 `FileWriteClose + 新建文件`、修改 `FileWriteClose + 覆盖写文件`、打开 `FileWriteClose + 打开文件`、重命名 `FileRename`，删除留空。该设置只筛选 EDR 候选，不会改变本地运行规则、`LOCAL_PASS`，也不会代替本地路径、Actor、PID 和时间条件；清空任一字段后不会对该字段进行筛选，未选中的强候选仍会显示完整 JSON。
 
 ## 4. 构建和验收
 
@@ -53,6 +53,6 @@ pwsh -NoProfile -File scripts/Build-FileManipulationSamples.ps1
 pwsh -NoProfile -File scripts/Test-FileManipulationSamples.ps1
 ```
 
-端到端脚本会在同一轮串行执行五项能力，检查 SQLite 导出的 5 项能力、15 个程序实例、10 条事件、10 项清理和清单声明事实，再从每项 JSON 子测试生成厂商无关与腾讯格式云端夹具，通过五份 BASELINE 做离线比较。重命名腾讯夹具使用 `InjectHook/MoveFileExW`，防止该真实事件类型再次被路由遗漏。夹具只验证框架闭环，不代表真实 EDR 检出。
+端到端脚本会在同一轮串行执行五项能力，检查 SQLite 导出的 5 项能力、15 个程序实例、10 条事件、10 项清理和清单声明事实，再从每项 TXT/JSON 子测试生成厂商无关与腾讯格式云端夹具，通过五份 BASELINE 做离线比较。重命名腾讯夹具使用 `InjectHook/MoveFileExW`，防止该真实事件类型再次被路由遗漏。夹具只验证框架闭环，不代表真实 EDR 检出。
 
 前端和 API 无需为能力写死新接口：构建后的包由 `/api/capabilities` 自动发现，BASELINE 与映射也按目录自动发现；测试页和离线比较页会复用现有 SQLite 证据、完整候选 JSON 和字段高亮组件。

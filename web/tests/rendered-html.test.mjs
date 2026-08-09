@@ -179,6 +179,12 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /administratorRequiredIds/);
   assert.match(livePage, /需要管理员权限/);
   assert.match(livePage, /eligible_for_validation/);
+  assert.match(livePage, /method_selection/);
+  assert.match(livePage, /method_results/);
+  assert.match(livePage, /不同方法的通过情况/);
+  assert.match(livePage, /已采用最佳方法形成结论/);
+  assert.match(livePage, /selected_for_conclusion/);
+  assert.match(livePage, /结论采用/);
   assert.match(livePage, /应包含的测试标记/);
   assert.match(livePage, /读取到的 PID/);
   assert.match(livePage, /总体结论/);

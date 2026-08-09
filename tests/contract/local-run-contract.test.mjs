@@ -61,6 +61,10 @@ test("验证结果 Schema 支持逐能力 JSON 对照与多候选高亮", async 
 
   assert.ok(capability.required.includes("local_export_block"));
   assert.ok(capability.required.includes("local_baseline_matches"));
+  assert.ok(capability.required.includes("method_selection"));
+  assert.ok(capability.required.includes("method_results"));
+  assert.equal(capability.properties.method_selection.oneOf[0].properties.strategy.const, "best");
+  assert.ok(baselineSchema.properties.method_selection.properties.strategy.enum.includes("best"));
   assert.ok(candidate.required.includes("baseline_matches"));
   assert.deepEqual(
     candidate.properties.baseline_matches.items.properties.kind.enum,
@@ -177,6 +181,10 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
     const manifest = await readJson(
       `sample-src/FileManipulation/manifests/win.file.${operation}/capability.json`,
     );
+    const baseline = await readFile(
+      new URL(`baselines/windows/file_${operation}.yaml`, root),
+      "utf8",
+    );
     assert.equal(manifest.capability_id, `win.file.${operation}`);
     assert.equal(manifest.version, "0.2.0");
     assert.equal(manifest.risk_level, "L0");
@@ -186,8 +194,20 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
     assert.ok(manifest.expected_fact_keys.includes(`file.json.${operation}_succeeded`));
     assert.ok(manifest.expected_fact_keys.includes("file.json.occurred_at_utc"));
     assert.ok(manifest.expected_fact_keys.includes("file.json.extension"));
+    assert.match(baseline, /method_selection: \{ strategy: best \}/);
+    assert.match(baseline, /method: \{ id: txt, title: TXT 文件 \}/);
+    assert.match(baseline, /method: \{ id: json, title: JSON 文件 \}/);
+    assert.match(baseline, new RegExp(`file-${operation}-txt-event`));
+    assert.match(baseline, new RegExp(`file-${operation}-json-event`));
     assert.match(mapping, new RegExp(`route_id: file-${operation}`));
   }
+
+  const imageLoadBaseline = await readFile(
+    new URL("baselines/windows/process_image_load.yaml", root),
+    "utf8",
+  );
+  assert.match(imageLoadBaseline, /method_selection:\s*\n\s*strategy: best/);
+  assert.equal((imageLoadBaseline.match(/^\s+method: /gm) ?? []).length, 4);
 
   [
     "old_path",

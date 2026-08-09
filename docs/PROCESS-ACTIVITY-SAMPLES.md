@@ -97,7 +97,7 @@ artifacts/process-activity-e2e/
 3. `application_local_loadlibrary_ex`：把 `dbghelp.dll` 复制为另一唯一文件名，再使用带安全搜索标志的 `LoadLibraryExW` 加载；
 4. `managed_assembly_load_context`：由真实 `dotnet.exe` Helper 把 `ProcessActivity.Protocol.dll` 复制为 `edrtest_<nonce>_managed.dll`，再通过独立 `AssemblyLoadContext` 动态加载。
 
-后三个临时 DLL 在 Target/Helper 停止后删除。唯一文件名能减少系统 DLL 白名单或高频模块降噪造成的干扰，也便于在 EDR 导出中直接按本轮路径检索。第 4 个子项复现 `reference` 中 0807 导出所见的产品检出形态：父进程为 `dotnet.exe`，被加载文件是刚写入磁盘的托管 DLL。离线 BASELINE 为四个子项分别定义关联锚点和发生时间，因此某个子项漏采时会单独显示失败，不会被其他 DLL 日志替代。
+后三个临时 DLL 在 Target/Helper 停止后删除。唯一文件名能减少系统 DLL 白名单或高频模块降噪造成的干扰，也便于在 EDR 导出中直接按本轮路径检索。第 4 个子项复现 `reference` 中 0807 导出所见的产品检出形态：父进程为 `dotnet.exe`，被加载文件是刚写入磁盘的托管 DLL。离线 BASELINE 为四个子项分别定义关联锚点和发生时间，并输出四种方法的独立通过情况；能力结论默认采用结果最好的方法，未被采用的失败或低置信结果仍会保留，且不会被其他 DLL 日志替代。
 
 比较器要求本地导出的 `capability_version` 与 BASELINE 的 `capability.version` 完全一致。旧运行（例如 `0.1.0`）没有对应基准时显示 `NOT_COMPARED` 和版本提示，不会再把新版新增条件误报为本地采集失败。
 

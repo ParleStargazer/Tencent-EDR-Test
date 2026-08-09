@@ -96,6 +96,9 @@ public static class ConclusionExportService
 
     private static string Describe(JsonObject capability)
     {
+        var methodNotice = capability["method_selection"]?["notice"]?.GetValue<string>();
+        if (!string.IsNullOrWhiteSpace(methodNotice)) return methodNotice;
+
         var warnings = capability["warnings"]?.AsArray()
             .Select(value => value?.GetValue<string>())
             .Where(value => !string.IsNullOrWhiteSpace(value))

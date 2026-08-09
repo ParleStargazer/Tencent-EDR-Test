@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.file.rename
-version: "0.2.0"
+version: "0.2.1"
 title: Windows 文件重命名遥测
-description: 同轮重命名 TXT 与有效 JSON 文件；本地验证两者，云端以 JSON 子项的路径、程序、PID 和时间事实反向关联候选事件。
+description: 同轮重命名 TXT 与有效 JSON 文件；本地验证两者，云端分别按源/目标路径、程序、PID 和时间判定并采用结果最好的文件类型形成能力结论。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -32,8 +32,29 @@ correlation:
     - { local_field: facts.file.json.destination_path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
     - { local_field: facts.file.json.source_path, cloud_field: file.old_path, strength: strong, normalizers: [windows_path] }
     - { local_field: facts.file.json.actor_pid, cloud_field: process.pid, strength: medium }
+method_selection: { strategy: best }
 cloud_expectations:
+  - id: file-rename-txt-event
+    method: { id: txt, title: TXT 文件 }
+    event_type: file
+    event_actions: [rename]
+    cardinality: { min: 1, max: 5 }
+    correlation:
+      time_from_local: facts.file.txt.occurred_at_utc
+      anchors:
+        - { local_field: facts.file.txt.destination_path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.file.txt.source_path, cloud_field: file.old_path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.file.txt.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: file.path, operator: equals, expected_from_local: facts.file.txt.destination_path, severity: required, normalizers: [windows_path] }
+      - { field: file.old_path, operator: equals, expected_from_local: facts.file.txt.source_path, severity: required, normalizers: [windows_path] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.file.txt.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.file.txt.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: file.size, operator: equals, expected_from_local: facts.file.txt.after.size_bytes, severity: required }
+      - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.txt.after.md5, severity: recommended, normalizers: [lowercase] }
+      - { field: user.name, operator: present, severity: recommended }
   - id: file-rename-json-event
+    method: { id: json, title: JSON 文件 }
     event_type: file
     event_actions: [rename]
     cardinality: { min: 1, max: 5 }
@@ -55,5 +76,5 @@ scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: 增加有效 JSON 子项，并改为由本地绝对基准反向关联云端记录，不依赖厂商 Action 名称。
+  change_reason: TXT 与 JSON 子项分别形成方法结果，能力结论默认采用通过情况更好的文件类型。
   references: [Tencent EDR FileEvents, Tencent EDR DirOperationEvents]

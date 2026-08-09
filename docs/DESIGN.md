@@ -371,6 +371,8 @@ EdrTest.exe export --db .\runs\...\<run-id>.db --out .\local-run.json
 
 `execution_logs` 保存 Runner 与 Controller 输出，并用 `case_run_id` 关联到具体能力；前端“已完成队列”还会从 SQLite 或本地导出中提取能力时间、程序 PID/父 PID/路径/命令行/哈希和本地事实，在页面刷新或服务重启后恢复结构化 BASELINE 证据及详细日志。
 
+当一项能力包含不同文件类型、加载方式或其他可替代测试路径时，BASELINE 可为每个 `cloud_expectation` 声明稳定的 `method.id` 与中英可读标题，并通过 `method_selection.strategy: best` 启用最佳方法结论。比较器仍先把本地条件作为整项能力的绝对前置基准；本地失败不能被任何云端方法覆盖。云端方法分别关联、评分和验证，默认按 `PASS > PARTIAL > INCONCLUSIVE > FAIL` 选择状态最好的方法，状态相同时依次比较候选关联分数、时间差绝对值和 BASELINE 顺序。结果同时保存被选方法、选择提示及全部方法的逐字段证据，前端默认展开被选方法，其余方法可独立展开排查。
+
 ## 11. 云端 JSON 导入
 
 ### 11.1 用户操作流程

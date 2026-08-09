@@ -615,8 +615,10 @@ public static class Program
               max_time_difference_ms: 15
               anchors:
                 - { local_field: programs.target.executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+            method_selection: { strategy: best }
             cloud_expectations:
               - id: first-event
+                method: { id: first, title: 第一种加载方法 }
                 event_type: process
                 event_actions: [image_load]
                 cardinality: { min: 1, max: 1 }
@@ -628,6 +630,7 @@ public static class Program
                 assertions:
                   - { field: file.path, operator: equals, expected_from_local: facts.process.image_load.first.path, severity: required, normalizers: [windows_path] }
               - id: second-event
+                method: { id: second, title: 第二种加载方法 }
                 event_type: process
                 event_actions: [image_load]
                 cardinality: { min: 1, max: 1 }
@@ -658,6 +661,37 @@ public static class Program
         Assert(candidates.Count(value => value?["eligible_for_validation"]?.GetValue<bool>() == false) == 2,
             "未命中子项路径的事件仍应作为低置信度 JSON 块展示。");
         Assert(eligibleCandidates.All(value => value?["time_distance_ms"]?.GetValue<long>() == 0), "子项应使用自己的本地发生时间计算强匹配候选的距离。");
+        var allMethodResults = validation["capabilities"]?[0]?["method_results"]?.AsArray()
+            ?? throw new InvalidOperationException("多方法结果缺少 method_results。");
+        Assert(allMethodResults.Count == 2
+            && allMethodResults.All(value => value?["status"]?.GetValue<string>() == "PASS")
+            && allMethodResults.Count(value => value?["selected_for_conclusion"]?.GetValue<bool>() == true) == 1,
+            "两种加载方法都应独立展示通过状态，且只能选择一种形成能力结论。");
+
+        var secondOnlyCloudPath = Path.Combine(fixture.Path, "second-only-cloud.json");
+        File.WriteAllText(secondOnlyCloudPath, new JsonArray(
+            CloudImage("second-event", secondTime, secondPath, "edrtest_nonce_version.dll", targetPath)).ToJsonString(JsonDefaults.Options));
+        var bestMethodResultPath = Path.Combine(fixture.Path, "best-method-result.json");
+        var bestMethodValidation = CompareService.Compare(new CompareRequest(
+            localPath,
+            [secondOnlyCloudPath],
+            Path.Combine(repository, "mappings", "generic-process-activity-v1.yaml"),
+            [baselinePath],
+            bestMethodResultPath));
+        var bestMethodCapability = bestMethodValidation["capabilities"]?[0]?.AsObject()
+            ?? throw new InvalidOperationException("最佳方法比较缺少能力结果。");
+        var bestMethodSelection = bestMethodCapability["method_selection"]?.AsObject()
+            ?? throw new InvalidOperationException("最佳方法比较缺少 method_selection。");
+        Assert(bestMethodCapability["validation_status"]?.GetValue<string>() == "PASS"
+            && bestMethodSelection["selected_method_id"]?.GetValue<string>() == "second"
+            && bestMethodSelection["selected_method_status"]?.GetValue<string>() == "PASS",
+            "只有第二种方法检出时，应采用通过情况最好的第二种方法形成 PASS 结论。");
+        Assert(bestMethodCapability["method_results"]?.AsArray().Single(value => value?["method_id"]?.GetValue<string>() == "first")?["status"]?.GetValue<string>() == "FAIL"
+            && bestMethodCapability["method_results"]?.AsArray().Single(value => value?["method_id"]?.GetValue<string>() == "second")?["selected_for_conclusion"]?.GetValue<bool>() == true,
+            "未检出的第一种方法仍应显示失败，第二种方法应标记为结论采用。");
+        Assert(bestMethodSelection["notice"]?.GetValue<string>().Contains("结果最好的“第二种加载方法”", StringComparison.Ordinal) == true
+            && File.ReadAllText(ConclusionExportService.DefaultOutputPath(bestMethodResultPath)).Contains("第二种加载方法", StringComparison.Ordinal),
+            "结构化结果和中文结论都应提示采用了哪一种最佳方法。");
 
         var oldVersionLocal = local.DeepClone().AsObject();
         oldVersionLocal["capabilities"]![0]!["capability_version"] = "0.1.0";

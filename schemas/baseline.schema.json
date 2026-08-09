@@ -75,6 +75,14 @@
         }
       }
     },
+    "method_selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy"],
+      "properties": {
+        "strategy": { "enum": ["all", "best"] }
+      }
+    },
     "cloud_expectations": {
       "type": "array",
       "minItems": 1,
@@ -159,6 +167,7 @@
       "required": ["id", "event_type", "event_actions", "cardinality", "assertions"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
+        "method": { "$ref": "#/$defs/method" },
         "event_type": { "type": "string", "minLength": 1 },
         "event_actions": {
           "type": "array",
@@ -181,6 +190,15 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/cloud_assertion" }
         }
+      }
+    },
+    "method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$" },
+        "title": { "type": "string", "minLength": 1 }
       }
     },
     "expectation_correlation": {
