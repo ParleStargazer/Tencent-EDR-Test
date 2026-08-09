@@ -169,6 +169,8 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /锚点强匹配 · EDR 字段已排除/);
   assert.match(livePage, /EDR 相对本地/);
   assert.match(livePage, /maximum_time_difference_ms/);
+  assert.match(livePage, /administratorRequiredIds/);
+  assert.match(livePage, /需要管理员权限/);
   assert.match(livePage, /eligible_for_validation/);
   assert.match(livePage, /应包含的测试标记/);
   assert.match(livePage, /读取到的 PID/);

@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.account.local.modify",
+  "version": "0.1.0",
+  "display_name_zh": "本地账号修改",
+  "display_name_en": "Local Account Modification",
+  "description": "Actor 先创建唯一临时本地账号，再使用 NetUserSetInfo(level 1007) 修改 comment；Controller 独立核对变更前后值并删除账号。",
+  "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
+  "risk_level": "L1",
+  "required_privilege": "administrator",
+  "controller": { "executable": "AccountLocalModify.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "AccountLocalModify.Actor.exe" }],
+  "parameters": {
+    "setup_delay_ms": { "type": "integer", "required": true, "default": 750, "minimum": 0, "maximum": 30000 },
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 45, "cleanup_seconds": 20 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "account.local_modify_succeeded", "account.occurred_at_utc", "account.name", "account.sid", "account.domain",
+    "account.actor_pid", "account.actor_executable", "account.native_api", "account.before.exists", "account.before.comment",
+    "account.after.exists", "account.after.comment", "account.changed_field", "correlation.nonce"
+  ]
+}

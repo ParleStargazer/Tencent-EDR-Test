@@ -1,0 +1,54 @@
+schema_version: "1.0"
+profile_id: generic-user-account-activity-v1
+vendor: Generic
+product: User Account Activity Self-Test Fixture
+description: 用于验证五类 User Account Activity BASELINE 与比较器的扁平 JSON 适配；不是任何 EDR 厂商的生产映射。
+
+input:
+  containers:
+    - json-array
+    - jsonl
+  encoding: utf-8
+  record_selector:
+    all:
+      table: UserAccountActivity
+  event_id_field: event_id
+  host_id_field: host_id
+  event_time:
+    field: event_time
+    format: iso8601
+
+routes:
+  - route_id: user-account-activity
+    when:
+      table: UserAccountActivity
+    canonical:
+      "event.type": { constant: account }
+      "event.action": { source: action }
+      "event.category": { constant: account }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "host.hostname": { source: host_name }
+      "process.pid": { source: actor_pid }
+      "process.name": { source: actor_name }
+      "process.executable": { source: actor_executable, transform: [windows_path] }
+      "process.command_line": { source: actor_command_line }
+      "user.name": { source: subject_user_name, on_empty: null }
+      "user.domain": { source: subject_domain_name, on_empty: null }
+      "user.id": { source: subject_user_sid, on_empty: null }
+      "user.target.name": { source: target_user_name }
+      "user.target.domain": { source: target_domain_name, on_empty: null }
+      "user.target.id": { source: target_user_sid }
+      "winlog.event_id": { source: event_log_id }
+      "winlog.logon.id": { source: logon_id, on_empty: null }
+      "winlog.logon.type": { source: logon_type, on_empty: null }
+      "winlog.logon.authentication_package": { source: authentication_package, on_empty: null }
+
+raw_reference:
+  id_field: event_id
+  ordinal_base: 0
+
+unmapped_fields:
+  policy: count-and-ignore
+  preserve_in_report: false

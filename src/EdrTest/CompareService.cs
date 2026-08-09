@@ -769,6 +769,11 @@ public static class CompareService
         ("file", "delete") => "文件删除",
         ("file", "modify") => "文件修改",
         ("file", "rename") => "文件重命名",
+        ("account", "local_create") => "本地账号创建",
+        ("account", "local_modify") => "本地账号修改",
+        ("account", "local_delete") => "本地账号删除",
+        ("account", "login") => "账号登录",
+        ("account", "logoff") => "账号注销",
         _ => action,
     }));
 

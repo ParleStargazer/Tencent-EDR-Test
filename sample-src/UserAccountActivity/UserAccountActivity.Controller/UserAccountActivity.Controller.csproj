@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>UserAccountActivity.Controller</AssemblyName>
+    <RootNamespace>UserAccountActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\EdrTest\EdrTest.csproj" />
+    <ProjectReference Include="..\UserAccountActivity.Protocol\UserAccountActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

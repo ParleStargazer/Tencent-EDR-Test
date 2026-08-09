@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目已实现可运行的首版 Windows 框架：能力包发现与校验、Controller 串行调度、每轮独立 SQLite、确定性本地 JSON 导出、云端日志映射和 BASELINE 离线比较已经形成闭环。Process Activity 六项和 File Manipulation 五项真实能力样本均已实现；中文前端通过本机回环 API 直接编排 Runner、查看轮次并提交离线比较。
+项目已实现可运行的首版 Windows 框架：能力包发现与校验、Controller 串行调度、每轮独立 SQLite、确定性本地 JSON 导出、云端日志映射和 BASELINE 离线比较已经形成闭环。Process Activity 六项、File Manipulation 五项和 User Account Activity 五项真实能力样本均已实现；中文前端通过本机回环 API 直接编排 Runner、查看轮次并提交离线比较。
 
 - 中文前端控制面：[web/README.md](web/README.md)
 - 详细设计：[docs/DESIGN.md](docs/DESIGN.md)
@@ -18,6 +18,7 @@
 - 能力样本接入指南：[docs/SAMPLE-INTEGRATION.md](docs/SAMPLE-INTEGRATION.md)
 - Process Activity 六项能力样本：[docs/PROCESS-ACTIVITY-SAMPLES.md](docs/PROCESS-ACTIVITY-SAMPLES.md)
 - File Manipulation 五项能力样本：[docs/FILE-MANIPULATION-SAMPLES.md](docs/FILE-MANIPULATION-SAMPLES.md)
+- User Account Activity 五项能力样本：[docs/USER-ACCOUNT-ACTIVITY-SAMPLES.md](docs/USER-ACCOUNT-ACTIVITY-SAMPLES.md)
 - 腾讯 EDR 260808 全字段目录说明：[docs/TENCENT-EDR-FIELD-CATALOG.md](docs/TENCENT-EDR-FIELD-CATALOG.md)
 - 腾讯 EDR 脱敏字段与示例数据：[docs/reference/tencent-edr-260808-field-catalog.json](docs/reference/tencent-edr-260808-field-catalog.json)
 - 本地前后端与一键启动说明：[docs/LOCAL-CONTROL-PLANE.md](docs/LOCAL-CONTROL-PLANE.md)
@@ -38,6 +39,8 @@
 ## 一键启动（推荐）
 
 准备好 .NET 8 SDK（或更高版本）、PowerShell 7、Node.js 22.13+ 和 pnpm 11.9+ 后，双击仓库根目录的 `启动平台.cmd`。脚本会构建框架与能力包、构建前端、启动本地服务并打开 `http://127.0.0.1:3000/`。
+
+五项用户账号活动需要管理员权限。启动脚本和账号能力包构建脚本会检测当前 PowerShell 权限；非管理员仍可构建并使用其他能力，但会收到推荐以管理员身份重启的提示，Runner 也会将账号活动标记为 `SKIPPED / ADMINISTRATOR_REQUIRED`，不会尝试修改本机账号。
 
 ```powershell
 pwsh -NoProfile -File scripts/Start-EdrTest.ps1
@@ -63,6 +66,7 @@ dotnet run --project src/EdrTest -- serve --repo-root .
 
 pwsh -NoProfile -File scripts/Build-ProcessActivitySamples.ps1
 pwsh -NoProfile -File scripts/Build-FileManipulationSamples.ps1
+pwsh -NoProfile -File scripts/Build-UserAccountActivitySamples.ps1
 
 pwsh -NoProfile -File scripts/Test-ProcessActivitySamples.ps1
 pwsh -NoProfile -File scripts/Test-FileManipulationSamples.ps1
@@ -82,7 +86,7 @@ dotnet run --project src/EdrTest -- compare `
   --conclusion-out .\validation-conclusion.md
 ```
 
-Process Activity 和 File Manipulation 构建会直接清理并覆盖 `samples/` 下的同名旧能力包。`win.process.image_load@0.3.0` 包含三个原生 DLL 加载子项和一个由真实 `dotnet.exe` Helper 执行的托管程序集加载子项；比较器仅使用与本地能力版本完全匹配的 BASELINE。
+Process Activity、File Manipulation 和 User Account Activity 构建会直接清理并覆盖 `samples/` 下的同名旧能力包。`win.process.image_load@0.3.0` 包含三个原生 DLL 加载子项和一个由真实 `dotnet.exe` Helper 执行的托管程序集加载子项；比较器仅使用与本地能力版本完全匹配的 BASELINE。
 
 比较命令会同时生成结构化 `validation-result.json` 和中文 `validation-conclusion.md`；未指定 `--conclusion-out` 时，Markdown 结论自动写入 JSON 同目录。同一个 `EdrTest.exe` 还提供 `export` 和 `inspect` 子命令。运行 `dotnet run --project src/EdrTest -- help` 可查看完整参数。
 

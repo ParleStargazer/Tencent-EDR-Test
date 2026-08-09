@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.account.local.create",
+  "version": "0.1.0",
+  "display_name_zh": "本地账号创建",
+  "display_name_en": "Local Account Creation",
+  "description": "Actor 使用 NetUserAdd 创建由本轮 nonce 派生的唯一临时本地账号；Controller 独立确认账号、SID 和前后存在状态，并在取证后删除该账号。",
+  "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
+  "risk_level": "L1",
+  "required_privilege": "administrator",
+  "controller": { "executable": "AccountLocalCreate.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "AccountLocalCreate.Actor.exe" }],
+  "parameters": {
+    "setup_delay_ms": { "type": "integer", "required": true, "default": 750, "minimum": 0, "maximum": 30000 },
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 45, "cleanup_seconds": 20 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "account.local_create_succeeded", "account.occurred_at_utc", "account.name", "account.sid", "account.domain", "account.account_type",
+    "account.actor_pid", "account.actor_executable", "account.native_api", "account.before.exists", "account.after.exists", "correlation.nonce"
+  ]
+}

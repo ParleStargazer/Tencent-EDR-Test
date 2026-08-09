@@ -103,11 +103,11 @@ export const capabilityCatalog: CapabilityCategory[] = [
     nameZh: "用户账号活动",
     nameEn: "User Account Activity",
     capabilities: [
-      defineCapability("win.account.local.create", "本地账号创建", "Local Account Creation", "L1"),
-      defineCapability("win.account.local.modify", "本地账号修改", "Local Account Modification", "L1"),
-      defineCapability("win.account.local.delete", "本地账号删除", "Local Account Deletion", "L1"),
-      defineCapability("win.account.login", "账号登录", "Account Login"),
-      defineCapability("win.account.logoff", "账号注销", "Account Logoff"),
+      defineCapability("win.account.local.create", "本地账号创建", "Local Account Creation", "L1", "Controller · Actor"),
+      defineCapability("win.account.local.modify", "本地账号修改", "Local Account Modification", "L1", "Controller · Actor"),
+      defineCapability("win.account.local.delete", "本地账号删除", "Local Account Deletion", "L1", "Controller · Actor"),
+      defineCapability("win.account.login", "账号登录", "Account Login", "L1", "Controller · Actor"),
+      defineCapability("win.account.logoff", "账号注销", "Account Logoff", "L1", "Controller · Actor"),
     ],
   },
   {

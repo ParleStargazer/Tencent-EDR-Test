@@ -212,6 +212,71 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
   assert.match(mapping, /"event\.action": \{ source: "Action\.Name", on_empty: unknown \}/);
 });
 
+test("User Account Activity 五项清单、BASELINE、Canonical 字段和权限提示完整", async () => {
+  const normalizedSchema = await readJson("schemas/normalized-event.schema.json");
+  const mapping = await readFile(
+    new URL("mappings/tencent-edr-proc-events-v1.yaml", root),
+    "utf8",
+  );
+  const startScript = await readFile(
+    new URL("scripts/Start-EdrTest.ps1", root),
+    "utf8",
+  );
+  const buildScript = await readFile(
+    new URL("scripts/Build-UserAccountActivitySamples.ps1", root),
+    "utf8",
+  );
+  const accountController = await readFile(
+    new URL("sample-src/UserAccountActivity/UserAccountActivity.Controller/Program.cs", root),
+    "utf8",
+  );
+  const capabilities = [
+    ["win.account.local.create", "account_local_create.yaml", "local_create", 4720],
+    ["win.account.local.modify", "account_local_modify.yaml", "local_modify", 4738],
+    ["win.account.local.delete", "account_local_delete.yaml", "local_delete", 4726],
+    ["win.account.login", "account_login.yaml", "login", 4624],
+    ["win.account.logoff", "account_logoff.yaml", "logoff", 4634],
+  ];
+
+  for (const [capabilityId, baselineName, operation, eventId] of capabilities) {
+    const manifest = await readJson(
+      `sample-src/UserAccountActivity/manifests/${capabilityId}/capability.json`,
+    );
+    const baseline = await readFile(
+      new URL(`baselines/windows/${baselineName}`, root),
+      "utf8",
+    );
+    assert.equal(manifest.capability_id, capabilityId);
+    assert.equal(manifest.version, "0.1.0");
+    assert.equal(manifest.risk_level, "L1");
+    assert.equal(manifest.required_privilege, "administrator");
+    assert.deepEqual(manifest.participants.map((item) => item.role), ["actor"]);
+    assert.ok(manifest.expected_fact_keys.includes(`account.${operation}_succeeded`));
+    assert.ok(manifest.expected_fact_keys.includes("account.occurred_at_utc"));
+    assert.ok(manifest.expected_fact_keys.includes("account.name"));
+    assert.ok(manifest.expected_fact_keys.includes("account.sid"));
+    assert.match(baseline, /max_time_difference_ms: 10/);
+    assert.match(baseline, new RegExp(`expected: ${eventId}|expected: \\[4634, 4647\\]`));
+  }
+
+  assert.ok("target" in normalizedSchema.properties.user.properties);
+  assert.ok("winlog" in normalizedSchema.properties);
+  assert.match(mapping, /route_id: account-local-create/);
+  assert.match(mapping, /route_id: account-local-modify/);
+  assert.match(mapping, /route_id: account-local-delete/);
+  assert.match(mapping, /route_id: account-login/);
+  assert.match(mapping, /route_id: account-logoff/);
+  [4720, 4738, 4726, 4624, 4634, 4647].forEach((eventId) =>
+    assert.match(mapping, new RegExp(`"Action\\.EventLogId": .*${eventId}|"Action\\.EventLogId": ${eventId}`)),
+  );
+  assert.match(startScript, /建议关闭后使用管理员权限重新运行/);
+  assert.match(startScript, /Build-UserAccountActivitySamples\.ps1/);
+  assert.match(buildScript, /当前 PowerShell 未以管理员身份运行/);
+  assert.doesNotMatch(accountController, /"--password"/);
+  assert.match(accountController, /缺少本轮 nonce 所有权标记，拒绝删除/);
+  assert.match(accountController, /contains_password.*false/s);
+});
+
 test("260808 腾讯 EDR 全字段目录完整、脱敏且可复现", async () => {
   const catalog = await readJson(
     "docs/reference/tencent-edr-260808-field-catalog.json",

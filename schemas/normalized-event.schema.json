@@ -49,7 +49,32 @@
       "properties": {
         "id": { "type": ["string", "null"] },
         "name": { "type": ["string", "null"] },
-        "domain": { "type": ["string", "null"] }
+        "domain": { "type": ["string", "null"] },
+        "target": {
+          "type": ["object", "null"],
+          "properties": {
+            "id": { "type": ["string", "null"] },
+            "name": { "type": ["string", "null"] },
+            "domain": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "winlog": {
+      "type": ["object", "null"],
+      "properties": {
+        "event_id": { "type": ["integer", "string", "null"] },
+        "logon": {
+          "type": ["object", "null"],
+          "properties": {
+            "id": { "type": ["string", "null"] },
+            "type": { "type": ["integer", "string", "null"] },
+            "authentication_package": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

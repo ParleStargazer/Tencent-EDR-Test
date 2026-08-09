@@ -489,6 +489,133 @@ routes:
       "file.driver_type": { source: "Child.FileDriverType", on_empty: null }
       "file.encrypted": { source: "Child.FileEncrypted", on_empty: null }
 
+  # 账号活动优先使用稳定的 Windows 安全事件 ID 建立语义路由，不依赖厂商 Action.Name。
+  # 本地账号变更事件的目标 SID 原始字段为 Child.TargetSid；登录/注销为 Child.TargetUserSid。
+  - route_id: account-local-create
+    when:
+      "Action.EventLogId": 4720
+    canonical:
+      "event.type": { constant: account }
+      "event.action": { constant: local_create }
+      "event.category": { constant: account }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Child.SubjectUserName", on_empty: null }
+      "user.domain": { source: "Child.SubjectDomainName", on_empty: null }
+      "user.id": { source: "Child.SubjectUserSid", on_empty: null }
+      "user.target.name": { source: "Child.TargetUserName" }
+      "user.target.domain": { source: "Child.TargetDomainName", on_empty: null }
+      "user.target.id": { source: "Child.TargetSid" }
+      "winlog.event_id": { source: "Action.EventLogId" }
+
+  - route_id: account-local-modify
+    when:
+      "Action.EventLogId": 4738
+    canonical:
+      "event.type": { constant: account }
+      "event.action": { constant: local_modify }
+      "event.category": { constant: account }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Child.SubjectUserName", on_empty: null }
+      "user.domain": { source: "Child.SubjectDomainName", on_empty: null }
+      "user.id": { source: "Child.SubjectUserSid", on_empty: null }
+      "user.target.name": { source: "Child.TargetUserName" }
+      "user.target.domain": { source: "Child.TargetDomainName", on_empty: null }
+      "user.target.id": { source: "Child.TargetSid" }
+      "winlog.event_id": { source: "Action.EventLogId" }
+
+  - route_id: account-local-delete
+    when:
+      "Action.EventLogId": 4726
+    canonical:
+      "event.type": { constant: account }
+      "event.action": { constant: local_delete }
+      "event.category": { constant: account }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Child.SubjectUserName", on_empty: null }
+      "user.domain": { source: "Child.SubjectDomainName", on_empty: null }
+      "user.id": { source: "Child.SubjectUserSid", on_empty: null }
+      "user.target.name": { source: "Child.TargetUserName" }
+      "user.target.domain": { source: "Child.TargetDomainName", on_empty: null }
+      "user.target.id": { source: "Child.TargetSid" }
+      "winlog.event_id": { source: "Action.EventLogId" }
+
+  - route_id: account-login
+    when:
+      "Action.EventLogId": 4624
+    canonical:
+      "event.type": { constant: account }
+      "event.action": { constant: login }
+      "event.category": { constant: authentication }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Child.SubjectUserName", on_empty: null }
+      "user.domain": { source: "Child.SubjectDomainName", on_empty: null }
+      "user.id": { source: "Child.SubjectUserSid", on_empty: null }
+      "user.target.name": { source: "Child.TargetUserName" }
+      "user.target.domain": { source: "Child.TargetDomainName", on_empty: null }
+      "user.target.id": { source: "Child.TargetUserSid" }
+      "winlog.event_id": { source: "Action.EventLogId" }
+      "winlog.logon.id": { source: "Child.TargetLogonId" }
+      "winlog.logon.type": { source: "Child.LogonType", on_empty: null }
+      "winlog.logon.authentication_package": { source: "Child.AuthenticationPackageName", on_empty: null }
+
+  - route_id: account-logoff
+    when:
+      "Action.EventLogId": [4634, 4647]
+    canonical:
+      "event.type": { constant: account }
+      "event.action": { constant: logoff }
+      "event.category": { constant: authentication }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Child.SubjectUserName", on_empty: null }
+      "user.domain": { source: "Child.SubjectDomainName", on_empty: null }
+      "user.id": { source: "Child.SubjectUserSid", on_empty: null }
+      "user.target.name": { source: "Child.TargetUserName" }
+      "user.target.domain": { source: "Child.TargetDomainName", on_empty: null }
+      "user.target.id": { source: "Child.TargetUserSid" }
+      "winlog.event_id": { source: "Action.EventLogId" }
+      "winlog.logon.id": { source: "Child.TargetLogonId" }
+      "winlog.logon.type": { source: "Child.LogonType", on_empty: null }
+
   # 进程候选发现路由只依赖表结构，不依赖 Action.Name。这样即使用户填写了尚未写入
   # 精确语义路由的厂商 Action，仍可先依据 Child/Parent 进程锚点建立高置信候选。
   - route_id: process-candidate-discovery

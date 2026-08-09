@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>UserAccountActivity.Behavior</AssemblyName>
+    <RootNamespace>UserAccountActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\UserAccountActivity.Protocol\UserAccountActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>UserAccountActivity.Protocol</AssemblyName>
+    <RootNamespace>UserAccountActivity</RootNamespace>
+  </PropertyGroup>
+</Project>

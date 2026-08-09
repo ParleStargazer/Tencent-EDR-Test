@@ -34,6 +34,7 @@ public static class Program
         await RunTest("Runner → SQLite → Export → Compare 最小闭环", TestEndToEnd, failures);
         await RunTest("同类多子项使用独立锚点与时间关联", TestExpectationCorrelation, failures);
         await RunTest("文件原始字段仅筛选 EDR 候选", TestFileRawFieldFilters, failures);
+        await RunTest("用户账号五项 BASELINE 与通用/腾讯映射闭环", TestUserAccountComparison, failures);
         if (failures.Count == 0)
         {
             Console.WriteLine("全部框架测试通过。");
@@ -130,9 +131,9 @@ public static class Program
         var firstCandidate = validation["capabilities"]?[0]?["edr_candidates"]?.AsArray().Single()
             ?? throw new InvalidOperationException("结果应包含完整 EDR 候选日志。");
         Assert(firstCandidate["rank"]?.GetValue<int>() == 1 && firstCandidate["raw_event"]?["@table"]?.GetValue<string>() == "ProcEvents", "EDR 候选应保留排名和原始完整日志。");
-        Assert(firstCandidate["time_offset_ms"]?.GetValue<long>() == 0
+        Assert(Math.Abs(firstCandidate["time_offset_ms"]?.GetValue<long>() ?? long.MaxValue) <= 1
             && firstCandidate["local_event_time_utc"]?.GetValue<string>() == local["local_events"]?[0]?["occurred_at_utc"]?.GetValue<string>(),
-            "候选应以本地行为时间为零点保存有符号时间偏移和本地基准时间。");
+            "候选应以本地行为时间为零点保存有符号时间偏移和本地基准时间；Unix 毫秒映射允许 1 ms 量化误差。");
         var localExportBlock = validation["capabilities"]?[0]?["local_export_block"]?.AsObject()
             ?? throw new InvalidOperationException("能力结果应包含可供悬浮窗展示的本地导出 JSON 块。");
         Assert(localExportBlock["programs"]?.AsArray().Count == 3
@@ -207,9 +208,12 @@ public static class Program
             && rankedCandidates[0]?["time_distance_ms"]?.GetValue<long>() < rankedCandidates[1]?["time_distance_ms"]?.GetValue<long>(), "同关联得分候选应按与本地行为时间的距离由近到远排序。");
         Assert(rankedCandidates[1]?["correlation_score"]?.GetValue<double>() > rankedCandidates[2]?["correlation_score"]?.GetValue<double>()
             && rankedCandidates[2]?["time_distance_ms"]?.GetValue<long>() < rankedCandidates[1]?["time_distance_ms"]?.GetValue<long>(), "关联得分应优先于时间距离决定候选置信度顺序。");
-        Assert(rankedCandidates[1]?["time_offset_ms"]?.GetValue<long>() == 8
-            && rankedCandidates[2]?["time_offset_ms"]?.GetValue<long>() == -2,
-            "有符号时间偏移必须以 EDR 时间减本地时间计算：正数表示延后，负数表示提前。");
+        var originalOffset = rankedCandidates[0]?["time_offset_ms"]?.GetValue<long>() ?? long.MaxValue;
+        Assert(rankedCandidates[1]?["time_offset_ms"]?.GetValue<long>() == originalOffset + 8
+            && rankedCandidates[2]?["time_offset_ms"]?.GetValue<long>() == originalOffset - 2
+            && rankedCandidates[1]?["time_offset_ms"]?.GetValue<long>() > 0
+            && rankedCandidates[2]?["time_offset_ms"]?.GetValue<long>() < 0,
+            "有符号时间偏移必须以 EDR 时间减本地时间计算：正数表示延后，负数表示提前，并保留 Unix 毫秒量化偏移。");
         Assert(rankedCandidates[2]?["baseline_matches"]?.AsArray().Any(value => value?["canonical_field"]?.GetValue<string>() == "parent_process.executable"
             && value?["status"]?.GetValue<string>() == "failed") == true, "候选切换时应能看到该候选自身不满足的 BASELINE 字段。");
         Assert(multipleCandidates["capabilities"]?[0]?["validation_status"]?.GetValue<string>() == "PASS", "时间距离可以消除同分候选歧义。");
@@ -316,6 +320,199 @@ public static class Program
         var second = JsonNode.Parse(File.ReadAllText(secondExport))!.AsObject();
         Assert(second["integrity"]?["database_sha256"]?.GetValue<string>() == local["integrity"]?["database_sha256"]?.GetValue<string>(), "重复导出数据库 hash 应稳定。");
         Assert(second["local_events"]!.ToJsonString() == local["local_events"]!.ToJsonString(), "重复导出业务事件应稳定。");
+    }
+
+    private static Task TestUserAccountComparison()
+    {
+        using var fixture = TestDirectory.Create();
+        var repository = FindRepositoryRoot();
+        var local = new JsonObject
+        {
+            ["schema_version"] = "1.1",
+            ["run"] = new JsonObject
+            {
+                ["run_id"] = Ids.NewUuid7(),
+                ["host"] = new JsonObject
+                {
+                    ["hostname"] = "ACCOUNT-FIXTURE",
+                    ["machine_id"] = "account-fixture-host",
+                },
+            },
+            ["capabilities"] = new JsonArray(),
+            ["programs"] = new JsonArray(),
+            ["local_events"] = new JsonArray(),
+            ["local_facts"] = new JsonArray(),
+            ["artifacts"] = new JsonArray(),
+            ["cleanup_results"] = new JsonArray(),
+            ["execution_logs"] = new JsonArray(),
+        };
+        var genericCloud = new JsonArray();
+        var tencentCloud = new JsonArray();
+        var definitions = new[]
+        {
+            (Capability: "win.account.local.create", Action: "local_create", Baseline: "account_local_create.yaml", EventId: 4720),
+            (Capability: "win.account.local.modify", Action: "local_modify", Baseline: "account_local_modify.yaml", EventId: 4738),
+            (Capability: "win.account.local.delete", Action: "local_delete", Baseline: "account_local_delete.yaml", EventId: 4726),
+            (Capability: "win.account.login", Action: "login", Baseline: "account_login.yaml", EventId: 4624),
+            (Capability: "win.account.logoff", Action: "logoff", Baseline: "account_logoff.yaml", EventId: 4634),
+        };
+        var baselinePaths = new List<string>();
+        var baseTime = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        foreach (var (definition, index) in definitions.Select((value, index) => (value, index)))
+        {
+            var caseRunId = Ids.NewUuid7();
+            var eventId = Ids.NewUuid7();
+            var occurredAt = baseTime.AddSeconds(index * 10);
+            var accountName = $"edrtfixture{index:00}";
+            var accountSid = $"S-1-5-21-100-200-300-{1100 + index}";
+            var logonId = $"0x{5000 + index:X}";
+            var actorPid = 7000 + index;
+            var actorPath = $@"C:\EDR-Test\Account{index}.Actor.exe";
+            local["capabilities"]!.AsArray().Add(new JsonObject
+            {
+                ["case_run_id"] = caseRunId,
+                ["capability_id"] = definition.Capability,
+                ["capability_version"] = "0.1.0",
+                ["display_name_zh"] = definition.Action,
+                ["display_name_en"] = definition.Action,
+                ["status"] = "LOCAL_PASS",
+                ["nonce"] = $"account-fixture-{index}",
+                ["started_at_utc"] = Values.Utc(occurredAt.AddSeconds(-1)),
+                ["ended_at_utc"] = Values.Utc(occurredAt.AddSeconds(1)),
+            });
+            local["programs"]!.AsArray().Add(new JsonObject
+            {
+                ["case_run_id"] = caseRunId,
+                ["program_instance_id"] = Ids.NewUuid7(),
+                ["role"] = "actor",
+                ["pid"] = actorPid,
+                ["executable"] = actorPath,
+                ["command_line"] = $"{actorPath} --request fixture.json",
+            });
+            local["local_events"]!.AsArray().Add(new JsonObject
+            {
+                ["local_event_id"] = eventId,
+                ["case_run_id"] = caseRunId,
+                ["sequence"] = 1,
+                ["event_type"] = "account",
+                ["event_action"] = definition.Action,
+                ["occurred_at_utc"] = Values.Utc(occurredAt),
+                ["data"] = new JsonObject
+                {
+                    ["kind"] = "account",
+                    ["operation"] = definition.Action,
+                },
+            });
+
+            var facts = new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
+            {
+                [$"account.{definition.Action}_succeeded"] = true,
+                ["account.occurred_at_utc"] = Values.Utc(occurredAt),
+                ["account.name"] = accountName,
+                ["account.sid"] = accountSid,
+                ["account.domain"] = "ACCOUNT-FIXTURE",
+                ["account.account_type"] = "local_user",
+                ["account.actor_pid"] = actorPid,
+                ["account.actor_executable"] = actorPath,
+                ["account.before.exists"] = definition.Action != "local_create",
+                ["account.after.exists"] = definition.Action != "local_delete",
+                ["account.before.comment"] = definition.Action == "local_modify" ? "EDR Test setup" : null,
+                ["account.after.comment"] = definition.Action == "local_modify" ? "EDR Test modified" : null,
+                ["account.changed_field"] = definition.Action == "local_modify" ? "comment" : null,
+                ["account.session.logon_id"] = definition.Action is "login" or "logoff" ? logonId : null,
+                ["account.session.logon_type"] = definition.Action is "login" or "logoff" ? 3 : null,
+                ["account.session.authentication_package"] = definition.Action is "login" or "logoff" ? "Negotiate" : null,
+                ["account.session.token_validated"] = definition.Action is "login" or "logoff" ? true : null,
+            };
+            foreach (var (key, value) in facts)
+            {
+                local["local_facts"]!.AsArray().Add(new JsonObject
+                {
+                    ["local_fact_id"] = Ids.NewUuid7(),
+                    ["case_run_id"] = caseRunId,
+                    ["local_event_id"] = eventId,
+                    ["key"] = key,
+                    ["value"] = value?.DeepClone(),
+                });
+            }
+
+            genericCloud.Add(new JsonObject
+            {
+                ["table"] = "UserAccountActivity",
+                ["event_id"] = eventId,
+                ["host_id"] = "account-fixture-host",
+                ["host_name"] = "ACCOUNT-FIXTURE",
+                ["event_time"] = Values.Utc(occurredAt),
+                ["action"] = definition.Action,
+                ["actor_pid"] = actorPid,
+                ["actor_name"] = Path.GetFileName(actorPath),
+                ["actor_executable"] = actorPath,
+                ["actor_command_line"] = $"{actorPath} --request fixture.json",
+                ["target_user_name"] = accountName,
+                ["target_domain_name"] = "ACCOUNT-FIXTURE",
+                ["target_user_sid"] = accountSid,
+                ["event_log_id"] = definition.EventId,
+                ["logon_id"] = definition.Action is "login" or "logoff" ? logonId : null,
+                ["logon_type"] = definition.Action is "login" or "logoff" ? 3 : null,
+                ["authentication_package"] = definition.Action is "login" or "logoff" ? "Negotiate" : null,
+            });
+            var tencent = new JsonObject
+            {
+                ["OS"] = "Windows",
+                ["@table"] = definition.Action is "login" or "logoff" ? "LoginEvents" : "AccountEvents",
+                ["@timestamp"] = Values.Utc(occurredAt),
+                ["Action.Type"] = "WinEventLog",
+                ["Action.Name"] = "FixtureAccountEvent",
+                ["Action.EventLogId"] = definition.EventId,
+                ["Common.EventUUId"] = eventId,
+                ["Common.EventTime"] = occurredAt.ToUnixTimeMilliseconds(),
+                ["Common.Mid"] = "account-fixture-host",
+                ["Environment.HostName"] = "ACCOUNT-FIXTURE",
+                ["Parent.ProcPid"] = actorPid,
+                ["Parent.FileName"] = Path.GetFileName(actorPath),
+                ["Parent.FilePath"] = actorPath,
+                ["Parent.ProcCmdline"] = $"{actorPath} --request fixture.json",
+                ["Child.TargetUserName"] = accountName,
+                ["Child.TargetDomainName"] = "ACCOUNT-FIXTURE",
+                ["Child.TargetLogonId"] = definition.Action is "login" or "logoff" ? logonId : null,
+                ["Child.LogonType"] = definition.Action is "login" or "logoff" ? "网络" : null,
+                ["Child.AuthenticationPackageName"] = definition.Action is "login" or "logoff" ? "Negotiate" : null,
+            };
+            tencent[definition.Action is "login" or "logoff" ? "Child.TargetUserSid" : "Child.TargetSid"] = accountSid;
+            tencentCloud.Add(tencent);
+            baselinePaths.Add(Path.Combine(repository, "baselines", "windows", definition.Baseline));
+        }
+
+        var localPath = Path.Combine(fixture.Path, "account-local.json");
+        var genericCloudPath = Path.Combine(fixture.Path, "account-generic-cloud.json");
+        var tencentCloudPath = Path.Combine(fixture.Path, "account-tencent-cloud.json");
+        File.WriteAllText(localPath, local.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(genericCloudPath, genericCloud.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(tencentCloudPath, tencentCloud.ToJsonString(JsonDefaults.Options));
+
+        var generic = CompareService.Compare(new CompareRequest(
+            localPath,
+            [genericCloudPath],
+            Path.Combine(repository, "mappings", "generic-user-account-activity-v1.yaml"),
+            baselinePaths,
+            Path.Combine(fixture.Path, "account-generic-validation.json")));
+        var tencentResult = CompareService.Compare(new CompareRequest(
+            localPath,
+            [tencentCloudPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"),
+            baselinePaths,
+            Path.Combine(fixture.Path, "account-tencent-validation.json")));
+
+        Assert(generic["summary"]?["pass"]?.GetValue<int>() == 5,
+            $"通用账号映射应使五项 BASELINE 全部通过：{generic.ToJsonString(JsonDefaults.Options)}");
+        Assert(tencentResult["summary"]?["pass"]?.GetValue<int>() == 5,
+            $"腾讯账号事件 ID 路由应使五项 BASELINE 全部通过：{tencentResult.ToJsonString(JsonDefaults.Options)}");
+        Assert(tencentResult["capabilities"]?.AsArray().All(value =>
+            value?["edr_candidates"]?.AsArray()[0]?["baseline_matches"]?.AsArray().Any(match =>
+                match?["canonical_field"]?.GetValue<string>() == "user.target.id"
+                && match?["raw_json_pointer"]?.GetValue<string>() is "/Child.TargetSid" or "/Child.TargetUserSid") == true) == true,
+            "五项腾讯候选都应把本地 SID 映射回正确的 EDR 原始目标 SID 字段。");
+        return Task.CompletedTask;
     }
 
     private static async Task TestHighRiskGate()

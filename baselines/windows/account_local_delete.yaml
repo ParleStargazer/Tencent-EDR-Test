@@ -1,0 +1,51 @@
+schema_version: "1.1"
+baseline_id: win.account.local.delete
+version: "0.1.0"
+title: Windows 本地账号删除遥测
+description: 删除本轮唯一临时账号，以删除前名称、SID、Actor 与精确时间关联 Windows 安全事件 4726。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L1
+capability:
+  id: win.account.local.delete
+  version: "0.1.0"
+  parameters: { setup_delay_ms: 750, post_operation_hold_ms: 1500 }
+local_requirements:
+  - { field: facts.account.local_delete_succeeded, operator: equals, expected: true }
+  - { field: facts.account.name, operator: present }
+  - { field: facts.account.sid, operator: present }
+  - { field: facts.account.before.exists, operator: equals, expected: true }
+  - { field: facts.account.after.exists, operator: equals, expected: false }
+  - { field: facts.account.actor_pid, operator: present }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 10
+  anchors:
+    - { local_field: facts.account.name, cloud_field: user.target.name, strength: strong, normalizers: [lowercase] }
+    - { local_field: facts.account.sid, cloud_field: user.target.id, strength: strong, normalizers: [sid] }
+    - { local_field: facts.account.actor_pid, cloud_field: process.pid, strength: medium }
+cloud_expectations:
+  - id: local-account-delete-event
+    event_type: account
+    event_actions: [local_delete]
+    cardinality: { min: 1, max: 5 }
+    correlation:
+      time_from_local: facts.account.occurred_at_utc
+      anchors:
+        - { local_field: facts.account.name, cloud_field: user.target.name, strength: strong, normalizers: [lowercase] }
+        - { local_field: facts.account.sid, cloud_field: user.target.id, strength: strong, normalizers: [sid] }
+        - { local_field: facts.account.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: user.target.name, operator: equals, expected_from_local: facts.account.name, severity: required, normalizers: [lowercase] }
+      - { field: user.target.id, operator: equals, expected_from_local: facts.account.sid, severity: required, normalizers: [sid] }
+      - { field: winlog.event_id, operator: equals, expected: 4726, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.account.actor_executable, severity: recommended, normalizers: [windows_path] }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: active
+  change_reason: 首次实现本地账号删除样本及 4726 遥测基准。
+  references: [Windows Security Event 4726, NetUserDel, Tencent EDR AccountEvents]

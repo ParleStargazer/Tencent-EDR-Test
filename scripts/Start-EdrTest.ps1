@@ -57,6 +57,19 @@ if ($null -eq $pnpm) { throw "未找到 pnpm。请安装 Node.js 22.13+ 和 pnpm
 if (-not (Test-PortAvailable $ApiPort)) { throw "API 端口 $ApiPort 已被占用，请先停止占用程序或使用 -ApiPort 指定其他端口。" }
 if (-not (Test-PortAvailable $WebPort)) { throw "前端端口 $WebPort 已被占用，请先停止占用程序或使用 -WebPort 指定其他端口。" }
 
+$isAdministrator = $false
+try {
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
+    $isAdministrator = $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+    $identity.Dispose()
+} catch {
+    Write-Warning "无法确认当前 PowerShell 的管理员权限：$($_.Exception.Message)"
+}
+if (-not $isAdministrator) {
+    Write-Warning "当前平台未以管理员身份运行。建议关闭后使用管理员权限重新运行 scripts\Start-EdrTest.ps1；五项用户账号活动测试需要管理员权限，否则会被跳过或不可用。"
+}
+
 [System.IO.Directory]::CreateDirectory($logRoot) | Out-Null
 
 if (-not $SkipBuild) {
@@ -66,11 +79,13 @@ if (-not $SkipBuild) {
     & $dotnet.Source build (Join-Path $repositoryRoot "EdrTest.sln") --configuration Release --no-restore
     if ($LASTEXITCODE -ne 0) { throw "dotnet build 失败。" }
 
-    Write-Host "[2/5] 构建 Process Activity 与 File Manipulation 能力包…" -ForegroundColor Cyan
+    Write-Host "[2/5] 构建 Process Activity、File Manipulation 与 User Account Activity 能力包…" -ForegroundColor Cyan
     & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-ProcessActivitySamples.ps1") -Configuration Release
     if ($LASTEXITCODE -ne 0) { throw "能力样本构建失败。" }
     & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-FileManipulationSamples.ps1") -Configuration Release
     if ($LASTEXITCODE -ne 0) { throw "文件操作能力样本构建失败。" }
+    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-UserAccountActivitySamples.ps1") -Configuration Release -SuppressPrivilegeWarning
+    if ($LASTEXITCODE -ne 0) { throw "用户账号活动能力样本构建失败。" }
 }
 
 if (-not (Test-Path $runnerDll)) { throw "找不到 Runner：$runnerDll。请移除 -SkipBuild 后重试。" }

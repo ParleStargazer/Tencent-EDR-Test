@@ -419,6 +419,9 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
   const [notice, setNotice] = useState("正在连接本地 Runner…");
 
   const availableIds = useMemo(() => new Set(availableCapabilities.map((item) => item.capability_id)), [availableCapabilities]);
+  const administratorRequiredIds = useMemo(() => new Set(availableCapabilities
+    .filter((item) => item.required_privilege === "administrator")
+    .map((item) => item.capability_id)), [availableCapabilities]);
   const selectedCapabilities = useMemo(() => allCapabilities.filter((item) => selectedIds.includes(item.id)), [selectedIds]);
   const hasHighRisk = selectedCapabilities.some((item) => item.risk === "L2" || item.risk === "L3");
   const selectedRisk = selectedCapabilities.reduce((maximum, item) => Number(item.risk.slice(1)) > Number(maximum.slice(1)) ? item.risk : maximum, "L0");
@@ -615,7 +618,7 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
       <main className="main-content">
         {view === "overview" && <Overview apiState={apiState} capabilities={availableCapabilities} baselines={baselines} recentRuns={recentRuns} />}
         {view === "test" && <TestWorkspace
-          apiState={apiState} availableIds={availableIds} selectedIds={selectedIds} activeRun={activeRun} recentRuns={recentRuns}
+          apiState={apiState} availableIds={availableIds} administratorRequiredIds={administratorRequiredIds} selectedIds={selectedIds} activeRun={activeRun} recentRuns={recentRuns}
           runName={runName} environment={environment} nextDelay={nextDelay} allowHighRisk={allowHighRisk} selectedRisk={selectedRisk} hasHighRisk={hasHighRisk}
           onRunName={setRunName} onEnvironment={setEnvironment} onNextDelay={setNextDelay} onAllowHighRisk={setAllowHighRisk}
           onToggle={toggleCapability} onSelectAll={() => setSelectedIds([...availableIds])} onClear={() => setSelectedIds([])}
@@ -678,7 +681,7 @@ function Overview({ apiState, capabilities, baselines, recentRuns }: { apiState:
 }
 
 type TestWorkspaceProps = {
-  apiState: ApiState; availableIds: Set<string>; selectedIds: string[]; activeRun: ApiRun | null; recentRuns: ApiRun[];
+  apiState: ApiState; availableIds: Set<string>; administratorRequiredIds: Set<string>; selectedIds: string[]; activeRun: ApiRun | null; recentRuns: ApiRun[];
   runName: string; environment: string; nextDelay: number; allowHighRisk: boolean; selectedRisk: string; hasHighRisk: boolean;
   onRunName: (value: string) => void; onEnvironment: (value: string) => void; onNextDelay: (value: number) => void; onAllowHighRisk: (value: boolean) => void;
   onToggle: (id: string) => void; onSelectAll: () => void; onClear: () => void; onStart: () => void; onCancel: () => void;
@@ -700,8 +703,8 @@ function TestWorkspace(props: TestWorkspaceProps) {
         <div className="panel-heading"><div><p className="section-index">A / 选择能力</p><h2>本轮测试内容</h2><p className="panel-description">灰色项目还没有可执行程序包；勾选顺序就是实际执行顺序。</p></div><div className="inline-actions"><button type="button" className="text-button" onClick={props.onSelectAll}>全选可用</button><button type="button" className="text-button" onClick={props.onClear}>清空</button></div></div>
         <div className="capability-groups compact-catalog">
           {capabilityCatalog.map((category) => <fieldset className="capability-group" key={category.id}><legend><span className="category-name-zh">{category.nameZh}</span><span className="category-name-en">{category.nameEn}</span></legend><div className="capability-list">{category.capabilities.map((capability) => {
-            const selected = props.selectedIds.includes(capability.id); const available = props.availableIds.has(capability.id);
-            return <label className={`capability-item ${selected ? "selected" : ""} ${available ? "available" : "unavailable"}`} key={capability.id} aria-disabled={!available}><input type="checkbox" checked={selected} disabled={!available} onChange={() => props.onToggle(capability.id)} /><span className="checkbox-ui" aria-hidden="true" /><span className="capability-copy"><span className="capability-title-row"><strong><span className="capability-name-zh">{capability.nameZh}</span><span className="capability-name-en">{capability.nameEn}</span></strong><span className={`risk-badge ${capability.risk.toLowerCase()}`}>{capability.risk}</span></span><span className="program-line">{available ? capability.programs : "样本待实现"}</span></span></label>;
+            const selected = props.selectedIds.includes(capability.id); const available = props.availableIds.has(capability.id); const requiresAdministrator = props.administratorRequiredIds.has(capability.id);
+            return <label className={`capability-item ${selected ? "selected" : ""} ${available ? "available" : "unavailable"}`} key={capability.id} aria-disabled={!available}><input type="checkbox" checked={selected} disabled={!available} onChange={() => props.onToggle(capability.id)} /><span className="checkbox-ui" aria-hidden="true" /><span className="capability-copy"><span className="capability-title-row"><strong><span className="capability-name-zh">{capability.nameZh}</span><span className="capability-name-en">{capability.nameEn}</span></strong><span className={`risk-badge ${capability.risk.toLowerCase()}`}>{capability.risk}</span></span><span className="program-line">{available ? capability.programs : "样本待实现"}{available && requiresAdministrator ? " · 需要管理员权限" : ""}</span></span></label>;
           })}</div></fieldset>)}
         </div>
       </section>

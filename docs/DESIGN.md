@@ -626,6 +626,8 @@ BASELINE 不包含腾讯字段名；腾讯字段只出现在 Mapping Profile 中
 
 本地 `reference/`、`samples/`、`EDR-Telemetry-main/` 和 `runs/` 均不追踪。可审计的官方能力样本源码与清单模板归档在 `sample-src/`，构建脚本将带 EXE SHA-256 的可运行能力包生成到本地 `samples/`；第三方或敏感样本仍可由独立制品库分发。
 
+User Account Activity 五项能力统一使用本轮 nonce 派生的 `edrt…` 临时本地账号。Controller 在执行前确认账号不存在，Actor 使用 NetAPI 或 `LogonUserW` 产生行为，Controller 以账号名、SID、前后状态和令牌 AuthenticationId 形成绝对本地基准，最后仅删除本轮精确账号。密码只存在于工作目录内的短生命周期请求文件，不写入命令行、SQLite、JSON 导出或证据制品。能力清单声明管理员权限；启动与构建入口在非管理员环境给出推荐提权提示，Runner 权限预检负责在任何账号操作前安全跳过。
+
 ## 19. 测试策略
 
 ### 19.1 Runner 与 SQLite
