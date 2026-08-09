@@ -156,10 +156,18 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /JsonCodeViewer/);
   assert.match(livePage, /correlation_score/);
   assert.match(livePage, /time_distance_ms/);
+  assert.match(livePage, /time_offset_ms/);
+  assert.match(livePage, /formatSignedTimeOffset/);
+  assert.match(livePage, /EDR 时间 − 本地行为时间/);
+  assert.match(livePage, /EDR 早于本地（提前）/);
+  assert.match(livePage, /EDR 晚于本地（延后）/);
+  assert.match(livePage, /timestampPointers/);
+  assert.match(livePage, /蓝色行表示参与时间差计算的两侧时间戳/);
+  assert.match(livePage, /canonical_field === "event\.created"/);
   assert.match(livePage, /低置信度排查/);
   assert.match(livePage, /自定义 Action\.Name/);
   assert.match(livePage, /锚点强匹配 · EDR 字段已排除/);
-  assert.match(livePage, /时间差基准/);
+  assert.match(livePage, /EDR 相对本地/);
   assert.match(livePage, /maximum_time_difference_ms/);
   assert.match(livePage, /eligible_for_validation/);
   assert.match(livePage, /应包含的测试标记/);
@@ -169,6 +177,7 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /下载中文结论/);
   assert.doesNotMatch(livePage, /slice\(0,\s*120\)/);
   assert.match(styles, /\.log-line p \{[^}]*white-space:\s*pre-wrap;/);
+  assert.match(styles, /\.json-code-line\.timestamp-match/);
   assert.doesNotMatch(styles, /\.log-line code \{[^}]*text-overflow:\s*ellipsis;/);
   assert.doesNotMatch(styles, /\.selected-candidate-meta code \{[^}]*text-overflow:\s*ellipsis;/);
   assert.doesNotMatch(livePage, /当前为控制面阶段|真实 EXE 调度将在/);

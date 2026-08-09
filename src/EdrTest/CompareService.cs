@@ -191,6 +191,10 @@ internal sealed record Candidate(
     CanonicalEvent Event,
     double Score,
     long TimeDistanceMs,
+    long? TimeOffsetMs,
+    DateTimeOffset LocalCorrelationTime,
+    string? LocalTimeField,
+    string? LocalTimeJsonPointer,
     IReadOnlyList<string> MatchedAnchors,
     bool AnchorQualified,
     bool Qualified,
@@ -205,6 +209,10 @@ internal sealed record Candidate(
     int MaximumTimeDifferenceMs,
     bool TimeDifferenceMatched,
     string QualificationReason);
+internal sealed record CorrelationTimeReference(
+    DateTimeOffset Value,
+    string? LocalField,
+    string? LocalJsonPointer);
 internal sealed record CloudRecordObservation(DateTimeOffset? EventTime, string? HostId, string? HostName);
 internal sealed record CloudLoadResult(IReadOnlyList<CanonicalEvent> Events, IReadOnlyList<CloudRecordObservation> Observations);
 
@@ -559,6 +567,8 @@ public static class CompareService
                 ["maximum_time_difference_ms"] = selected.MaximumTimeDifferenceMs,
                 ["time_difference_matched"] = selected.TimeDifferenceMatched,
                 ["time_distance_ms"] = selected.TimeDistanceMs,
+                ["time_offset_ms"] = selected.TimeOffsetMs,
+                ["local_event_time_utc"] = Values.Utc(selected.LocalCorrelationTime),
                 ["matched_anchors"] = new JsonArray(selected.MatchedAnchors.Select(x => (JsonNode)x).ToArray()),
             };
             var timeRequirement = TimeDifferenceRequirementJson(expectation, maximumTimeDifferenceMs, selected);
@@ -682,12 +692,20 @@ public static class CompareService
             ["actual"] = actual,
             ["message"] = status switch
             {
-                "passed" => $"EDR 事件与本地行为相差 {actual} ms，满足时间差基准。",
-                "failed" => $"EDR 事件与本地行为相差 {actual} ms，超过 {maximumTimeDifferenceMs} ms。",
+                "passed" => $"EDR 事件相对本地行为为 {FormatSignedTimeOffset(candidate?.TimeOffsetMs)}，绝对差 {actual} ms，满足时间差基准。",
+                "failed" => $"EDR 事件相对本地行为为 {FormatSignedTimeOffset(candidate?.TimeOffsetMs)}，绝对差 {actual} ms，超过 {maximumTimeDifferenceMs} ms。",
                 _ => "候选缺少有效事件时间，无法计算与本地行为的时间差。",
             },
         };
     }
+
+    private static string FormatSignedTimeOffset(long? offsetMs) => offsetMs switch
+    {
+        null => "未知",
+        > 0 => $"+{offsetMs} ms（EDR 延后）",
+        < 0 => $"{offsetMs} ms（EDR 提前）",
+        _ => "0 ms（时间一致）",
+    };
 
     private static JsonObject RequirementJson(string requirementId, string scope, string? expectationId, AssertionEvaluation evaluation)
     {
@@ -809,7 +827,7 @@ public static class CompareService
         CloudExpectation expectation,
         IReadOnlyList<CorrelationAnchor> anchors,
         LocalResolver resolver,
-        DateTimeOffset correlationTime,
+        CorrelationTimeReference correlationTime,
         int maximumTimeDifferenceMs,
         IReadOnlyList<string> actionNameStandards,
         IReadOnlyList<string> childFileCreateOpNameStandards)
@@ -836,10 +854,11 @@ public static class CompareService
             matched.Add($"{anchor.LocalField}={anchor.CloudField}");
         }
         var eventTime = CanonicalEventTime(item);
-        var distance = eventTime is null
-            ? long.MaxValue
-            : (long)Math.Min(long.MaxValue, Math.Abs((eventTime.Value - correlationTime).TotalMilliseconds));
-        var timeDifferenceMatched = distance <= maximumTimeDifferenceMs;
+        var timeOffsetMs = eventTime is null
+            ? (long?)null
+            : (long)Math.Round((eventTime.Value - correlationTime.Value).TotalMilliseconds, MidpointRounding.AwayFromZero);
+        var distance = timeOffsetMs is null ? long.MaxValue : Math.Abs(timeOffsetMs.Value);
+        var timeDifferenceMatched = timeOffsetMs is not null && distance <= maximumTimeDifferenceMs;
         if (timeDifferenceMatched)
         {
             score += 100;
@@ -880,7 +899,8 @@ public static class CompareService
                         ? $"命中至少一个强本地锚点，且时间差不超过 {maximumTimeDifferenceMs} ms"
                         : "命中至少一个强本地锚点"
                     : "强锚点缺失，命中可用的中等本地锚点";
-        return new Candidate(item, score, distance, matched, anchorQualified, qualified, typeHintMatched, actionHintMatched,
+        return new Candidate(item, score, distance, timeOffsetMs, correlationTime.Value, correlationTime.LocalField, correlationTime.LocalJsonPointer,
+            matched, anchorQualified, qualified, typeHintMatched, actionHintMatched,
             vendorActionName, customActionNameMatched, actionNameStandards,
             childFileCreateOpName, customChildFileCreateOpNameMatched, childFileCreateOpNameStandards,
             maximumTimeDifferenceMs, timeDifferenceMatched, reason);
@@ -922,22 +942,28 @@ public static class CompareService
         return (current, pointer.Length == 0 ? null : pointer);
     }
 
-    private static DateTimeOffset LocalCorrelationTime(JsonObject localRoot, string caseRunId, DateTimeOffset fallback)
+    private static CorrelationTimeReference LocalCorrelationTime(JsonObject localRoot, string caseRunId, DateTimeOffset fallback)
     {
-        var eventTime = localRoot["local_events"]?.AsArray()
-            .Select(value => value?.AsObject())
+        var eventTime = (localRoot["local_events"]?.AsArray() ?? [])
             .Where(value => value?["case_run_id"]?.GetValue<string>() == caseRunId)
-            .OrderBy(value => value?["sequence"]?.GetValue<int>() ?? int.MaxValue)
-            .Select(value => value?["occurred_at_utc"]?.GetValue<string>())
-            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
-        return DateTimeOffset.TryParse(eventTime, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed) ? parsed : fallback;
+            .Select((value, index) => new
+            {
+                Value = value?.AsObject(),
+                CaseIndex = index,
+            })
+            .OrderBy(value => value.Value?["sequence"]?.GetValue<int>() ?? int.MaxValue)
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value.Value?["occurred_at_utc"]?.GetValue<string>()));
+        var eventTimeText = eventTime?.Value?["occurred_at_utc"]?.GetValue<string>();
+        return DateTimeOffset.TryParse(eventTimeText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
+            ? new CorrelationTimeReference(parsed, "local_events.occurred_at_utc", $"/local_events/{eventTime!.CaseIndex}/occurred_at_utc")
+            : new CorrelationTimeReference(fallback, "capability.started_at_utc", "/capability/started_at_utc");
     }
 
-    private static DateTimeOffset ResolveCorrelationTime(string? localField, LocalResolver resolver, DateTimeOffset fallback) =>
+    private static CorrelationTimeReference ResolveCorrelationTime(string? localField, LocalResolver resolver, CorrelationTimeReference fallback) =>
         !string.IsNullOrWhiteSpace(localField)
         && resolver.Resolve(localField)?.ToString() is { } value
         && DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
-            ? parsed
+            ? new CorrelationTimeReference(parsed, localField, resolver.JsonPointer(localField))
             : fallback;
 
     private static DateTimeOffset? CanonicalEventTime(CanonicalEvent item) =>
@@ -1057,8 +1083,8 @@ public static class CompareService
             ["kind"] = "correlation",
             ["requirement_id"] = $"{expectationId}-time-difference",
             ["status"] = candidate.Event.Get("event.created") is null ? "not_evaluated" : candidate.TimeDifferenceMatched ? "passed" : "failed",
-            ["local_field"] = expectation.Correlation?.TimeFromLocal,
-            ["local_json_pointer"] = expectation.Correlation?.TimeFromLocal is { } localTimeField ? resolver.JsonPointer(localTimeField) : null,
+            ["local_field"] = candidate.LocalTimeField,
+            ["local_json_pointer"] = candidate.LocalTimeJsonPointer,
             ["canonical_field"] = "event.created",
             ["raw_field"] = eventTimeSource,
             ["raw_json_pointer"] = eventTimeSource is null ? null : JsonPointer(eventTimeSource),
@@ -1067,8 +1093,8 @@ public static class CompareService
             ["message"] = candidate.Event.Get("event.created") is null
                 ? "候选记录没有可计算的事件时间。"
                 : candidate.TimeDifferenceMatched
-                    ? $"与本地行为时间相差 {candidate.TimeDistanceMs} ms。"
-                    : $"与本地行为时间差超过 {candidate.MaximumTimeDifferenceMs} ms。",
+                    ? $"EDR 时间相对本地为 {FormatSignedTimeOffset(candidate.TimeOffsetMs)}，绝对差 {candidate.TimeDistanceMs} ms。"
+                    : $"EDR 时间相对本地为 {FormatSignedTimeOffset(candidate.TimeOffsetMs)}，绝对差超过 {candidate.MaximumTimeDifferenceMs} ms。",
         });
         return new JsonObject
         {
@@ -1090,6 +1116,8 @@ public static class CompareService
             ["maximum_time_difference_ms"] = candidate.MaximumTimeDifferenceMs,
             ["time_difference_matched"] = candidate.TimeDifferenceMatched,
             ["time_distance_ms"] = candidate.TimeDistanceMs,
+            ["time_offset_ms"] = candidate.TimeOffsetMs,
+            ["local_event_time_utc"] = Values.Utc(candidate.LocalCorrelationTime),
             ["event_time_utc"] = Values.ToNode(candidate.Event.Get("event.created")),
             ["raw_ref"] = candidate.Event.RawRef,
             ["event_id"] = Values.ToNode(candidate.Event.Get("event.id")),

@@ -185,6 +185,8 @@ type EdrCandidate = {
   maximum_time_difference_ms: number;
   time_difference_matched: boolean;
   time_distance_ms: number;
+  time_offset_ms: number | null;
+  local_event_time_utc: string;
   event_time_utc?: string;
   raw_ref: string;
   event_id?: string;
@@ -282,9 +284,11 @@ function formatDurationMs(value?: number): string {
   return `${Math.floor(value / 60_000)} 分 ${Math.round((value % 60_000) / 1000)} 秒`;
 }
 
-function formatDistance(value: number): string {
-  if (!Number.isFinite(value) || value >= Number.MAX_SAFE_INTEGER) return "时间未知";
-  return `相差 ${formatDurationMs(value)}`;
+function formatSignedTimeOffset(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "方向未知";
+  if (value > 0) return `+${formatDurationMs(value)}（EDR 延后）`;
+  if (value < 0) return `-${formatDurationMs(Math.abs(value))}（EDR 提前）`;
+  return "0 ms（时间一致）";
 }
 
 function roleLabel(role: string): string {
@@ -859,22 +863,26 @@ function RequirementGroup({ scope, requirements, candidates = [] }: { scope: "lo
 }
 
 function EdrCandidateList({ candidates }: { candidates: EdrCandidate[] }) {
-  return <section className="edr-candidate-section"><div className="candidate-section-heading"><div><span>完整 EDR 日志</span><h4>关联候选事件</h4><p>先综合本地文件、程序、PID 等身份锚点与 BASELINE 时间差建立候选，再应用可选的 EDR 原始字段筛选；被筛除的强匹配记录仍会完整保留。</p></div><em>{candidates.length} 条</em></div>{candidates.length ? <div className="candidate-list">{candidates.map((candidate, index) => {
+  return <section className="edr-candidate-section"><div className="candidate-section-heading"><div><span>完整 EDR 日志</span><h4>关联候选事件</h4><p>先综合本地文件、程序、PID 等身份锚点与 BASELINE 时间差建立候选，再应用可选的 EDR 原始字段筛选；被筛除的强匹配记录仍会完整保留。</p><div className="time-offset-legend"><code>-</code><span>EDR 早于本地（提前）</span><code>+</code><span>EDR 晚于本地（延后）</span><em>计算基准：EDR 时间 − 本地行为时间</em></div></div><em>{candidates.length} 条</em></div>{candidates.length ? <div className="candidate-list">{candidates.map((candidate, index) => {
     const state = candidate.eligible_for_validation ? "eligible" : candidate.anchor_qualified ? "action-rejected" : "exploratory";
     const label = candidate.eligible_for_validation ? "达到关联阈值" : candidate.anchor_qualified ? "锚点强匹配 · EDR 字段已排除" : "低置信度排查";
-    return <details className={`candidate-card ${state}`} key={`${candidate.expectation_id}-${candidate.raw_ref}-${index}`}><summary><span className="candidate-rank">#{index + 1}</span><div><strong>{candidate.event_id || "无事件 ID"}</strong><code>{candidate.expectation_id} · {label}</code></div><span className={`confidence-badge ${candidate.confidence}`}>{confidenceLabel(candidate.confidence)}</span><div className="candidate-score"><strong>{candidate.correlation_score} 分</strong><span>{formatDistance(candidate.time_distance_ms)}</span></div></summary><div className="candidate-detail"><div className="candidate-meta"><span>事件时间：{formatTime(candidate.event_time_utc)}</span><span>来源：{candidate.raw_ref}</span><span>{candidate.qualification_reason}</span><span>时间差基准：{formatDistance(candidate.time_distance_ms)} / 上限 {candidate.maximum_time_difference_ms} ms · {candidate.time_difference_matched ? "符合" : "超出"}</span><span>事件类型提示：{candidate.event_type_hint_matched ? "一致" : "不同"}</span><span>BASELINE Action 提示：{candidate.event_action_hint_matched ? "一致" : "不同"}</span>{candidate.custom_action_name_expected.length > 0 && <span>自定义 Action.Name：{candidate.custom_action_name_actual ?? "未读取"} · {candidate.custom_action_name_matched ? "符合" : "不符合"}</span>}{candidate.custom_child_file_create_op_name_expected.length > 0 && <span>自定义 Child.FileCreateOpName：{candidate.custom_child_file_create_op_name_actual ?? "未读取"} · {candidate.custom_child_file_create_op_name_matched ? "符合" : "不符合"}</span>}</div><div className="matched-anchor-list"><strong>命中的本地关联证据</strong>{candidate.matched_anchors.length ? candidate.matched_anchors.map((anchor) => <code key={anchor}>{anchor}</code>) : <span>未命中本地身份锚点，仅按宽时间窗保留</span>}</div><div className="candidate-json-grid"><section><h5>规范化字段</h5><pre>{JSON.stringify(candidate.canonical_event, null, 2)}</pre></section><section><h5>EDR 原始完整日志</h5><pre>{JSON.stringify(candidate.raw_event, null, 2)}</pre></section></div></div></details>;
+    return <details className={`candidate-card ${state}`} key={`${candidate.expectation_id}-${candidate.raw_ref}-${index}`}><summary><span className="candidate-rank">#{index + 1}</span><div><strong>{candidate.event_id || "无事件 ID"}</strong><code>{candidate.expectation_id} · {label}</code></div><span className={`confidence-badge ${candidate.confidence}`}>{confidenceLabel(candidate.confidence)}</span><div className="candidate-score"><strong>{candidate.correlation_score} 分</strong><span>{formatSignedTimeOffset(candidate.time_offset_ms)}</span></div></summary><div className="candidate-detail"><div className="candidate-meta"><span>本地基准时间：{formatTime(candidate.local_event_time_utc)}</span><span>EDR 事件时间：{formatTime(candidate.event_time_utc)}</span><span>EDR 相对本地：{formatSignedTimeOffset(candidate.time_offset_ms)} · 绝对差 {candidate.time_offset_ms === null ? "未知" : formatDurationMs(candidate.time_distance_ms)} / 上限 {candidate.maximum_time_difference_ms} ms · {candidate.time_difference_matched ? "符合" : "超出"}</span><span>来源：{candidate.raw_ref}</span><span>{candidate.qualification_reason}</span><span>事件类型提示：{candidate.event_type_hint_matched ? "一致" : "不同"}</span><span>BASELINE Action 提示：{candidate.event_action_hint_matched ? "一致" : "不同"}</span>{candidate.custom_action_name_expected.length > 0 && <span>自定义 Action.Name：{candidate.custom_action_name_actual ?? "未读取"} · {candidate.custom_action_name_matched ? "符合" : "不符合"}</span>}{candidate.custom_child_file_create_op_name_expected.length > 0 && <span>自定义 Child.FileCreateOpName：{candidate.custom_child_file_create_op_name_actual ?? "未读取"} · {candidate.custom_child_file_create_op_name_matched ? "符合" : "不符合"}</span>}</div><div className="matched-anchor-list"><strong>命中的本地关联证据</strong>{candidate.matched_anchors.length ? candidate.matched_anchors.map((anchor) => <code key={anchor}>{anchor}</code>) : <span>未命中本地身份锚点，仅按宽时间窗保留</span>}</div><div className="candidate-json-grid"><section><h5>规范化字段</h5><pre>{JSON.stringify(candidate.canonical_event, null, 2)}</pre></section><section><h5>EDR 原始完整日志</h5><pre>{JSON.stringify(candidate.raw_event, null, 2)}</pre></section></div></div></details>;
   })}</div> : <div className="candidate-empty">时间窗内没有可展示的 EDR 候选日志。</div>}</section>;
 }
 
 function JsonComparisonModal({ entry, candidates, onClose }: { entry: ValidationEntry; candidates: EdrCandidate[]; onClose: () => void }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const candidate = candidates[selectedIndex];
-  const candidateMatches = (candidate?.baseline_matches ?? []).filter((match) => match.status === "passed");
+  const allCandidateMatches = candidate?.baseline_matches ?? [];
+  const candidateMatches = allCandidateMatches.filter((match) => match.status === "passed");
+  const timestampMatches = allCandidateMatches.filter((match) => match.kind === "correlation" && match.canonical_field === "event.created");
   const localPointers = uniqueStrings([
     ...(entry.local_baseline_matches ?? []).filter((match) => match.status === "passed").map((match) => match.json_pointer),
     ...candidateMatches.map((match) => match.local_json_pointer),
   ]);
   const rawPointers = uniqueStrings(candidateMatches.map((match) => match.raw_json_pointer));
+  const localTimestampPointers = uniqueStrings(timestampMatches.map((match) => match.local_json_pointer));
+  const rawTimestampPointers = uniqueStrings(timestampMatches.map((match) => match.raw_json_pointer));
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
@@ -883,19 +891,24 @@ function JsonComparisonModal({ entry, candidates, onClose }: { entry: Validation
   }, [onClose]);
 
   return <div className="json-compare-backdrop" onClick={onClose}><section className="json-compare-modal" role="dialog" aria-modal="true" aria-labelledby={`json-compare-${entry.case_run_id}`} onClick={(event) => event.stopPropagation()}><header className="json-compare-header"><div><p className="section-index">逐能力 JSON 对照</p><h2 id={`json-compare-${entry.case_run_id}`}>{entry.display_name_zh ?? entry.capability_id}</h2><code>{entry.capability_id} · {entry.baseline_id ?? "无匹配 BASELINE"}</code></div><button className="modal-close" type="button" autoFocus aria-label="关闭 JSON 对照窗" onClick={onClose}>×</button></header>
-    <div className="json-candidate-toolbar"><label>选择 EDR 候选 JSON 块<select value={selectedIndex} disabled={!candidates.length} onChange={(event) => setSelectedIndex(Number(event.target.value))}>{candidates.length ? candidates.map((item, index) => <option value={index} key={`${item.expectation_id}-${item.raw_ref}-${index}`}>#{index + 1} · {item.event_id || "无事件 ID"} · {item.expectation_id} · {confidenceLabel(item.confidence)}</option>) : <option value={0}>没有可选候选</option>}</select></label><div className="candidate-switch"><button type="button" disabled={selectedIndex <= 0} onClick={() => setSelectedIndex((value) => Math.max(0, value - 1))}>上一条</button><span>{candidates.length ? `${selectedIndex + 1} / ${candidates.length}` : "0 / 0"}</span><button type="button" disabled={selectedIndex >= candidates.length - 1} onClick={() => setSelectedIndex((value) => Math.min(candidates.length - 1, value + 1))}>下一条</button></div><div className="match-legend"><i /><span>绿色行表示该候选与 BASELINE 比对一致</span><strong>{rawPointers.length} 个 EDR 字段命中</strong></div></div>
-    <div className="selected-candidate-meta">{candidate ? <><span>关联得分 {candidate.correlation_score}</span><span>{formatDistance(candidate.time_distance_ms)} / 基准 ≤ {candidate.maximum_time_difference_ms} ms</span><span>{confidenceLabel(candidate.confidence)}</span><span>{candidate.eligible_for_validation ? "达到关联阈值" : candidate.anchor_qualified ? "锚点强匹配，但被 EDR 字段筛除" : "低置信度排查块"}</span>{candidate.custom_action_name_expected.length > 0 && <span>Action.Name {candidate.custom_action_name_actual ?? "未读取"} / 标准 {candidate.custom_action_name_expected.join("、")}</span>}{candidate.custom_child_file_create_op_name_expected.length > 0 && <span>Child.FileCreateOpName {candidate.custom_child_file_create_op_name_actual ?? "未读取"} / 标准 {candidate.custom_child_file_create_op_name_expected.join("、")}</span>}<code>{candidate.raw_ref}</code></> : <span>当前能力没有可关联的 EDR 候选 JSON 块</span>}</div>
-    <div className="json-side-by-side"><section><header><div><span>原 JSON</span><h3>本地运行导出块</h3></div><em>{localPointers.length} 处高亮</em></header><JsonCodeViewer value={entry.local_export_block ?? {}} highlightPointers={localPointers} label="本地运行导出 JSON" /></section><section><header><div><span>导出 JSON</span><h3>EDR 平台候选块</h3></div><em>{rawPointers.length} 处高亮</em></header>{candidate ? <JsonCodeViewer value={candidate.raw_event} highlightPointers={rawPointers} label="EDR 平台导出 JSON" /> : <div className="json-candidate-placeholder"><strong>没有可关联的 EDR JSON 块</strong><p>本地 JSON 仍可查看；导入范围内没有候选事件时不会产生错误高亮。</p></div>}</section></div>
+    <div className="json-candidate-toolbar"><label>选择 EDR 候选 JSON 块<select value={selectedIndex} disabled={!candidates.length} onChange={(event) => setSelectedIndex(Number(event.target.value))}>{candidates.length ? candidates.map((item, index) => <option value={index} key={`${item.expectation_id}-${item.raw_ref}-${index}`}>#{index + 1} · {item.event_id || "无事件 ID"} · {item.expectation_id} · {confidenceLabel(item.confidence)}</option>) : <option value={0}>没有可选候选</option>}</select></label><div className="candidate-switch"><button type="button" disabled={selectedIndex <= 0} onClick={() => setSelectedIndex((value) => Math.max(0, value - 1))}>上一条</button><span>{candidates.length ? `${selectedIndex + 1} / ${candidates.length}` : "0 / 0"}</span><button type="button" disabled={selectedIndex >= candidates.length - 1} onClick={() => setSelectedIndex((value) => Math.min(candidates.length - 1, value + 1))}>下一条</button></div><div className="match-legend"><i /><span>绿色行表示该候选与 BASELINE 比对一致</span><i className="timestamp" /><span>蓝色行表示参与时间差计算的两侧时间戳</span><strong>{rawPointers.length} 个 EDR 字段命中 · {rawTimestampPointers.length} 个时间戳</strong></div></div>
+    <div className="selected-candidate-meta">{candidate ? <><span>关联得分 {candidate.correlation_score}</span><span>EDR 相对本地 {formatSignedTimeOffset(candidate.time_offset_ms)} · 绝对差 {candidate.time_offset_ms === null ? "未知" : formatDurationMs(candidate.time_distance_ms)} / 基准 ≤ {candidate.maximum_time_difference_ms} ms</span><span>{confidenceLabel(candidate.confidence)}</span><span>{candidate.eligible_for_validation ? "达到关联阈值" : candidate.anchor_qualified ? "锚点强匹配，但被 EDR 字段筛除" : "低置信度排查块"}</span>{candidate.custom_action_name_expected.length > 0 && <span>Action.Name {candidate.custom_action_name_actual ?? "未读取"} / 标准 {candidate.custom_action_name_expected.join("、")}</span>}{candidate.custom_child_file_create_op_name_expected.length > 0 && <span>Child.FileCreateOpName {candidate.custom_child_file_create_op_name_actual ?? "未读取"} / 标准 {candidate.custom_child_file_create_op_name_expected.join("、")}</span>}<code>{candidate.raw_ref}</code></> : <span>当前能力没有可关联的 EDR 候选 JSON 块</span>}</div>
+    <div className="json-side-by-side"><section><header><div><span>原 JSON</span><h3>本地运行导出块</h3></div><em>{localPointers.length} 处 BASELINE 高亮 · {localTimestampPointers.length} 个时间戳</em></header><JsonCodeViewer value={entry.local_export_block ?? {}} highlightPointers={localPointers} timestampPointers={localTimestampPointers} label="本地运行导出 JSON" /></section><section><header><div><span>导出 JSON</span><h3>EDR 平台候选块</h3></div><em>{rawPointers.length} 处 BASELINE 高亮 · {rawTimestampPointers.length} 个时间戳</em></header>{candidate ? <JsonCodeViewer value={candidate.raw_event} highlightPointers={rawPointers} timestampPointers={rawTimestampPointers} label="EDR 平台导出 JSON" /> : <div className="json-candidate-placeholder"><strong>没有可关联的 EDR JSON 块</strong><p>本地 JSON 仍可查看；导入范围内没有候选事件时不会产生错误高亮。</p></div>}</section></div>
     <footer className="json-match-footer"><strong>当前候选命中的 BASELINE 与自定义字段</strong><div>{candidateMatches.length ? candidateMatches.map((match) => <span key={`${match.kind}-${match.requirement_id}`}><i>{match.kind === "correlation" ? "关联" : match.kind === "custom_filter" ? "自定义" : "断言"}</i><code>{match.local_field ?? (match.kind === "custom_filter" ? `${match.raw_field ?? match.canonical_field} 标准` : "固定期望")} ↔ {match.raw_field ?? match.canonical_field}</code></span>) : <em>当前候选没有完全一致的字段。</em>}</div></footer>
   </section></div>;
 }
 
 type JsonDisplayLine = { pointer: string; text: string };
 
-function JsonCodeViewer({ value, highlightPointers, label }: { value: unknown; highlightPointers: string[]; label: string }) {
+function JsonCodeViewer({ value, highlightPointers, timestampPointers, label }: { value: unknown; highlightPointers: string[]; timestampPointers: string[]; label: string }) {
   const highlighted = new Set(highlightPointers);
+  const timestampHighlighted = new Set(timestampPointers);
   const lines = buildJsonLines(value);
-  return <div className="json-code-viewer" role="region" aria-label={label}>{lines.map((line, index) => <div className={`json-code-line ${highlighted.has(line.pointer) ? "baseline-match" : ""}`} key={`${line.pointer}-${index}`}><span>{String(index + 1).padStart(3, "0")}</span><code>{line.text}</code>{highlighted.has(line.pointer) && <em>BASELINE 一致</em>}</div>)}</div>;
+  return <div className="json-code-viewer" role="region" aria-label={label}>{lines.map((line, index) => {
+    const isBaselineMatch = highlighted.has(line.pointer);
+    const isTimestamp = timestampHighlighted.has(line.pointer);
+    return <div className={`json-code-line ${isBaselineMatch ? "baseline-match" : ""} ${isTimestamp ? "timestamp-match" : ""}`} key={`${line.pointer}-${index}`}><span>{String(index + 1).padStart(3, "0")}</span><code>{line.text}</code>{(isBaselineMatch || isTimestamp) && <em>{isTimestamp ? isBaselineMatch ? "时间戳 · 一致" : "时间戳" : "BASELINE 一致"}</em>}</div>;
+  })}</div>;
 }
 
 function buildJsonLines(value: unknown, pointer = "", depth = 0, property?: string, trailingComma = false): JsonDisplayLine[] {
