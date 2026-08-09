@@ -1265,6 +1265,11 @@ tbody tr:last-child td { border-bottom: 0; }
 .compare-select-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 0 20px 20px; }
 .action-settings-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
 .action-settings-actions .secondary-button { min-height: 32px; padding: 6px 10px; font-size: 10px; }
+.edr-filter-group + .edr-filter-group { border-top: 1px solid var(--line-strong); }
+.edr-filter-group > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 14px 20px; background: #f7f9f8; }
+.edr-filter-group > header h3 { margin: 0; font-family: var(--font-display); font-size: 13px; }
+.edr-filter-group > header p { margin: 4px 0 0; color: var(--quiet); font-size: 9px; }
+.edr-filter-group > header > code { padding: 4px 7px; border: 1px solid var(--line); color: var(--accent); font-size: 8px; }
 .action-name-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); }
 .action-name-field { display: grid; grid-template-columns: minmax(150px, 0.7fr) minmax(180px, 1.3fr); gap: 6px 12px; align-items: center; min-width: 0; padding: 14px 18px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .action-name-field:nth-child(2n) { border-right: 0; }

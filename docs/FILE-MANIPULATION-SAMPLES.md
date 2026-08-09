@@ -44,7 +44,7 @@ Controller 复用通用 SQLite Schema，无需新增专用表：
 
 腾讯映射保留已知的 `File/FileRename` 精确语义，同时增加不依赖 `Action.Name` 的候选发现路由。因此 `InjectHook/MoveFileExW` 或后续未知名称的记录也会先进入时间窗，再依据本地源/目标路径、Actor 路径/PID和时间距离评分；不包含固定 PID、固定目录或固定 nonce，避免针对单次日志过拟合。
 
-如果同一 JSON 文件行为关联出多条强候选，可在离线比较页为对应能力填写一个或多个原始 `Action.Name`（例如 `MoveFileExW`、`FileRename`）并保存，多个值为“任选其一”。该设置只筛选 EDR 候选，不会改变本地运行规则、`LOCAL_PASS`，也不会代替本地路径、Actor、PID 和时间条件；未选中的强候选仍会显示完整 JSON。
+如果同一 JSON 文件行为关联出多条强候选，可在离线比较页为对应能力填写一个或多个原始 `Action.Name`，五项文件能力还可填写一个或多个原始 `Child.FileCreateOpName`。单字段多值为“任选其一”；两个字段均填写时，候选必须同时满足。默认规则为：创建 `FileWriteClose + 新建文件`、修改 `FileWriteClose + 覆盖写文件`、打开 `FileWriteClose + 打开文件`、重命名 `FileRename`，删除留空。该设置只筛选 EDR 候选，不会改变本地运行规则、`LOCAL_PASS`，也不会代替本地路径、Actor、PID 和时间条件；清空任一字段后不会对该字段进行筛选，未选中的强候选仍会显示完整 JSON。
 
 ## 4. 构建和验收
 

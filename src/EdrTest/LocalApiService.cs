@@ -273,9 +273,17 @@ public static class LocalApiService
         var mappingPath = catalog.ResolveMapping(mappingId);
         if (mappingPath is null) return ApiError(400, "未知 mapping_id。");
         IReadOnlyDictionary<string, IReadOnlyList<string>> actionNameStandards;
+        IReadOnlyDictionary<string, IReadOnlyList<string>> childFileCreateOpNameStandards;
         try
         {
-            actionNameStandards = ParseActionNameStandards(form["action_name_standards"].ToString());
+            actionNameStandards = ParseEdrFieldStandards(
+                form["action_name_standards"].ToString(),
+                "action_name_standards",
+                "Action.Name");
+            childFileCreateOpNameStandards = ParseEdrFieldStandards(
+                form["child_file_create_op_name_standards"].ToString(),
+                "child_file_create_op_name_standards",
+                "Child.FileCreateOpName");
         }
         catch (Exception exception) when (exception is JsonException or InvalidDataException)
         {
@@ -342,7 +350,8 @@ public static class LocalApiService
                 manifestPath,
                 conclusionPath,
                 comparisonId,
-                actionNameStandards));
+                actionNameStandards,
+                childFileCreateOpNameStandards));
             return Results.Json(result, ApiJson);
         }
         catch (Exception exception) when (exception is InvalidDataException or JsonException or ArgumentException)
@@ -358,18 +367,21 @@ public static class LocalApiService
         await stream.FlushAsync(cancellationToken);
     }
 
-    private static IReadOnlyDictionary<string, IReadOnlyList<string>> ParseActionNameStandards(string text)
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> ParseEdrFieldStandards(
+        string text,
+        string formField,
+        string rawField)
     {
         if (string.IsNullOrWhiteSpace(text)) return new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
-        if (text.Length > 65_536) throw new InvalidDataException("action_name_standards 超过 64 KB。");
+        if (text.Length > 65_536) throw new InvalidDataException($"{formField} 超过 64 KB。");
         var root = JsonNode.Parse(text) as JsonObject
-            ?? throw new InvalidDataException("action_name_standards 必须是 JSON 对象。");
+            ?? throw new InvalidDataException($"{formField} 必须是 JSON 对象。");
         var result = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
         foreach (var (capabilityId, node) in root)
         {
             if (node is not JsonArray values || values.Any(value => value is not JsonValue))
             {
-                throw new InvalidDataException($"能力 {capabilityId} 的 Action.Name 标准必须是字符串数组。");
+                throw new InvalidDataException($"能力 {capabilityId} 的 {rawField} 标准必须是字符串数组。");
             }
             try
             {
@@ -377,7 +389,7 @@ public static class LocalApiService
             }
             catch (Exception exception) when (exception is InvalidOperationException or FormatException)
             {
-                throw new InvalidDataException($"能力 {capabilityId} 的 Action.Name 标准必须是字符串数组。");
+                throw new InvalidDataException($"能力 {capabilityId} 的 {rawField} 标准必须是字符串数组。");
             }
         }
         return result;

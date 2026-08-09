@@ -50,6 +50,18 @@
             "items": { "type": "string", "minLength": 1, "maxLength": 128 },
             "uniqueItems": true
           }
+        },
+        "child_file_create_op_name_standards": {
+          "type": "object",
+          "propertyNames": {
+            "enum": ["win.file.create", "win.file.open", "win.file.delete", "win.file.modify", "win.file.rename"]
+          },
+          "additionalProperties": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "uniqueItems": true
+          }
         }
       }
     },
@@ -158,6 +170,12 @@
                   },
                   "custom_action_name_actual": { "type": ["string", "null"] },
                   "custom_action_name_matched": { "type": ["boolean", "null"] },
+                  "custom_child_file_create_op_name_expected": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "custom_child_file_create_op_name_actual": { "type": ["string", "null"] },
+                  "custom_child_file_create_op_name_matched": { "type": ["boolean", "null"] },
                   "maximum_time_difference_ms": { "type": "integer", "minimum": 1 },
                   "time_difference_matched": { "type": "boolean" },
                   "time_distance_ms": { "type": "integer", "minimum": 0 },
@@ -188,6 +206,9 @@
                 "custom_action_name_expected",
                 "custom_action_name_actual",
                 "custom_action_name_matched",
+                "custom_child_file_create_op_name_expected",
+                "custom_child_file_create_op_name_actual",
+                "custom_child_file_create_op_name_matched",
                 "maximum_time_difference_ms",
                 "time_difference_matched",
                 "time_distance_ms",
@@ -213,6 +234,12 @@
                 },
                 "custom_action_name_actual": { "type": ["string", "null"] },
                 "custom_action_name_matched": { "type": ["boolean", "null"] },
+                "custom_child_file_create_op_name_expected": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                },
+                "custom_child_file_create_op_name_actual": { "type": ["string", "null"] },
+                "custom_child_file_create_op_name_matched": { "type": ["boolean", "null"] },
                 "maximum_time_difference_ms": { "type": "integer", "minimum": 1 },
                 "time_difference_matched": { "type": "boolean" },
                 "time_distance_ms": { "type": "integer", "minimum": 0 },

@@ -76,6 +76,15 @@ public static class ConclusionExportService
                 .ToArray() ?? [];
             if (values.Length > 0) builder.AppendLine($"- 自定义 Action.Name：`{standard.Key}` → `{string.Join("`、`", values)}`");
         }
+        foreach (var standard in inputs?["child_file_create_op_name_standards"]?.AsObject() ?? [])
+        {
+            var values = standard.Value?.AsArray()
+                .Select(value => value?.GetValue<string>())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Cast<string>()
+                .ToArray() ?? [];
+            if (values.Length > 0) builder.AppendLine($"- 自定义 Child.FileCreateOpName：`{standard.Key}` → `{string.Join("`、`", values)}`");
+        }
         builder.AppendLine($"- 检验基准数量：{inputs?["baselines"]?.AsArray().Count ?? 0}");
         builder.AppendLine();
         builder.AppendLine("> 结论仅适用于本次本地运行窗口、用户导入的 EDR 日志范围以及报告中列出的字段映射和 BASELINE 版本。");

@@ -19,7 +19,8 @@ public sealed record CompareRequest(
     string? CloudManifestPath = null,
     string? ConclusionOutputPath = null,
     string? ComparisonId = null,
-    IReadOnlyDictionary<string, IReadOnlyList<string>>? ActionNameStandards = null);
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? ActionNameStandards = null,
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? ChildFileCreateOpNameStandards = null);
 
 public sealed class MappingProfile
 {
@@ -198,6 +199,9 @@ internal sealed record Candidate(
     string? VendorActionName,
     bool? CustomActionNameMatched,
     IReadOnlyList<string> CustomActionNameStandards,
+    string? ChildFileCreateOpName,
+    bool? CustomChildFileCreateOpNameMatched,
+    IReadOnlyList<string> CustomChildFileCreateOpNameStandards,
     int MaximumTimeDifferenceMs,
     bool TimeDifferenceMatched,
     string QualificationReason);
@@ -207,6 +211,14 @@ internal sealed record CloudLoadResult(IReadOnlyList<CanonicalEvent> Events, IRe
 public static class CompareService
 {
     private const int MaximumDisplayedCandidates = 50;
+    private static readonly HashSet<string> FileCapabilityIds = new(StringComparer.Ordinal)
+    {
+        "win.file.create",
+        "win.file.open",
+        "win.file.delete",
+        "win.file.modify",
+        "win.file.rename",
+    };
 
     private static readonly IDeserializer Yaml = new DeserializerBuilder()
         .WithNamingConvention(UnderscoredNamingConvention.Instance)
@@ -216,7 +228,11 @@ public static class CompareService
     public static JsonObject Compare(CompareRequest request)
     {
         ValidateInputs(request);
-        var actionNameStandards = NormalizeActionNameStandards(request.ActionNameStandards);
+        var actionNameStandards = NormalizeEdrFieldStandards(request.ActionNameStandards, "Action.Name");
+        var childFileCreateOpNameStandards = NormalizeEdrFieldStandards(
+            request.ChildFileCreateOpNameStandards,
+            "Child.FileCreateOpName",
+            FileCapabilityIds);
         var localPath = Path.GetFullPath(request.LocalExportPath);
         var mappingPath = Path.GetFullPath(request.MappingPath);
         var localRoot = JsonNode.Parse(File.ReadAllText(localPath)) as JsonObject ?? throw new InvalidDataException("本地导出必须是 JSON 对象。");
@@ -270,7 +286,18 @@ public static class CompareService
                     var capabilityActionNames = actionNameStandards.TryGetValue(capabilityId, out var configuredActionNames)
                         ? configuredActionNames
                         : Array.Empty<string>();
-                    result = CompareCapability(localRoot, capability, baselineEntry.Value, cloud, cloudManifest, manifestFilesVerified, capabilityActionNames);
+                    var capabilityFileCreateOpNames = childFileCreateOpNameStandards.TryGetValue(capabilityId, out var configuredFileCreateOpNames)
+                        ? configuredFileCreateOpNames
+                        : Array.Empty<string>();
+                    result = CompareCapability(
+                        localRoot,
+                        capability,
+                        baselineEntry.Value,
+                        cloud,
+                        cloudManifest,
+                        manifestFilesVerified,
+                        capabilityActionNames,
+                        capabilityFileCreateOpNames);
                     DecorateCapabilityResult(result, capability, baselineEntry.Value);
                 }
             }
@@ -305,6 +332,8 @@ public static class CompareService
                 }).ToArray()),
                 ["action_name_standards"] = new JsonObject(actionNameStandards.Select(value =>
                     KeyValuePair.Create<string, JsonNode?>(value.Key, new JsonArray(value.Value.Select(action => (JsonNode)action).ToArray())))),
+                ["child_file_create_op_name_standards"] = new JsonObject(childFileCreateOpNameStandards.Select(value =>
+                    KeyValuePair.Create<string, JsonNode?>(value.Key, new JsonArray(value.Value.Select(operation => (JsonNode)operation).ToArray())))),
             },
             ["summary"] = summary,
             ["conclusion"] = conclusion,
@@ -326,7 +355,8 @@ public static class CompareService
         CloudLoadResult cloud,
         JsonObject? cloudManifest,
         bool manifestFilesVerified,
-        IReadOnlyList<string> actionNameStandards)
+        IReadOnlyList<string> actionNameStandards,
+        IReadOnlyList<string> childFileCreateOpNameStandards)
     {
         var capabilityId = RequiredString(capability, "capability_id");
         var caseRunId = RequiredString(capability, "case_run_id");
@@ -370,6 +400,16 @@ public static class CompareService
         {
             warnings.Add($"已启用自定义 Action.Name 消歧：{string.Join("、", actionNameStandards)}。该条件只筛选已命中本地锚点的候选，不参与候选召回或锚点评分。");
         }
+        if (childFileCreateOpNameStandards.Count > 0)
+        {
+            warnings.Add($"已启用自定义 Child.FileCreateOpName 消歧：{string.Join("、", childFileCreateOpNameStandards)}。该条件只筛选五项文件能力中已命中本地锚点的 EDR 候选，不影响本地规则。");
+        }
+        var customFilterNames = new[]
+        {
+            actionNameStandards.Count > 0 ? "Action.Name" : null,
+            childFileCreateOpNameStandards.Count > 0 ? "Child.FileCreateOpName" : null,
+        }.Where(value => value is not null).Cast<string>().ToArray();
+        var customFilterDescription = string.Join(" 与 ", customFilterNames);
         foreach (var expectation in baseline.CloudExpectations)
         {
             var expectationAnchors = expectation.Correlation?.Anchors is { Count: > 0 }
@@ -379,7 +419,15 @@ public static class CompareService
             var correlationTime = ResolveCorrelationTime(expectation.Correlation?.TimeFromLocal, resolver, defaultCorrelationTime);
             var candidates = cloud.Events
                 .Where(item => EventWithinWindow(item, start, end, baseline.Correlation))
-                .Select(item => Score(item, expectation, expectationAnchors, resolver, correlationTime, maximumTimeDifferenceMs, actionNameStandards))
+                .Select(item => Score(
+                    item,
+                    expectation,
+                    expectationAnchors,
+                    resolver,
+                    correlationTime,
+                    maximumTimeDifferenceMs,
+                    actionNameStandards,
+                    childFileCreateOpNameStandards))
                 .GroupBy(item => item.Event.RawRef, StringComparer.Ordinal)
                 .Select(group => group
                     .OrderByDescending(item => item.Qualified)
@@ -414,9 +462,9 @@ public static class CompareService
                     : "passed";
             var cardinalityMessage = cardinalityStatus switch
             {
-                "failed" when actionNameStandards.Count > 0 => $"EDR 日志范围足以形成判断；{anchorQualifiedCandidates.Length} 条候选命中本地锚点，其中 {qualifiedCandidates.Length} 条同时符合自定义 Action.Name。其余记录仍保留供排查。",
+                "failed" when customFilterNames.Length > 0 => $"EDR 日志范围足以形成判断；{anchorQualifiedCandidates.Length} 条候选命中本地锚点，其中 {qualifiedCandidates.Length} 条同时符合自定义 {customFilterDescription}。其余记录仍保留供排查。",
                 "failed" => $"EDR 日志范围足以形成判断，但只有 {qualifiedCandidates.Length} 条候选达到关联阈值；另展示 {candidates.Length - qualifiedCandidates.Length} 条低置信度记录供排查。",
-                "not_evaluated" when qualifiedCandidates.Length < expectation.Cardinality.Min && actionNameStandards.Count > 0 => $"日志范围或关联证据不足；{anchorQualifiedCandidates.Length} 条候选命中本地锚点，其中 {qualifiedCandidates.Length} 条符合自定义 Action.Name。",
+                "not_evaluated" when qualifiedCandidates.Length < expectation.Cardinality.Min && customFilterNames.Length > 0 => $"日志范围或关联证据不足；{anchorQualifiedCandidates.Length} 条候选命中本地锚点，其中 {qualifiedCandidates.Length} 条同时符合自定义 {customFilterDescription}。",
                 "not_evaluated" when qualifiedCandidates.Length < expectation.Cardinality.Min => $"日志范围或关联证据不足；已展示 {candidates.Length} 条时间相近记录供继续核对。",
                 "not_evaluated" => "候选事件过多，无法唯一关联。",
                 _ => null,
@@ -424,10 +472,31 @@ public static class CompareService
             outputRequirements.Add(CardinalityRequirementJson(expectation, qualifiedCandidates.Length, cardinalityStatus, cardinalityMessage));
             if (actionNameStandards.Count > 0)
             {
-                var actionRequirement = CustomActionNameRequirementJson(expectation, actionNameStandards, anchorQualifiedCandidates, qualifiedCandidates);
+                var actionRequirement = CustomEdrFieldRequirementJson(
+                    expectation,
+                    "Action.Name",
+                    "custom-action-name",
+                    actionNameStandards,
+                    anchorQualifiedCandidates,
+                    candidate => candidate.VendorActionName,
+                    candidate => candidate.CustomActionNameMatched);
                 outputRequirements.Add(actionRequirement);
                 if (actionRequirement["status"]?.GetValue<string>() == "failed") overallStatus = Worse(overallStatus, "FAIL");
                 else if (actionRequirement["status"]?.GetValue<string>() == "not_evaluated") overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+            }
+            if (childFileCreateOpNameStandards.Count > 0)
+            {
+                var fileOperationRequirement = CustomEdrFieldRequirementJson(
+                    expectation,
+                    "Child.FileCreateOpName",
+                    "custom-child-file-create-op-name",
+                    childFileCreateOpNameStandards,
+                    anchorQualifiedCandidates,
+                    candidate => candidate.ChildFileCreateOpName,
+                    candidate => candidate.CustomChildFileCreateOpNameMatched);
+                outputRequirements.Add(fileOperationRequirement);
+                if (fileOperationRequirement["status"]?.GetValue<string>() == "failed") overallStatus = Worse(overallStatus, "FAIL");
+                else if (fileOperationRequirement["status"]?.GetValue<string>() == "not_evaluated") overallStatus = Worse(overallStatus, "INCONCLUSIVE");
             }
             if (qualifiedCandidates.Length < expectation.Cardinality.Min)
             {
@@ -462,8 +531,13 @@ public static class CompareService
             var selected = qualifiedCandidates.FirstOrDefault() ?? candidates[0];
             if (!selected.Qualified)
             {
-                warnings.Add(selected.AnchorQualified && actionNameStandards.Count > 0
-                    ? $"{expectation.Id} 已找到命中本地锚点的记录，但原始 Action.Name 不符合自定义标准；仍保留该记录和逐字段结果供核对。"
+                var rejectedFilters = new[]
+                {
+                    selected.CustomActionNameMatched is false ? "Action.Name" : null,
+                    selected.CustomChildFileCreateOpNameMatched is false ? "Child.FileCreateOpName" : null,
+                }.Where(value => value is not null).Cast<string>().ToArray();
+                warnings.Add(selected.AnchorQualified && rejectedFilters.Length > 0
+                    ? $"{expectation.Id} 已找到命中本地锚点的记录，但原始 {string.Join("、", rejectedFilters)} 不符合自定义标准；仍保留该记录和逐字段结果供核对。"
                     : $"{expectation.Id} 当前使用低置信度候选继续展示可验证字段，不会把该候选当作已可靠关联。");
                 overallStatus = Worse(overallStatus, "INCONCLUSIVE");
             }
@@ -479,6 +553,9 @@ public static class CompareService
                 ["custom_action_name_expected"] = new JsonArray(selected.CustomActionNameStandards.Select(value => (JsonNode)value).ToArray()),
                 ["custom_action_name_actual"] = selected.VendorActionName,
                 ["custom_action_name_matched"] = selected.CustomActionNameMatched,
+                ["custom_child_file_create_op_name_expected"] = new JsonArray(selected.CustomChildFileCreateOpNameStandards.Select(value => (JsonNode)value).ToArray()),
+                ["custom_child_file_create_op_name_actual"] = selected.ChildFileCreateOpName,
+                ["custom_child_file_create_op_name_matched"] = selected.CustomChildFileCreateOpNameMatched,
                 ["maximum_time_difference_ms"] = selected.MaximumTimeDifferenceMs,
                 ["time_difference_matched"] = selected.TimeDifferenceMatched,
                 ["time_distance_ms"] = selected.TimeDistanceMs,
@@ -543,37 +620,41 @@ public static class CompareService
         ["message"] = message,
     };
 
-    private static JsonObject CustomActionNameRequirementJson(
+    private static JsonObject CustomEdrFieldRequirementJson(
         CloudExpectation expectation,
+        string rawField,
+        string requirementSuffix,
         IReadOnlyList<string> standards,
         IReadOnlyList<Candidate> anchorQualifiedCandidates,
-        IReadOnlyList<Candidate> qualifiedCandidates)
+        Func<Candidate, string?> actualSelector,
+        Func<Candidate, bool?> matchSelector)
     {
         var actual = anchorQualifiedCandidates
-            .Select(candidate => candidate.VendorActionName)
+            .Select(actualSelector)
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Cast<string>()
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var matchedCount = anchorQualifiedCandidates.Count(candidate => matchSelector(candidate) == true);
         var status = anchorQualifiedCandidates.Count == 0
             ? "not_evaluated"
-            : qualifiedCandidates.Count > 0
+            : matchedCount > 0
                 ? "passed"
                 : "failed";
         var message = status switch
         {
-            "passed" => $"命中本地锚点的候选中，有 {qualifiedCandidates.Count} 条符合自定义 Action.Name。",
-            "failed" => "已找到命中本地锚点的候选，但它们的原始 Action.Name 均不符合自定义标准。",
-            _ => "尚无命中本地锚点的候选，无法应用自定义 Action.Name 消歧。",
+            "passed" => $"命中本地锚点的候选中，有 {matchedCount} 条符合自定义 {rawField}。",
+            "failed" => $"已找到命中本地锚点的候选，但它们的原始 {rawField} 均不符合自定义标准。",
+            _ => $"尚无命中本地锚点的候选，无法应用自定义 {rawField} 消歧。",
         };
         return new JsonObject
         {
-            ["requirement_id"] = $"{expectation.Id}-custom-action-name",
+            ["requirement_id"] = $"{expectation.Id}-{requirementSuffix}",
             ["scope"] = "cloud",
-            ["title_zh"] = "原始 Action.Name 必须符合本次自定义标准",
+            ["title_zh"] = $"原始 {rawField} 必须符合本次自定义标准",
             ["expectation_id"] = expectation.Id,
-            ["field"] = "Action.Name",
+            ["field"] = rawField,
             ["operator"] = "one_of",
             ["severity"] = "required",
             ["status"] = status,
@@ -730,7 +811,8 @@ public static class CompareService
         LocalResolver resolver,
         DateTimeOffset correlationTime,
         int maximumTimeDifferenceMs,
-        IReadOnlyList<string> actionNameStandards)
+        IReadOnlyList<string> actionNameStandards,
+        IReadOnlyList<string> childFileCreateOpNameStandards)
     {
         double score = 0;
         var matched = new List<string>();
@@ -767,19 +849,30 @@ public static class CompareService
         var actionHintMatched = expectation.EventActions.Any(action => Equivalent(item.Get("event.action"), action));
 
         var anchorQualified = matchedStrong || (!availableStrong && matchedMedium) || (timeDifferenceMatched && matchedIdentity);
-        var vendorActionName = VendorActionName(item);
+        var vendorActionName = RawStringField(item, "Action.Name");
         bool? customActionNameMatched = actionNameStandards.Count == 0
             ? null
             : actionNameStandards.Any(action => Equivalent(vendorActionName, action));
-        var qualified = anchorQualified && customActionNameMatched is not false;
+        var childFileCreateOpName = RawStringField(item, "Child.FileCreateOpName");
+        bool? customChildFileCreateOpNameMatched = childFileCreateOpNameStandards.Count == 0
+            ? null
+            : childFileCreateOpNameStandards.Any(operation => Equivalent(childFileCreateOpName, operation));
+        var qualified = anchorQualified
+            && customActionNameMatched is not false
+            && customChildFileCreateOpNameMatched is not false;
+        var rejectedCustomFields = new[]
+        {
+            customActionNameMatched is false ? "Action.Name" : null,
+            customChildFileCreateOpNameMatched is false ? "Child.FileCreateOpName" : null,
+        }.Where(value => value is not null).Cast<string>().ToArray();
         var reason = !anchorQualified
             ? availableStrong
                 ? "未命中可用的强本地锚点，仅作为低置信度候选展示"
                 : availableMedium
                     ? "未命中可用的中等本地锚点，仅作为低置信度候选展示"
                     : "本地关联锚点未采集完整，仅按时间距离展示；本地基准异常会阻止能力通过"
-            : customActionNameMatched is false
-                ? "已命中本地锚点，但原始 Action.Name 不符合本次自定义标准"
+            : rejectedCustomFields.Length > 0
+                ? $"已命中本地锚点，但原始 {string.Join("、", rejectedCustomFields)} 不符合本次自定义标准"
                 : timeDifferenceMatched && !matchedStrong
                     ? $"时间差不超过 {maximumTimeDifferenceMs} ms，并命中至少一个本地身份锚点"
                 : matchedStrong
@@ -788,17 +881,45 @@ public static class CompareService
                         : "命中至少一个强本地锚点"
                     : "强锚点缺失，命中可用的中等本地锚点";
         return new Candidate(item, score, distance, matched, anchorQualified, qualified, typeHintMatched, actionHintMatched,
-            vendorActionName, customActionNameMatched, actionNameStandards, maximumTimeDifferenceMs, timeDifferenceMatched, reason);
+            vendorActionName, customActionNameMatched, actionNameStandards,
+            childFileCreateOpName, customChildFileCreateOpNameMatched, childFileCreateOpNameStandards,
+            maximumTimeDifferenceMs, timeDifferenceMatched, reason);
     }
 
-    private static string? VendorActionName(CanonicalEvent item)
+    private static string? RawStringField(CanonicalEvent item, string rawField)
     {
-        var direct = item.Raw.FirstOrDefault(property => string.Equals(property.Key, "Action.Name", StringComparison.OrdinalIgnoreCase)).Value;
-        if (direct is JsonValue directValue && directValue.TryGetValue<string>(out var directText) && !string.IsNullOrWhiteSpace(directText)) return directText;
-        var action = item.Raw.FirstOrDefault(property => string.Equals(property.Key, "Action", StringComparison.OrdinalIgnoreCase)).Value as JsonObject;
-        var nested = action?.FirstOrDefault(property => string.Equals(property.Key, "Name", StringComparison.OrdinalIgnoreCase)).Value;
-        if (nested is JsonValue nestedValue && nestedValue.TryGetValue<string>(out var nestedText) && !string.IsNullOrWhiteSpace(nestedText)) return nestedText;
+        var node = RawFieldNode(item, rawField).Node;
+        if (node is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text)) return text;
         return null;
+    }
+
+    private static (JsonNode? Node, string? Pointer) RawFieldNode(CanonicalEvent item, string rawField)
+    {
+        foreach (var property in item.Raw)
+        {
+            if (string.Equals(property.Key, rawField, StringComparison.OrdinalIgnoreCase))
+            {
+                return (property.Value, JsonPointer(property.Key));
+            }
+        }
+
+        JsonNode? current = item.Raw;
+        var pointer = string.Empty;
+        foreach (var segment in rawField.Split('.', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (current is not JsonObject currentObject) return (null, null);
+            var found = false;
+            foreach (var property in currentObject)
+            {
+                if (!string.Equals(property.Key, segment, StringComparison.OrdinalIgnoreCase)) continue;
+                current = property.Value;
+                pointer += JsonPointer(property.Key);
+                found = true;
+                break;
+            }
+            if (!found) return (null, null);
+        }
+        return (current, pointer.Length == 0 ? null : pointer);
     }
 
     private static DateTimeOffset LocalCorrelationTime(JsonObject localRoot, string caseRunId, DateTimeOffset fallback)
@@ -892,7 +1013,7 @@ public static class CompareService
                 ["local_json_pointer"] = null,
                 ["canonical_field"] = "event.action",
                 ["raw_field"] = "Action.Name",
-                ["raw_json_pointer"] = VendorActionNameJsonPointer(candidate.Event),
+                ["raw_json_pointer"] = RawFieldNode(candidate.Event, "Action.Name").Pointer,
                 ["expected"] = new JsonArray(candidate.CustomActionNameStandards.Select(value => (JsonNode)value).ToArray()),
                 ["actual"] = candidate.VendorActionName,
                 ["message"] = customStatus switch
@@ -900,6 +1021,33 @@ public static class CompareService
                     "passed" => "原始 Action.Name 符合本次自定义标准。",
                     "failed" => "原始 Action.Name 不符合本次自定义标准。",
                     _ => "候选记录没有可读取的原始 Action.Name。",
+                },
+            });
+        }
+        if (candidate.CustomChildFileCreateOpNameStandards.Count > 0)
+        {
+            var customStatus = candidate.ChildFileCreateOpName is null
+                ? "not_evaluated"
+                : candidate.CustomChildFileCreateOpNameMatched == true
+                    ? "passed"
+                    : "failed";
+            baselineMatches.Add(new JsonObject
+            {
+                ["kind"] = "custom_filter",
+                ["requirement_id"] = $"{expectationId}-custom-child-file-create-op-name",
+                ["status"] = customStatus,
+                ["local_field"] = null,
+                ["local_json_pointer"] = null,
+                ["canonical_field"] = "file.operation_name",
+                ["raw_field"] = "Child.FileCreateOpName",
+                ["raw_json_pointer"] = RawFieldNode(candidate.Event, "Child.FileCreateOpName").Pointer,
+                ["expected"] = new JsonArray(candidate.CustomChildFileCreateOpNameStandards.Select(value => (JsonNode)value).ToArray()),
+                ["actual"] = candidate.ChildFileCreateOpName,
+                ["message"] = customStatus switch
+                {
+                    "passed" => "原始 Child.FileCreateOpName 符合本次自定义标准。",
+                    "failed" => "原始 Child.FileCreateOpName 不符合本次自定义标准。",
+                    _ => "候选记录没有可读取的原始 Child.FileCreateOpName。",
                 },
             });
         }
@@ -936,6 +1084,9 @@ public static class CompareService
             ["custom_action_name_expected"] = new JsonArray(candidate.CustomActionNameStandards.Select(value => (JsonNode)value).ToArray()),
             ["custom_action_name_actual"] = candidate.VendorActionName,
             ["custom_action_name_matched"] = candidate.CustomActionNameMatched,
+            ["custom_child_file_create_op_name_expected"] = new JsonArray(candidate.CustomChildFileCreateOpNameStandards.Select(value => (JsonNode)value).ToArray()),
+            ["custom_child_file_create_op_name_actual"] = candidate.ChildFileCreateOpName,
+            ["custom_child_file_create_op_name_matched"] = candidate.CustomChildFileCreateOpNameMatched,
             ["maximum_time_difference_ms"] = candidate.MaximumTimeDifferenceMs,
             ["time_difference_matched"] = candidate.TimeDifferenceMatched,
             ["time_distance_ms"] = candidate.TimeDistanceMs,
@@ -947,13 +1098,6 @@ public static class CompareService
             ["canonical_event"] = canonical,
             ["raw_event"] = candidate.Event.Raw.DeepClone(),
         };
-    }
-
-    private static string? VendorActionNameJsonPointer(CanonicalEvent item)
-    {
-        if (item.Raw.Any(property => string.Equals(property.Key, "Action.Name", StringComparison.OrdinalIgnoreCase))) return "/Action.Name";
-        if (item.Raw.Any(property => string.Equals(property.Key, "Action", StringComparison.OrdinalIgnoreCase))) return "/Action/Name";
-        return null;
     }
 
     private static JsonObject CandidateBaselineMatchJson(
@@ -1482,30 +1626,37 @@ public static class CompareService
 
     private static string RequiredString(JsonObject value, string property) => value[property]?.GetValue<string>() ?? throw new InvalidDataException($"缺少字符串字段：{property}");
 
-    private static IReadOnlyDictionary<string, IReadOnlyList<string>> NormalizeActionNameStandards(
-        IReadOnlyDictionary<string, IReadOnlyList<string>>? configured)
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> NormalizeEdrFieldStandards(
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? configured,
+        string rawField,
+        IReadOnlySet<string>? allowedCapabilityIds = null)
     {
         if (configured is null || configured.Count == 0) return new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
-        if (configured.Count > 128) throw new ArgumentException("Action.Name 自定义标准最多覆盖 128 项能力。");
+        if (configured.Count > 128) throw new ArgumentException($"{rawField} 自定义标准最多覆盖 128 项能力。");
         var normalized = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
         foreach (var (capabilityId, values) in configured)
         {
             if (string.IsNullOrWhiteSpace(capabilityId) || capabilityId.Length > 128 || capabilityId.Any(char.IsControl))
             {
-                throw new ArgumentException("Action.Name 自定义标准包含无效 capability_id。");
+                throw new ArgumentException($"{rawField} 自定义标准包含无效 capability_id。");
             }
-            if (values.Count > 20) throw new ArgumentException($"能力 {capabilityId} 最多配置 20 个 Action.Name 标准值。");
-            var actions = values
+            var normalizedCapabilityId = capabilityId.Trim();
+            if (allowedCapabilityIds is not null && !allowedCapabilityIds.Contains(normalizedCapabilityId))
+            {
+                throw new ArgumentException($"{rawField} 只允许配置到五项文件能力；{normalizedCapabilityId} 不在允许范围内。");
+            }
+            if (values.Count > 20) throw new ArgumentException($"能力 {capabilityId} 最多配置 20 个 {rawField} 标准值。");
+            var normalizedValues = values
                 .Select(value => value?.Trim())
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .Cast<string>()
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            if (actions.Any(value => value.Length > 128 || value.Any(char.IsControl)))
+            if (normalizedValues.Any(value => value.Length > 128 || value.Any(char.IsControl)))
             {
-                throw new ArgumentException($"能力 {capabilityId} 的 Action.Name 标准值无效或超过 128 个字符。");
+                throw new ArgumentException($"能力 {capabilityId} 的 {rawField} 标准值无效或超过 128 个字符。");
             }
-            if (actions.Length > 0) normalized[capabilityId.Trim()] = actions;
+            if (normalizedValues.Length > 0) normalized[normalizedCapabilityId] = normalizedValues;
         }
         return normalized;
     }

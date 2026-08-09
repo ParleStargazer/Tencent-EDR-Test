@@ -33,6 +33,7 @@ public static class Program
         await RunTest("取消轮次会终止进程树并封存 ABORTED", TestCancellation, failures);
         await RunTest("Runner → SQLite → Export → Compare 最小闭环", TestEndToEnd, failures);
         await RunTest("同类多子项使用独立锚点与时间关联", TestExpectationCorrelation, failures);
+        await RunTest("文件原始字段仅筛选 EDR 候选", TestFileRawFieldFilters, failures);
         if (failures.Count == 0)
         {
             Console.WriteLine("全部框架测试通过。");
@@ -447,11 +448,168 @@ public static class Program
         return Task.CompletedTask;
     }
 
+    private static Task TestFileRawFieldFilters()
+    {
+        using var fixture = TestDirectory.Create();
+        var caseRunId = Ids.NewUuid7();
+        var started = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var occurred = started.AddSeconds(10);
+        const string actorPath = @"C:\samples\FileCreate.Actor.exe";
+        const string filePath = @"C:\runs\edrtest-file.json";
+        var local = new JsonObject
+        {
+            ["run"] = new JsonObject { ["host"] = new JsonObject { ["hostname"] = "fixture-host" } },
+            ["capabilities"] = new JsonArray(new JsonObject
+            {
+                ["case_run_id"] = caseRunId,
+                ["capability_id"] = "win.file.create",
+                ["capability_version"] = "0.1.0",
+                ["status"] = "LOCAL_PASS",
+                ["nonce"] = "fixture-file-nonce",
+                ["started_at_utc"] = Values.Utc(started),
+                ["ended_at_utc"] = Values.Utc(started.AddSeconds(30)),
+            }),
+            ["programs"] = new JsonArray(new JsonObject
+            {
+                ["case_run_id"] = caseRunId,
+                ["role"] = "actor",
+                ["pid"] = 5151,
+                ["executable"] = actorPath,
+            }),
+            ["local_events"] = new JsonArray(),
+            ["local_facts"] = new JsonArray(
+                Fact(caseRunId, "file.test.succeeded", true),
+                Fact(caseRunId, "file.test.path", filePath),
+                Fact(caseRunId, "file.test.occurred_at_utc", Values.Utc(occurred))),
+        };
+        var localPath = Path.Combine(fixture.Path, "file-local.json");
+        File.WriteAllText(localPath, local.ToJsonString(JsonDefaults.Options));
+
+        var cloud = new JsonArray(
+            CloudFileEvent("open-event", occurred, filePath, actorPath, "打开文件"),
+            CloudFileEvent("create-event", occurred.AddMilliseconds(5), filePath, actorPath, "新建文件"));
+        var cloudPath = Path.Combine(fixture.Path, "file-cloud.json");
+        File.WriteAllText(cloudPath, cloud.ToJsonString(JsonDefaults.Options));
+        var baselinePath = Path.Combine(fixture.Path, "file-baseline.yaml");
+        File.WriteAllText(baselinePath, """
+            schema_version: "1.1"
+            baseline_id: win.file.create
+            version: "0.1.0"
+            title: 文件创建原始字段筛选测试
+            risk_level: L0
+            capability: { id: win.file.create, version: "0.1.0" }
+            local_requirements:
+              - { field: facts.file.test.succeeded, operator: equals, expected: true, severity: required }
+            correlation:
+              time_before_seconds: 60
+              time_after_seconds: 60
+              max_time_difference_ms: 10
+              anchors:
+                - { local_field: facts.file.test.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+                - { local_field: programs.actor.executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+            cloud_expectations:
+              - id: file-create
+                event_type: file
+                event_actions: [create]
+                cardinality: { min: 1, max: 1 }
+                correlation:
+                  time_from_local: facts.file.test.occurred_at_utc
+                  anchors:
+                    - { local_field: facts.file.test.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+                    - { local_field: programs.actor.executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+                assertions:
+                  - { field: file.path, operator: equals, expected_from_local: facts.file.test.path, severity: required, normalizers: [windows_path] }
+            """);
+        var repository = FindRepositoryRoot();
+        var mappingPath = Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml");
+
+        var unfiltered = CompareService.Compare(new CompareRequest(
+            localPath,
+            [cloudPath],
+            mappingPath,
+            [baselinePath],
+            Path.Combine(fixture.Path, "file-unfiltered.json")));
+        var unfilteredCandidates = unfiltered["capabilities"]?[0]?["edr_candidates"]?.AsArray()
+            ?? throw new InvalidOperationException("留空筛选结果缺少 EDR 候选。");
+        Assert(unfilteredCandidates.Count(value => value?["eligible_for_validation"]?.GetValue<bool>() == true) == 2
+            && unfilteredCandidates.All(value => value?["custom_child_file_create_op_name_matched"] is null),
+            "Child.FileCreateOpName 留空时不得改变原有候选资格或额外筛选记录。");
+
+        var filteredResultPath = Path.Combine(fixture.Path, "file-filtered.json");
+        var filtered = CompareService.Compare(new CompareRequest(
+            localPath,
+            [cloudPath],
+            mappingPath,
+            [baselinePath],
+            filteredResultPath,
+            ActionNameStandards: new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+            {
+                ["win.file.create"] = ["FileWriteClose"],
+            },
+            ChildFileCreateOpNameStandards: new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+            {
+                ["win.file.create"] = ["不存在", "新建文件"],
+            }));
+        var filteredCapability = filtered["capabilities"]?[0]?.AsObject()
+            ?? throw new InvalidOperationException("文件字段筛选结果缺少能力。");
+        var filteredCandidates = filteredCapability["edr_candidates"]?.AsArray()
+            ?? throw new InvalidOperationException("文件字段筛选结果缺少候选。");
+        Assert(filteredCapability["validation_status"]?.GetValue<string>() == "PASS"
+            && filteredCandidates.Count(value => value?["eligible_for_validation"]?.GetValue<bool>() == true) == 1
+            && filteredCandidates[0]?["raw_event"]?["Child.FileCreateOpName"]?.GetValue<string>() == "新建文件",
+            "Action.Name 与 Child.FileCreateOpName 必须在同一强候选上共同通过，并支持多值任选其一。");
+        Assert(filteredCandidates[0]?["baseline_matches"]?.AsArray().Any(value => value?["kind"]?.GetValue<string>() == "custom_filter"
+            && value?["raw_field"]?.GetValue<string>() == "Child.FileCreateOpName"
+            && value?["raw_json_pointer"]?.GetValue<string>() == "/Child.FileCreateOpName"
+            && value?["status"]?.GetValue<string>() == "passed") == true,
+            "Child.FileCreateOpName 命中应进入候选原始 JSON 高亮信息。");
+        Assert(filteredCapability["local_status"]?.GetValue<string>() == "LOCAL_PASS"
+            && filteredCapability["baseline_requirements"]?.AsArray()
+                .Where(value => value?["scope"]?.GetValue<string>() == "local")
+                .All(value => value?["status"]?.GetValue<string>() == "passed") == true,
+            "文件原始字段筛选不得改变 LOCAL_PASS 或任何本地要求。");
+        Assert(filtered["inputs"]?["child_file_create_op_name_standards"]?["win.file.create"]?[1]?.GetValue<string>() == "新建文件"
+            && File.ReadAllText(ConclusionExportService.DefaultOutputPath(filteredResultPath)).Contains("Child.FileCreateOpName", StringComparison.Ordinal),
+            "结构化结果和中文结论都必须记录文件字段标准。");
+
+        AssertThrows<ArgumentException>(() => CompareService.Compare(new CompareRequest(
+            localPath,
+            [cloudPath],
+            mappingPath,
+            [baselinePath],
+            Path.Combine(fixture.Path, "invalid-file-filter.json"),
+            ChildFileCreateOpNameStandards: new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+            {
+                ["win.process.create"] = ["新建文件"],
+            })));
+        return Task.CompletedTask;
+    }
+
     private static JsonObject Fact(string caseRunId, string key, object value) => new()
     {
         ["case_run_id"] = caseRunId,
         ["key"] = key,
         ["value"] = JsonValue.Create(value),
+    };
+
+    private static JsonObject CloudFileEvent(string eventId, DateTimeOffset occurred, string filePath, string actorPath, string operationName) => new()
+    {
+        ["OS"] = "Windows",
+        ["@table"] = "FileEvents",
+        ["@timestamp"] = Values.Utc(occurred),
+        ["Action.Type"] = "File",
+        ["Action.Name"] = "FileWriteClose",
+        ["Child.FileCreateOpName"] = operationName,
+        ["Common.EventUUId"] = eventId,
+        ["Common.EventTime"] = occurred.ToUnixTimeMilliseconds(),
+        ["Common.Mid"] = "fixture-mid",
+        ["Environment.HostName"] = "fixture-host",
+        ["Parent.ProcPid"] = 5151,
+        ["Parent.FileName"] = Path.GetFileName(actorPath),
+        ["Parent.FilePath"] = actorPath,
+        ["Child.FileName"] = Path.GetFileName(filePath),
+        ["Child.FilePath"] = filePath,
+        ["Child.FileSize"] = 128,
     };
 
     private static JsonObject CloudImage(string eventId, DateTimeOffset time, string imagePath, string fileName, string targetPath) => new()

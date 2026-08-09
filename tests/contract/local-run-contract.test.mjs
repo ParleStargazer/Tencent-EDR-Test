@@ -68,7 +68,13 @@ test("验证结果 Schema 支持逐能力 JSON 对照与多候选高亮", async 
   );
   assert.ok(candidate.required.includes("anchor_qualified"));
   assert.ok(candidate.required.includes("custom_action_name_matched"));
+  assert.ok(candidate.required.includes("custom_child_file_create_op_name_matched"));
   assert.equal(schema.properties.inputs.properties.action_name_standards.type, "object");
+  assert.equal(schema.properties.inputs.properties.child_file_create_op_name_standards.type, "object");
+  assert.deepEqual(
+    schema.properties.inputs.properties.child_file_create_op_name_standards.propertyNames.enum,
+    ["win.file.create", "win.file.open", "win.file.delete", "win.file.modify", "win.file.rename"],
+  );
   assert.ok(baselineSchema.properties.correlation.required.includes("max_time_difference_ms"));
   assert.equal(baselineSchema.properties.correlation.properties.max_time_difference_ms.maximum, 60000);
   assert.equal(
