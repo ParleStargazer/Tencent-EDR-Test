@@ -133,6 +133,11 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /"win\.process\.tampering": "WriteProcessMemory"/);
   assert.match(livePage, /"win\.account\.local\.create": "AccountCreate"/);
   assert.match(livePage, /"win\.account\.login": "LoginSuccess, LoginFailed, LoginExplicitCredentials"/);
+  assert.match(livePage, /"win\.network\.tcp": "NetBind"/);
+  assert.match(livePage, /"win\.network\.udp": "NetBind"/);
+  assert.match(livePage, /"win\.network\.url": "NetBind"/);
+  assert.match(livePage, /"win\.network\.dns": "NetBind"/);
+  assert.match(livePage, /"win\.network\.file_download": "NetBind, FileWriteClose"/);
   assert.match(livePage, /"win\.file\.create": "FileWriteClose"/);
   assert.match(livePage, /"win\.file\.create": "新建文件"/);
   assert.match(livePage, /"win\.file\.modify": "覆盖写文件"/);

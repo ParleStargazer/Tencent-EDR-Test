@@ -270,6 +270,11 @@ const defaultActionNameInputs: Record<string, string> = {
   "win.file.create": "FileWriteClose",
   "win.file.modify": "FileWriteClose",
   "win.file.open": "FileWriteClose",
+  "win.network.tcp": "NetBind",
+  "win.network.udp": "NetBind",
+  "win.network.url": "NetBind",
+  "win.network.dns": "NetBind",
+  "win.network.file_download": "NetBind, FileWriteClose",
 };
 const defaultChildFileCreateOpNameInputs: Record<string, string> = {
   "win.file.create": "新建文件",

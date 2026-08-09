@@ -83,6 +83,8 @@ Controller 按现有 `RunDatabase` 接口写入 `program_instance`、`local_even
 
 前端按能力展示最佳方法、全部方法和下载阶段结果。即使 EDR 缺少某些直接字段，也会继续展示时间接近且程序、文件或端点相关的低置信候选，方便人工判断侧面证据。
 
+离线比较界面的默认 `Action.Name` 消歧规则为：TCP、UDP、URL、DNS 均使用 `NetBind`；文件下载允许 `NetBind` 或 `FileWriteClose`。这些值只筛选 EDR 候选，不参与也不改变本地绝对基准；用户仍可在界面中编辑、保存或清空。
+
 ## 8. 构建与验收
 
 构建并覆盖五个本地能力包：
