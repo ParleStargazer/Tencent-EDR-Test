@@ -134,8 +134,15 @@ public sealed class BaselineAssertion
     public required string Operator { get; init; }
     public object? Expected { get; init; }
     public string? ExpectedFromLocal { get; init; }
+    public List<AcceptedValueDefinition> AcceptedValues { get; init; } = [];
     public string Severity { get; init; } = "required";
     public List<string> Normalizers { get; init; } = [];
+}
+
+public sealed class AcceptedValueDefinition
+{
+    public object? Value { get; init; }
+    public string? Message { get; init; }
 }
 
 public sealed class CorrelationDefinition
@@ -1185,11 +1192,21 @@ public static class CompareService
         if (expected is string template) expected = resolver.Expand(template);
         var normalizedActual = Normalize(actual, definition.Normalizers);
         var normalizedExpected = Normalize(expected, definition.Normalizers);
+        var acceptedValues = definition.AcceptedValues
+            .Select(item => new
+            {
+                Definition = item,
+                Value = item.Value is string acceptedTemplate ? resolver.Expand(acceptedTemplate) : item.Value,
+            })
+            .ToArray();
+        var acceptedMatch = acceptedValues.FirstOrDefault(item =>
+            Equivalent(normalizedActual, Normalize(item.Value, definition.Normalizers)));
+        var acceptedValueMatched = acceptedMatch is not null;
         bool? passed = definition.Operator switch
         {
             "present" => IsPresent(normalizedActual),
             "absent" => !IsPresent(normalizedActual),
-            "equals" or "ref_equals" => Equivalent(normalizedActual, normalizedExpected),
+            "equals" or "ref_equals" => Equivalent(normalizedActual, normalizedExpected) || acceptedValueMatched,
             "not_equals" => !Equivalent(normalizedActual, normalizedExpected),
             "contains" => normalizedActual?.ToString()?.Contains(normalizedExpected?.ToString() ?? string.Empty, StringComparison.Ordinal) == true,
             "regex" when normalizedExpected is not null => Regex.IsMatch(normalizedActual?.ToString() ?? string.Empty, normalizedExpected.ToString()!, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)),
@@ -1199,8 +1216,15 @@ public static class CompareService
             "timestamp_between" => TimestampBetween(normalizedActual, normalizedExpected),
             _ => null,
         };
-        return new AssertionEvaluation(definition.Field, definition.Operator, definition.Severity, passed is null ? "not_evaluated" : passed.Value ? "passed" : "failed", expected, actual,
-            passed is null ? $"尚未实现操作符：{definition.Operator}" : passed.Value ? null : "实际值不满足期望。");
+        var displayedExpected = acceptedValues.Length == 0
+            ? expected
+            : new object?[] { expected }.Concat(acceptedValues.Select(item => item.Value)).ToArray();
+        return new AssertionEvaluation(definition.Field, definition.Operator, definition.Severity, passed is null ? "not_evaluated" : passed.Value ? "passed" : "failed", displayedExpected, actual,
+            passed is null
+                ? $"尚未实现操作符：{definition.Operator}"
+                : passed.Value
+                    ? acceptedMatch?.Definition.Message
+                    : "实际值不满足期望。");
     }
 
     private static CloudLoadResult LoadCloud(IReadOnlyList<string> paths, MappingProfile mapping)
@@ -1756,6 +1780,11 @@ public static class CompareService
             if (expectation.Cardinality.Max is { } maximum && maximum < expectation.Cardinality.Min)
             {
                 throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 cardinality.max 小于 min。");
+            }
+            if (expectation.Assertions.Any(assertion => assertion.AcceptedValues.Any(value => value.Value is null)
+                || (assertion.AcceptedValues.Count > 0 && assertion.Operator is not ("equals" or "ref_equals"))))
+            {
+                throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 accepted_values 只允许用于 equals/ref_equals，且 value 不能为空。");
             }
             if (expectation.Correlation is { } correlation
                 && (correlation.Anchors.Count == 0 || correlation.Anchors.Any(anchor => string.IsNullOrWhiteSpace(anchor.LocalField)

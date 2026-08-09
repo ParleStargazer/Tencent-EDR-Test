@@ -469,9 +469,9 @@ public static class Program
                 ["Common.Mid"] = "account-fixture-host",
                 ["Environment.HostName"] = "ACCOUNT-FIXTURE",
                 ["Parent.ProcPid"] = actorPid,
-                ["Parent.FileName"] = Path.GetFileName(actorPath),
-                ["Parent.FilePath"] = actorPath,
-                ["Parent.ProcCmdline"] = $"{actorPath} --request fixture.json",
+                ["Parent.FileName"] = definition.Action == "local_create" ? "lsass.exe" : Path.GetFileName(actorPath),
+                ["Parent.FilePath"] = definition.Action == "local_create" ? @"C:\Windows\System32\lsass.exe" : actorPath,
+                ["Parent.ProcCmdline"] = definition.Action == "local_create" ? @"C:\Windows\System32\lsass.exe" : $"{actorPath} --request fixture.json",
                 ["Child.TargetUserName"] = accountName,
                 ["Child.TargetDomainName"] = "ACCOUNT-FIXTURE",
                 ["Child.TargetLogonId"] = definition.Action is "login" or "logoff" ? logonId : null,
@@ -507,6 +507,28 @@ public static class Program
             $"通用账号映射应使五项 BASELINE 全部通过：{generic.ToJsonString(JsonDefaults.Options)}");
         Assert(tencentResult["summary"]?["pass"]?.GetValue<int>() == 5,
             $"腾讯账号事件 ID 路由应使五项 BASELINE 全部通过：{tencentResult.ToJsonString(JsonDefaults.Options)}");
+        var genericCreate = generic["capabilities"]?.AsArray().Single(value => value?["capability_id"]?.GetValue<string>() == "win.account.local.create")?.AsObject()
+            ?? throw new InvalidOperationException("通用比较结果缺少本地账号创建能力。");
+        var tencentCreate = tencentResult["capabilities"]?.AsArray().Single(value => value?["capability_id"]?.GetValue<string>() == "win.account.local.create")?.AsObject()
+            ?? throw new InvalidOperationException("腾讯比较结果缺少本地账号创建能力。");
+        var lsassRequirement = tencentCreate["baseline_requirements"]?.AsArray().Single(value => value?["field"]?.GetValue<string>() == "process.executable")
+            ?? throw new InvalidOperationException("本地账号创建结果缺少 process.executable BASELINE 项。");
+        Assert(lsassRequirement["status"]?.GetValue<string>() == "passed"
+            && string.Equals(lsassRequirement["actual"]?.GetValue<string>(), @"C:\Windows\System32\lsass.exe", StringComparison.OrdinalIgnoreCase)
+            && lsassRequirement["expected"]?.AsArray().Any(value => string.Equals(value?.GetValue<string>(), @"C:\Windows\System32\lsass.exe", StringComparison.OrdinalIgnoreCase)) == true,
+            "本地账号创建的 EDR process.executable 应同时接受 Actor 与 lsass.exe。");
+        Assert(lsassRequirement["message"]?.GetValue<string>() == "缺少上级调用链，需要优化",
+            "命中 lsass.exe 时应仅在逐项比较结果中给出上级调用链优化提示。");
+        Assert(tencentCreate["warnings"]?.AsArray().Any(value => value?.GetValue<string>().Contains("缺少上级调用链", StringComparison.Ordinal) == true) == false,
+            "lsass.exe 优化提示不应进入影响结论导出的能力 warnings。");
+        Assert(genericCreate["edr_candidates"]?[0]?["correlation_score"]?.GetValue<double>()
+            == tencentCreate["edr_candidates"]?[0]?["correlation_score"]?.GetValue<double>(),
+            "Actor 与 lsass.exe 两种 process.executable 通过路径不应改变候选关联得分。");
+        Assert(tencentCreate["edr_candidates"]?[0]?["baseline_matches"]?.AsArray().Any(match =>
+            match?["canonical_field"]?.GetValue<string>() == "process.executable"
+            && match?["status"]?.GetValue<string>() == "passed"
+            && match?["message"]?.GetValue<string>() == "缺少上级调用链，需要优化") == true,
+            "JSON 对照块应将 lsass.exe 高亮为 BASELINE 一致，并保留优化提示。");
         Assert(tencentResult["capabilities"]?.AsArray().All(value =>
             value?["edr_candidates"]?.AsArray()[0]?["baseline_matches"]?.AsArray().Any(match =>
                 match?["canonical_field"]?.GetValue<string>() == "user.target.id"

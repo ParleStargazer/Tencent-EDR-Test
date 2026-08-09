@@ -1,6 +1,6 @@
 schema_version: "1.1"
 baseline_id: win.account.local.create
-version: "0.1.0"
+version: "0.1.1"
 title: Windows 本地账号创建遥测
 description: 使用本轮唯一临时账号的名称、SID、Actor 与精确行为时间关联 Windows 安全事件 4720；本地前后状态是绝对基准。
 platform:
@@ -44,10 +44,16 @@ cloud_expectations:
       - { field: user.target.id, operator: equals, expected_from_local: facts.account.sid, severity: required, normalizers: [sid] }
       - { field: user.target.domain, operator: equals, expected_from_local: facts.account.domain, severity: recommended, normalizers: [lowercase] }
       - { field: winlog.event_id, operator: equals, expected: 4720, severity: required }
-      - { field: process.executable, operator: equals, expected_from_local: facts.account.actor_executable, severity: recommended, normalizers: [windows_path] }
+      - field: process.executable
+        operator: equals
+        expected_from_local: facts.account.actor_executable
+        accepted_values:
+          - { value: 'C:\Windows\System32\lsass.exe', message: 缺少上级调用链，需要优化 }
+        severity: recommended
+        normalizers: [windows_path]
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: 首次实现本地账号创建的独立样本、本地状态基准和腾讯 EDR 安全事件映射。
+  change_reason: 本地账号创建的 EDR 执行程序允许 Actor 或 lsass.exe；命中 lsass.exe 时保留通过结论并提示补充上级调用链。
   references: [Windows Security Event 4720, NetUserAdd, Tencent EDR AccountEvents]

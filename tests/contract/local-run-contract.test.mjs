@@ -257,6 +257,11 @@ test("User Account Activity 五项清单、BASELINE、Canonical 字段和权限�
     assert.ok(manifest.expected_fact_keys.includes("account.sid"));
     assert.match(baseline, /max_time_difference_ms: 15/);
     assert.match(baseline, new RegExp(`expected: ${eventId}|expected: \\[4634, 4647\\]`));
+    if (capabilityId === "win.account.local.create") {
+      assert.match(baseline, /accepted_values:/);
+      assert.match(baseline, /C:\\Windows\\System32\\lsass\.exe/);
+      assert.match(baseline, /缺少上级调用链，需要优化/);
+    }
   }
 
   assert.ok("target" in normalizedSchema.properties.user.properties);

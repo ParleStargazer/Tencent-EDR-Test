@@ -43,6 +43,8 @@
 
 腾讯映射使用 `Action.EventLogId` 识别 4720、4738、4726、4624、4634/4647，不依赖 `Action.Name`。目标账号字段来自 `Child.TargetUserName`、`Child.TargetSid` 或 `Child.TargetUserSid`；登录会话字段来自 `Child.TargetLogonId`、`Child.LogonType` 和 `Child.AuthenticationPackageName`。
 
+本地账号创建的 `process.executable` 优先期望本地 Actor 路径，同时接受 `C:\Windows\System32\lsass.exe`。两者均满足该 EDR BASELINE 项，且不改变候选关联得分；命中 `lsass.exe` 表示 EDR 导出只呈现了 Windows 账号操作的系统执行进程，离线比较页会显示“缺少上级调用链，需要优化”，但不会降低能力结论或写入结论报告警告。
+
 ## 5. 构建与验收
 
 仅构建能力包：
