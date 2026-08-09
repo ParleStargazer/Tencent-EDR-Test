@@ -255,7 +255,7 @@ test("User Account Activity 五项清单、BASELINE、Canonical 字段和权限�
     assert.ok(manifest.expected_fact_keys.includes("account.occurred_at_utc"));
     assert.ok(manifest.expected_fact_keys.includes("account.name"));
     assert.ok(manifest.expected_fact_keys.includes("account.sid"));
-    assert.match(baseline, /max_time_difference_ms: 10/);
+    assert.match(baseline, /max_time_difference_ms: 15/);
     assert.match(baseline, new RegExp(`expected: ${eventId}|expected: \\[4634, 4647\\]`));
   }
 

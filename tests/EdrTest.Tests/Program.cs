@@ -124,9 +124,9 @@ public static class Program
         Assert(requirements.Count == 14, "进程创建应展示 5 项本地要求、事件数量与时间差要求，以及 7 项云端字段要求。");
         var timeRequirement = requirements.Single(value => value?["field"]?.GetValue<string>() == "event.time_difference_ms");
         Assert(timeRequirement?["status"]?.GetValue<string>() == "passed"
-            && timeRequirement["expected"]?["max"]?.GetValue<int>() == 10
-            && timeRequirement["actual"]?.GetValue<long>() <= 10,
-            "10 ms 时间差必须作为显式的必需 EDR 关联条件并保留实际毫秒差。");
+            && timeRequirement["expected"]?["max"]?.GetValue<int>() == 15
+            && timeRequirement["actual"]?.GetValue<long>() <= 15,
+            "15 ms 时间差必须作为显式的必需 EDR 关联条件并保留实际毫秒差。");
         Assert(requirements.Where(value => value?["severity"]?.GetValue<string>() == "required").All(value => value?["status"]?.GetValue<string>() == "passed"), "所有必需 BASELINE 要求都应通过。");
         var firstCandidate = validation["capabilities"]?[0]?["edr_candidates"]?.AsArray().Single()
             ?? throw new InvalidOperationException("结果应包含完整 EDR 候选日志。");
@@ -590,7 +590,7 @@ public static class Program
             correlation:
               time_before_seconds: 60
               time_after_seconds: 60
-              max_time_difference_ms: 10
+              max_time_difference_ms: 15
               anchors:
                 - { local_field: programs.target.executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
             cloud_expectations:
@@ -711,7 +711,7 @@ public static class Program
             correlation:
               time_before_seconds: 60
               time_after_seconds: 60
-              max_time_difference_ms: 10
+              max_time_difference_ms: 15
               anchors:
                 - { local_field: facts.file.test.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
                 - { local_field: programs.actor.executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }

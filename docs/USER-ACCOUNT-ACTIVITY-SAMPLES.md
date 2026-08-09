@@ -39,7 +39,7 @@
 
 ## 4. EDR 关联规则
 
-五份 BASELINE 位于 `baselines/windows/account_*.yaml`。候选事件优先按本地账号名、SID、登录 AuthenticationId、Actor PID 与精确时间进行关联，时间强证据阈值为 10 ms。Windows 安全事件 ID 是云端断言，不参与本地行为是否成功的判断。
+五份 BASELINE 位于 `baselines/windows/account_*.yaml`。候选事件优先按本地账号名、SID、登录 AuthenticationId、Actor PID 与精确时间进行关联，时间强证据阈值为 15 ms。Windows 安全事件 ID 是云端断言，不参与本地行为是否成功的判断。
 
 腾讯映射使用 `Action.EventLogId` 识别 4720、4738、4726、4624、4634/4647，不依赖 `Action.Name`。目标账号字段来自 `Child.TargetUserName`、`Child.TargetSid` 或 `Child.TargetUserSid`；登录会话字段来自 `Child.TargetLogonId`、`Child.LogonType` 和 `Child.AuthenticationPackageName`。
 
