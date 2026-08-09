@@ -333,7 +333,29 @@
       "properties": {
         "kind": { "const": "network" },
         "operation": { "enum": ["tcp_connect", "udp_connect", "url_access", "dns_query", "file_download"] },
+        "subtest": { "type": "string", "minLength": 1 },
+        "method": { "type": "string", "minLength": 1 },
+        "stage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sequence", "title"],
+          "properties": {
+            "sequence": { "type": "integer", "minimum": 1 },
+            "title": { "type": "string", "minLength": 1 }
+          }
+        },
         "actor": { "$ref": "#/$defs/process_ref" },
+        "dns_client_service": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["service_name", "pid", "executable", "command_line_hint"],
+          "properties": {
+            "service_name": { "const": "Dnscache" },
+            "pid": { "type": "integer", "minimum": 1 },
+            "executable": { "type": "string", "minLength": 1 },
+            "command_line_hint": { "type": "string", "minLength": 1 }
+          }
+        },
         "connection": {
           "type": "object",
           "additionalProperties": false,
@@ -353,7 +375,9 @@
             "question": { "type": "string", "minLength": 1 },
             "query_type": { "type": "string", "minLength": 1 },
             "answers": { "type": "array", "items": { "type": "string" } },
-            "resolver": { "type": ["string", "null"] }
+            "resolver": { "type": ["string", "null"] },
+            "native_api": { "type": ["string", "null"] },
+            "native_status_code": { "type": ["integer", "null"] }
           }
         },
         "http": {
@@ -380,7 +404,9 @@
             "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
             "hashes": {
               "oneOf": [{ "$ref": "#/$defs/hashes" }, { "type": "null" }]
-            }
+            },
+            "write_started_at_utc": { "type": ["string", "null"], "format": "date-time" },
+            "write_completed_at_utc": { "type": ["string", "null"], "format": "date-time" }
           }
         },
         "result": { "$ref": "#/$defs/operation_result" }

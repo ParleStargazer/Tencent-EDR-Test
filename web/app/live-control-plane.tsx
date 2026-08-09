@@ -165,7 +165,29 @@ type ValidationEntry = {
   baseline_requirements?: BaselineRequirementResult[];
   method_selection?: MethodSelectionResult | null;
   method_results?: MethodResult[];
+  stage_flow?: StageFlowResult | null;
+  stage_results?: StageResult[];
   warnings?: string[];
+};
+
+type StageFlowResult = {
+  strategy: "ordered_all";
+  status: Exclude<ValidationStatus, "NOT_COMPARED">;
+  stage_count: number;
+  notice: string;
+};
+
+type StageResult = {
+  sequence: number;
+  title: string;
+  expectation_id: string;
+  depends_on?: string;
+  status: Exclude<ValidationStatus, "NOT_COMPARED">;
+  candidate_count: number;
+  qualified_candidate_count: number;
+  order_status?: "passed" | "failed" | "not_evaluated" | null;
+  order_message?: string | null;
+  warnings: string[];
 };
 
 type MethodSelectionResult = {
@@ -906,12 +928,13 @@ function CapabilityComparison({ entry }: { entry: ValidationEntry }) {
   const localRequirements = requirements.filter((item) => item.scope === "local");
   const cloudRequirements = requirements.filter((item) => item.scope === "cloud");
   const methods = entry.method_results ?? [];
+  const stages = entry.stage_results ?? [];
   const candidates = [...(entry.edr_candidates ?? [])].sort((left, right) => Number(right.eligible_for_validation) - Number(left.eligible_for_validation)
     || Number(right.anchor_qualified) - Number(left.anchor_qualified)
     || right.correlation_score - left.correlation_score
     || left.time_distance_ms - right.time_distance_ms
     || left.rank - right.rank);
-  return <><details className="capability-result-card"><summary><div className="capability-summary-main"><span className={`result-status ${entry.validation_status.toLowerCase()}`}>{validationStatusLabel(entry.validation_status)}</span><div><h3>{entry.display_name_zh ?? entry.capability_id}</h3><p>{entry.baseline_title ?? entry.baseline_id ?? "没有匹配的检验基准"}</p></div></div><div className="requirement-count">{entry.method_selection ? <><strong>{validationStatusLabel(entry.method_selection.selected_method_status)}</strong><span>最佳方法 · {entry.method_selection.selected_method_title}</span></> : <><strong>{passed}/{requirements.length}</strong><span>要求已满足</span></>}</div></summary><div className="capability-result-body"><div className="evidence-strip"><span>{coverageLabel(entry.export_coverage)}</span><span>{entry.candidate_count} 条候选事件</span><span>本地状态 {entry.local_status}</span>{entry.method_selection && <span>结论方法：{entry.method_selection.selected_method_title}</span>}<button className="json-compare-open" type="button" onClick={() => setShowJsonComparison(true)}>打开 JSON 对照窗</button></div>{entry.warnings?.length ? <div className="plain-warning"><strong>需要注意</strong><p>{entry.warnings.join("；")}</p></div> : null}<RequirementGroup scope="local" requirements={localRequirements} />{methods.length > 0 ? <MethodComparison methods={methods} selection={entry.method_selection ?? null} requirements={cloudRequirements} candidates={candidates} /> : <RequirementGroup scope="cloud" requirements={cloudRequirements} candidates={candidates} />}</div></details>{showJsonComparison && <JsonComparisonModal entry={entry} candidates={candidates} onClose={() => setShowJsonComparison(false)} />}</>;
+  return <><details className="capability-result-card"><summary><div className="capability-summary-main"><span className={`result-status ${entry.validation_status.toLowerCase()}`}>{validationStatusLabel(entry.validation_status)}</span><div><h3>{entry.display_name_zh ?? entry.capability_id}</h3><p>{entry.baseline_title ?? entry.baseline_id ?? "没有匹配的检验基准"}</p></div></div><div className="requirement-count">{entry.method_selection ? <><strong>{validationStatusLabel(entry.method_selection.selected_method_status)}</strong><span>最佳方法 · {entry.method_selection.selected_method_title}</span></> : entry.stage_flow ? <><strong>{validationStatusLabel(entry.stage_flow.status)}</strong><span>有序二轮验证</span></> : <><strong>{passed}/{requirements.length}</strong><span>要求已满足</span></>}</div></summary><div className="capability-result-body"><div className="evidence-strip"><span>{coverageLabel(entry.export_coverage)}</span><span>{entry.candidate_count} 条候选事件</span><span>本地状态 {entry.local_status}</span>{entry.method_selection && <span>结论方法：{entry.method_selection.selected_method_title}</span>}{entry.stage_flow && <span>验证流程：先连接、后写文件</span>}<button className="json-compare-open" type="button" onClick={() => setShowJsonComparison(true)}>打开 JSON 对照窗</button></div>{entry.warnings?.length ? <div className="plain-warning"><strong>需要注意</strong><p>{entry.warnings.join("；")}</p></div> : null}<RequirementGroup scope="local" requirements={localRequirements} />{methods.length > 0 ? <MethodComparison methods={methods} selection={entry.method_selection ?? null} requirements={cloudRequirements} candidates={candidates} /> : stages.length > 0 ? <StageComparison stages={stages} flow={entry.stage_flow ?? null} requirements={cloudRequirements} candidates={candidates} /> : <RequirementGroup scope="cloud" requirements={cloudRequirements} candidates={candidates} />}</div></details>{showJsonComparison && <JsonComparisonModal entry={entry} candidates={candidates} onClose={() => setShowJsonComparison(false)} />}</>;
 }
 
 function MethodComparison({ methods, selection, requirements, candidates }: { methods: MethodResult[]; selection: MethodSelectionResult | null; requirements: BaselineRequirementResult[]; candidates: EdrCandidate[] }) {
@@ -919,6 +942,14 @@ function MethodComparison({ methods, selection, requirements, candidates }: { me
     const methodRequirements = requirements.filter((requirement) => requirement.expectation_id === method.expectation_id);
     const methodCandidates = candidates.filter((candidate) => candidate.expectation_id === method.expectation_id);
     return <details className={`method-result-card ${method.selected_for_conclusion ? "selected" : ""}`} open={method.selected_for_conclusion} key={method.method_id}><summary><div><strong>{method.method_title}</strong><code>{method.method_id} · {method.expectation_id}</code></div><span className={`result-status ${method.status.toLowerCase()}`}>{validationStatusLabel(method.status)}</span><div className="method-result-metrics"><strong>{method.passed_requirement_count}/{method.requirement_count}</strong><span>{method.qualified_candidate_count}/{method.candidate_count} 条合格候选</span></div>{method.selected_for_conclusion && <em>结论采用</em>}</summary><div className="method-result-body">{method.warnings.length > 0 && <div className="method-warning"><strong>该方法需要关注</strong><p>{method.warnings.join("；")}</p></div>}<RequirementGroup scope="cloud" requirements={methodRequirements} candidates={methodCandidates} /></div></details>;
+  })}</div></section>;
+}
+
+function StageComparison({ stages, flow, requirements, candidates }: { stages: StageResult[]; flow: StageFlowResult | null; requirements: BaselineRequirementResult[]; candidates: EdrCandidate[] }) {
+  return <section className="method-comparison-section"><header><div><span>EDR 有序验证</span><h4>文件下载二轮证据链</h4><p>第一轮只确认连接活动；第二轮再确认同一下载进程写入目标文件。两轮均通过且时间顺序正确，才判定下载能力通过。</p></div><em>{stages.length} 个阶段</em></header>{flow && <div className="method-selection-notice"><strong>阶段必须全部满足</strong><p>{flow.notice}</p></div>}<div className="method-result-list">{stages.map((stage) => {
+    const stageRequirements = requirements.filter((requirement) => requirement.expectation_id === stage.expectation_id);
+    const stageCandidates = candidates.filter((candidate) => candidate.expectation_id === stage.expectation_id);
+    return <details className="method-result-card" open key={stage.expectation_id}><summary><div><strong>{stage.title}</strong><code>阶段 {stage.sequence} · {stage.expectation_id}</code></div><span className={`result-status ${stage.status.toLowerCase()}`}>{validationStatusLabel(stage.status)}</span><div className="method-result-metrics"><strong>{stage.qualified_candidate_count}/{stage.candidate_count}</strong><span>合格候选 / 全部候选</span></div>{stage.depends_on && <em>依赖阶段 {stage.sequence - 1}</em>}</summary><div className="method-result-body">{stage.order_message && <div className={`method-warning ${stage.order_status === "failed" ? "failed" : ""}`}><strong>EDR 阶段顺序：{stage.order_status === "passed" ? "符合" : stage.order_status === "failed" ? "反转" : "无法验证"}</strong><p>{stage.order_message}</p></div>}{stage.warnings.length > 0 && <div className="method-warning"><strong>该阶段需要关注</strong><p>{stage.warnings.join("；")}</p></div>}<RequirementGroup scope="cloud" requirements={stageRequirements} candidates={stageCandidates} /></div></details>;
   })}</div></section>;
 }
 

@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.network.url
-version: "0.1.0"
+version: "0.2.0"
 title: Windows URL 访问遥测
-description: 使用本机受控 HTTP URL 与唯一 nonce，按 Actor 实际 URL、进程、端点和 ±15 ms 时间证据验证 EDR HTTP 请求遥测。
+description: 同轮执行原始套接字 HTTP 与 WinINet InternetOpenUrlW；本地逐方法确认完整 URL/nonce，云端分别比较并采用证据最好的一种方法形成结论。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,43 +10,68 @@ platform:
 risk_level: L0
 capability:
   id: win.network.url
-  version: "0.1.0"
+  version: "0.2.0"
   parameters: { setup_delay_ms: 250, post_operation_hold_ms: 1500, payload_size: 8192 }
 local_requirements:
   - { field: facts.network.url_access_succeeded, operator: equals, expected: true }
-  - { field: facts.network.occurred_at_utc, operator: present }
-  - { field: facts.network.actor_pid, operator: present }
-  - { field: facts.network.actor_executable, operator: present }
-  - { field: facts.network.http.url, operator: present }
-  - { field: facts.network.remote.port, operator: present }
+  - { field: facts.network.subtest_count, operator: equals, expected: 2 }
+  - { field: facts.network.url.raw_socket.succeeded, operator: equals, expected: true }
+  - { field: facts.network.url.raw_socket.occurred_at_utc, operator: present }
+  - { field: facts.network.url.raw_socket.actor_pid, operator: present }
+  - { field: facts.network.url.raw_socket.http.url, operator: present }
+  - { field: facts.network.url.wininet.succeeded, operator: equals, expected: true }
+  - { field: facts.network.url.wininet.occurred_at_utc, operator: present }
+  - { field: facts.network.url.wininet.actor_pid, operator: present }
+  - { field: facts.network.url.wininet.http.url, operator: present }
+  - { field: facts.network.url.wininet.native_api, operator: equals, expected: InternetOpenUrlW }
 correlation:
   time_before_seconds: 60
   time_after_seconds: 300
   max_time_difference_ms: 15
   anchors:
-    - { local_field: facts.network.http.url, cloud_field: url.full, strength: strong }
-    - { local_field: facts.network.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
-    - { local_field: facts.network.actor_pid, cloud_field: process.pid, strength: medium }
+    - { local_field: facts.network.url.wininet.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.network.url.wininet.actor_pid, cloud_field: process.pid, strength: medium }
+method_selection: { strategy: best }
 cloud_expectations:
-  - id: url-access-event
+  - id: url-raw-socket-event
+    method: { id: raw_socket, title: 原始套接字 HTTP }
     event_type: network
-    event_actions: [url_access]
+    event_actions: [url_access, tcp_connect]
     cardinality: { min: 1, max: 10 }
     correlation:
-      time_from_local: facts.network.occurred_at_utc
+      time_from_local: facts.network.url.raw_socket.occurred_at_utc
       anchors:
-        - { local_field: facts.network.http.url, cloud_field: url.full, strength: strong }
-        - { local_field: facts.network.actor_pid, cloud_field: process.pid, strength: medium }
+        - { local_field: facts.network.url.raw_socket.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.network.url.raw_socket.actor_pid, cloud_field: process.pid, strength: medium }
+        - { local_field: facts.network.url.raw_socket.http.url, cloud_field: url.full, strength: strong }
     assertions:
-      - { field: process.pid, operator: equals, expected_from_local: facts.network.actor_pid, severity: required }
-      - { field: process.executable, operator: equals, expected_from_local: facts.network.actor_executable, severity: required, normalizers: [windows_path] }
-      - { field: url.full, operator: equals, expected_from_local: facts.network.http.url, severity: required }
-      - { field: url.domain, operator: equals, expected_from_local: facts.network.http.host, severity: recommended, normalizers: [lowercase] }
-      - { field: http.request.method, operator: equals, expected_from_local: facts.network.http.method, severity: recommended }
-      - { field: network.destination_ip, operator: equals, expected_from_local: facts.network.remote.address, severity: required }
-      - { field: network.destination_port, operator: equals, expected_from_local: facts.network.remote.port, severity: required }
+      - { field: process.pid, operator: equals, expected_from_local: facts.network.url.raw_socket.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.network.url.raw_socket.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: network.transport, operator: equals, expected: tcp, severity: required, normalizers: [lowercase] }
+      - { field: url.full, operator: equals, expected_from_local: facts.network.url.raw_socket.http.url, severity: recommended }
+      - { field: url.domain, operator: equals, expected_from_local: facts.network.url.raw_socket.http.host, severity: recommended, normalizers: [lowercase] }
+      - { field: http.request.method, operator: equals, expected_from_local: facts.network.url.raw_socket.http.method, severity: recommended }
+  - id: url-wininet-event
+    method: { id: wininet, title: WinINet · InternetOpenUrlW }
+    event_type: network
+    event_actions: [url_access, tcp_connect]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.network.url.wininet.occurred_at_utc
+      anchors:
+        - { local_field: facts.network.url.wininet.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.network.url.wininet.actor_pid, cloud_field: process.pid, strength: medium }
+        - { local_field: facts.network.url.wininet.http.url, cloud_field: url.full, strength: strong }
+    assertions:
+      - { field: process.pid, operator: equals, expected_from_local: facts.network.url.wininet.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.network.url.wininet.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: network.transport, operator: equals, expected: tcp, severity: required, normalizers: [lowercase] }
+      - { field: url.full, operator: equals, expected_from_local: facts.network.url.wininet.http.url, severity: recommended }
+      - { field: url.domain, operator: equals, expected_from_local: facts.network.url.wininet.http.host, severity: recommended, normalizers: [lowercase] }
+      - { field: http.request.method, operator: equals, expected_from_local: facts.network.url.wininet.http.method, severity: recommended }
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: active
-  references: [Tencent EDR NetworkEvents / HttpRequest]
+  change_reason: 新增 WinINet 子测试；URL 字段缺失时将高度关联的 TCP 记录作为部分证据展示，不把侧面证据误判成完整 URL 遥测。
+  references: [Tencent EDR NetworkEvents / HttpRequest / NetBind]

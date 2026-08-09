@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -65,23 +66,33 @@ internal static class Program
     private static async Task<int> RunActor(ArgumentReader options)
     {
         var operation = options.Require("operation");
+        var methodId = options.Get("method") ?? operation switch
+        {
+            "url_access" => "raw_socket",
+            "dns_query" => "raw_udp",
+            "file_download" => "raw_http_two_stage",
+            _ => "socket",
+        };
         var resultPath = Path.GetFullPath(options.Require("result"));
-        var address = IPAddress.Parse(options.Require("address"));
-        var port = options.GetInt("port", 0, 1, 65_535);
+        var address = IPAddress.Parse(options.Get("address") ?? "0.0.0.0");
+        var port = options.GetInt("port", operation == "dns_query" ? 53 : 0,
+            operation == "dns_query" ? 1 : 0, 65_535);
         var nonce = options.Require("nonce");
         var holdMs = options.GetInt("hold-ms", 1_500, 0, 30_000);
         BehaviorResult result;
         try
         {
-            result = operation switch
+            result = (operation, methodId) switch
             {
-                "tcp_connect" => await ConnectTcp(operation, address, port, nonce),
-                "udp_connect" => await ConnectUdp(operation, address, port, nonce),
-                "dns_query" => await QueryDns(operation, address, port, options.Require("question"), nonce),
-                "url_access" => await RequestHttp(operation, address, port, options.Require("url"), nonce, null),
-                "file_download" => await RequestHttp(operation, address, port, options.Require("url"), nonce,
+                ("tcp_connect", _) => await ConnectTcp(operation, methodId, address, port, nonce),
+                ("udp_connect", _) => await ConnectUdp(operation, methodId, address, port, nonce),
+                ("dns_query", "raw_udp") => await QueryDns(operation, methodId, address, port, options.Require("question"), nonce),
+                ("dns_query", "windows_dns_client") => QuerySystemDns(operation, methodId, options.Require("question"), nonce),
+                ("url_access", "raw_socket") => await RequestHttp(operation, methodId, address, port, options.Require("url"), nonce, null),
+                ("url_access", "wininet") => RequestWinInet(operation, methodId, address, port, options.Require("url"), nonce),
+                ("file_download", _) => await RequestHttp(operation, methodId, address, port, options.Require("url"), nonce,
                     Path.GetFullPath(options.Require("destination"))),
-                _ => throw new ArgumentException($"不支持的网络操作：{operation}"),
+                _ => throw new ArgumentException($"不支持的网络操作或测试方法：{operation}/{methodId}"),
             };
         }
         catch (Exception exception)
@@ -89,6 +100,7 @@ internal static class Program
             result = new BehaviorResult
             {
                 Operation = operation,
+                MethodId = methodId,
                 Succeeded = false,
                 OccurredAtUtc = DateTimeOffset.UtcNow,
                 CompletedAtUtc = DateTimeOffset.UtcNow,
@@ -212,7 +224,7 @@ internal static class Program
         };
     }
 
-    private static async Task<BehaviorResult> ConnectTcp(string operation, IPAddress address, int port, string nonce)
+    private static async Task<BehaviorResult> ConnectTcp(string operation, string methodId, IPAddress address, int port, string nonce)
     {
         using var client = new TcpClient(address.AddressFamily);
         using var timeout = new CancellationTokenSource(IoTimeout);
@@ -226,10 +238,10 @@ internal static class Program
         var buffer = new byte[512];
         var count = await stream.ReadAsync(buffer, timeout.Token);
         var reply = Encoding.UTF8.GetString(buffer, 0, count);
-        return Result(operation, occurred, local, remote, payload.Length, count, reply == "ACK|" + nonce, nonce);
+        return Result(operation, methodId, occurred, local, remote, payload.Length, count, reply == "ACK|" + nonce, nonce);
     }
 
-    private static async Task<BehaviorResult> ConnectUdp(string operation, IPAddress address, int port, string nonce)
+    private static async Task<BehaviorResult> ConnectUdp(string operation, string methodId, IPAddress address, int port, string nonce)
     {
         using var udp = new UdpClient(address.AddressFamily);
         udp.Connect(address, port);
@@ -241,10 +253,11 @@ internal static class Program
         var local = (IPEndPoint)udp.Client.LocalEndPoint!;
         var remote = (IPEndPoint)udp.Client.RemoteEndPoint!;
         var reply = Encoding.UTF8.GetString(packet.Buffer);
-        return Result(operation, occurred, local, remote, payload.Length, packet.Buffer.Length, reply == "ACK|" + nonce, nonce);
+        return Result(operation, methodId, occurred, local, remote, payload.Length, packet.Buffer.Length, reply == "ACK|" + nonce, nonce);
     }
 
-    private static async Task<BehaviorResult> QueryDns(string operation, IPAddress address, int port, string question, string nonce)
+    private static async Task<BehaviorResult> QueryDns(
+        string operation, string methodId, IPAddress address, int port, string question, string nonce)
     {
         using var udp = new UdpClient(address.AddressFamily);
         udp.Connect(address, port);
@@ -259,6 +272,7 @@ internal static class Program
         return new BehaviorResult
         {
             Operation = operation,
+            MethodId = methodId,
             Succeeded = answers.Contains("192.0.2.123", StringComparer.Ordinal),
             OccurredAtUtc = occurred,
             CompletedAtUtc = DateTimeOffset.UtcNow,
@@ -274,7 +288,7 @@ internal static class Program
     }
 
     private static async Task<BehaviorResult> RequestHttp(
-        string operation, IPAddress address, int port, string url, string nonce, string? destination)
+        string operation, string methodId, IPAddress address, int port, string url, string nonce, string? destination)
     {
         var uri = new Uri(url);
         using var client = new TcpClient(address.AddressFamily);
@@ -293,6 +307,7 @@ internal static class Program
         var statusCode = int.Parse(responseHeader.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1]);
         var body = response[(separator + 4)..];
         DateTimeOffset? fileOccurred = null;
+        DateTimeOffset? fileCompleted = null;
         string? md5 = null;
         string? sha256 = null;
         if (destination is not null)
@@ -300,6 +315,7 @@ internal static class Program
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             fileOccurred = DateTimeOffset.UtcNow;
             await File.WriteAllBytesAsync(destination, body, timeout.Token);
+            fileCompleted = DateTimeOffset.UtcNow;
             md5 = Convert.ToHexString(MD5.HashData(body)).ToLowerInvariant();
             sha256 = Convert.ToHexString(SHA256.HashData(body)).ToLowerInvariant();
         }
@@ -310,6 +326,7 @@ internal static class Program
         return new BehaviorResult
         {
             Operation = operation,
+            MethodId = methodId,
             Succeeded = succeeded,
             OccurredAtUtc = occurred,
             CompletedAtUtc = DateTimeOffset.UtcNow,
@@ -326,13 +343,111 @@ internal static class Program
             DownloadMd5 = md5,
             DownloadSha256 = sha256,
             FileOccurredAtUtc = fileOccurred,
+            FileCompletedAtUtc = fileCompleted,
         };
     }
 
-    private static BehaviorResult Result(string operation, DateTimeOffset occurred, IPEndPoint local, IPEndPoint remote,
+    private static BehaviorResult RequestWinInet(
+        string operation, string methodId, IPAddress address, int port, string url, string nonce)
+    {
+        var occurred = DateTimeOffset.UtcNow;
+        var session = InternetOpen("Tencent-EDR-Test/0.2", InternetOpenTypeDirect, null, null, 0);
+        if (session == IntPtr.Zero) throw new IOException($"InternetOpenW 失败，Win32={Marshal.GetLastWin32Error()}。");
+        try
+        {
+            var headers = $"Cache-Control: no-cache\r\nPragma: no-cache\r\nX-EDR-Test-Nonce: {nonce}\r\n";
+            var request = InternetOpenUrl(session, url, headers, headers.Length,
+                InternetFlagReload | InternetFlagNoCacheWrite | InternetFlagNoUi, UIntPtr.Zero);
+            if (request == IntPtr.Zero)
+                throw new IOException($"InternetOpenUrlW 失败，Win32={Marshal.GetLastWin32Error()}。");
+            try
+            {
+                var statusCode = QueryHttpStatusCode(request);
+                using var output = new MemoryStream();
+                var buffer = new byte[8_192];
+                while (true)
+                {
+                    if (!InternetReadFile(request, buffer, buffer.Length, out var read))
+                        throw new IOException($"InternetReadFile 失败，Win32={Marshal.GetLastWin32Error()}。");
+                    if (read == 0) break;
+                    output.Write(buffer, 0, checked((int)read));
+                }
+                var body = output.ToArray();
+                var succeeded = statusCode == 200 && Encoding.UTF8.GetString(body).Contains(nonce, StringComparison.Ordinal);
+                return new BehaviorResult
+                {
+                    Operation = operation,
+                    MethodId = methodId,
+                    Succeeded = succeeded,
+                    OccurredAtUtc = occurred,
+                    CompletedAtUtc = DateTimeOffset.UtcNow,
+                    Local = Endpoint(IPAddress.Any, 0),
+                    Remote = Endpoint(address, port),
+                    BytesSent = headers.Length,
+                    BytesReceived = body.Length,
+                    Url = url,
+                    Method = "GET",
+                    StatusCode = statusCode,
+                    RequestNonce = nonce,
+                    NativeApi = "InternetOpenUrlW",
+                    NativeStatusCode = statusCode,
+                    Error = succeeded ? null : "WinINet 响应未通过状态码或 nonce 校验。",
+                };
+            }
+            finally
+            {
+                InternetCloseHandle(request);
+            }
+        }
+        finally
+        {
+            InternetCloseHandle(session);
+        }
+    }
+
+    private static BehaviorResult QuerySystemDns(string operation, string methodId, string question, string nonce)
+    {
+        var occurred = DateTimeOffset.UtcNow;
+        var status = DnsQuery(question, DnsTypeA,
+            DnsQueryBypassCache | DnsQueryNoHostsFile | DnsQueryTreatAsFqdn,
+            IntPtr.Zero, out var records, IntPtr.Zero);
+        if (records != IntPtr.Zero) DnsRecordListFree(records, DnsFreeRecordList);
+        var succeeded = status is DnsSuccess or DnsErrorRcodeNameError;
+        return new BehaviorResult
+        {
+            Operation = operation,
+            MethodId = methodId,
+            Succeeded = succeeded,
+            OccurredAtUtc = occurred,
+            CompletedAtUtc = DateTimeOffset.UtcNow,
+            Local = Endpoint(IPAddress.Any, 0),
+            Remote = Endpoint(IPAddress.Any, 53),
+            BytesSent = 0,
+            BytesReceived = 0,
+            RequestNonce = nonce,
+            DnsQuestion = question,
+            DnsQueryType = "A",
+            DnsAnswers = [],
+            NativeApi = "DnsQuery_W",
+            NativeStatusCode = status,
+            Error = succeeded ? null : $"DnsQuery_W 返回 DNS_STATUS={status}。",
+        };
+    }
+
+    private static int QueryHttpStatusCode(IntPtr request)
+    {
+        var size = sizeof(int);
+        var statusCode = 0;
+        if (!HttpQueryInfo(request, HttpQueryStatusCode | HttpQueryFlagNumber, ref statusCode, ref size, IntPtr.Zero))
+            throw new IOException($"HttpQueryInfoW 失败，Win32={Marshal.GetLastWin32Error()}。");
+        return statusCode;
+    }
+
+    private static BehaviorResult Result(string operation, string methodId, DateTimeOffset occurred, IPEndPoint local, IPEndPoint remote,
         long sent, long received, bool succeeded, string nonce) => new()
     {
         Operation = operation,
+        MethodId = methodId,
         Succeeded = succeeded,
         OccurredAtUtc = occurred,
         CompletedAtUtc = DateTimeOffset.UtcNow,
@@ -464,4 +579,46 @@ internal static class Program
         output.WriteByte((byte)(value >> 8));
         output.WriteByte((byte)value);
     }
+
+    private const int InternetOpenTypeDirect = 1;
+    private const int InternetFlagReload = unchecked((int)0x80000000);
+    private const int InternetFlagNoCacheWrite = 0x04000000;
+    private const int InternetFlagNoUi = 0x00000200;
+    private const int HttpQueryStatusCode = 19;
+    private const int HttpQueryFlagNumber = 0x20000000;
+    private const ushort DnsTypeA = 1;
+    private const uint DnsQueryBypassCache = 0x00000008;
+    private const uint DnsQueryNoHostsFile = 0x00000040;
+    private const uint DnsQueryTreatAsFqdn = 0x00001000;
+    private const int DnsSuccess = 0;
+    private const int DnsErrorRcodeNameError = 9003;
+    private const int DnsFreeRecordList = 1;
+
+    [DllImport("wininet.dll", EntryPoint = "InternetOpenW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr InternetOpen(
+        string agent, int accessType, string? proxy, string? proxyBypass, int flags);
+
+    [DllImport("wininet.dll", EntryPoint = "InternetOpenUrlW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr InternetOpenUrl(
+        IntPtr internet, string url, string? headers, int headersLength, int flags, UIntPtr context);
+
+    [DllImport("wininet.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool InternetReadFile(IntPtr file, byte[] buffer, int bytesToRead, out uint bytesRead);
+
+    [DllImport("wininet.dll", EntryPoint = "HttpQueryInfoW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool HttpQueryInfo(
+        IntPtr request, int infoLevel, ref int buffer, ref int bufferLength, IntPtr index);
+
+    [DllImport("wininet.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool InternetCloseHandle(IntPtr internet);
+
+    [DllImport("dnsapi.dll", EntryPoint = "DnsQuery_W", CharSet = CharSet.Unicode)]
+    private static extern int DnsQuery(
+        string name, ushort type, uint options, IntPtr extra, out IntPtr queryResults, IntPtr reserved);
+
+    [DllImport("dnsapi.dll")]
+    private static extern void DnsRecordListFree(IntPtr recordList, int freeType);
 }

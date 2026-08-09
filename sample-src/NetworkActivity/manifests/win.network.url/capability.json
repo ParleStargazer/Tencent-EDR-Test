@@ -1,10 +1,10 @@
 {
   "schema_version": "1.1",
   "capability_id": "win.network.url",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "display_name_zh": "URL 访问",
   "display_name_en": "URL",
-  "description": "Actor 使用原始 HTTP GET 访问 Controller 编排的本机 URL，Helper 以唯一 nonce 响应并确认完整请求路径。",
+  "description": "同轮执行原始套接字 HTTP 与 WinINet InternetOpenUrlW 两个 URL 子测试；Helper 分别以唯一 nonce 响应并确认完整请求路径。",
   "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
   "risk_level": "L0",
   "required_privilege": "standard_user",
@@ -21,8 +21,10 @@
   "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
   "network": { "required": false },
   "expected_fact_keys": [
-    "network.url_access_succeeded", "network.occurred_at_utc", "network.actor_pid", "network.actor_executable",
-    "network.local.address", "network.local.port", "network.remote.address", "network.remote.port",
-    "network.http.url", "network.http.host", "network.http.path", "network.http.method", "network.http.status_code", "correlation.nonce"
+    "network.url_access_succeeded", "network.subtest_count", "correlation.nonce",
+    "network.url.raw_socket.succeeded", "network.url.raw_socket.occurred_at_utc", "network.url.raw_socket.actor_pid", "network.url.raw_socket.actor_executable",
+    "network.url.raw_socket.local.port", "network.url.raw_socket.remote.port", "network.url.raw_socket.http.url", "network.url.raw_socket.http.method",
+    "network.url.wininet.succeeded", "network.url.wininet.occurred_at_utc", "network.url.wininet.actor_pid", "network.url.wininet.actor_executable",
+    "network.url.wininet.local.port", "network.url.wininet.remote.port", "network.url.wininet.http.url", "network.url.wininet.http.method", "network.url.wininet.native_api"
   ]
 }

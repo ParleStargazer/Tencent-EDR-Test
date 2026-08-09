@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.network.dns
-version: "0.1.0"
+version: "0.2.0"
 title: Windows DNS 查询遥测
-description: Actor 直接向本机 53/UDP Helper 查询唯一 invalid 域名；本地 DNS 问题与响应为绝对事实，腾讯导出缺少查询名时可退化为进程、端点和时间证据。
+description: 同轮执行原始 UDP DNS 与 DnsQuery_W；后者记录 Dnscache 所在 svchost PID/路径，把系统 DNS Client 的网络活动与本地调用时间直接关联。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,42 +10,66 @@ platform:
 risk_level: L0
 capability:
   id: win.network.dns
-  version: "0.1.0"
+  version: "0.2.0"
   parameters: { setup_delay_ms: 250, post_operation_hold_ms: 1500, payload_size: 8192 }
 local_requirements:
   - { field: facts.network.dns_query_succeeded, operator: equals, expected: true }
-  - { field: facts.network.occurred_at_utc, operator: present }
-  - { field: facts.network.actor_pid, operator: present }
-  - { field: facts.network.actor_executable, operator: present }
-  - { field: facts.network.dns.question, operator: present }
-  - { field: facts.network.remote.port, operator: equals, expected: 53 }
+  - { field: facts.network.subtest_count, operator: equals, expected: 2 }
+  - { field: facts.network.dns.raw_udp.succeeded, operator: equals, expected: true }
+  - { field: facts.network.dns.raw_udp.occurred_at_utc, operator: present }
+  - { field: facts.network.dns.raw_udp.question, operator: present }
+  - { field: facts.network.dns.raw_udp.remote.port, operator: equals, expected: 53 }
+  - { field: facts.network.dns.windows_dns_client.succeeded, operator: equals, expected: true }
+  - { field: facts.network.dns.windows_dns_client.occurred_at_utc, operator: present }
+  - { field: facts.network.dns.windows_dns_client.question, operator: present }
+  - { field: facts.network.dns.windows_dns_client.native_api, operator: equals, expected: DnsQuery_W }
+  - { field: facts.network.dns.windows_dns_client.service_pid, operator: present }
+  - { field: facts.network.dns.windows_dns_client.service_executable, operator: equals, expected: 'C:\Windows\System32\svchost.exe', normalizers: [windows_path] }
 correlation:
   time_before_seconds: 60
   time_after_seconds: 300
   max_time_difference_ms: 15
   anchors:
-    - { local_field: facts.network.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
-    - { local_field: facts.network.actor_pid, cloud_field: process.pid, strength: medium }
-    - { local_field: facts.network.remote.port, cloud_field: network.destination_port, strength: medium }
+    - { local_field: facts.network.dns.windows_dns_client.service_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.network.dns.windows_dns_client.service_pid, cloud_field: process.pid, strength: medium }
+method_selection: { strategy: best }
 cloud_expectations:
-  - id: dns-query-event
+  - id: dns-raw-udp-event
+    method: { id: raw_udp, title: 原始 UDP DNS }
     event_type: network
-    event_actions: [dns_query]
+    event_actions: [dns_query, udp_connect]
     cardinality: { min: 1, max: 10 }
     correlation:
-      time_from_local: facts.network.occurred_at_utc
+      time_from_local: facts.network.dns.raw_udp.occurred_at_utc
       anchors:
-        - { local_field: facts.network.actor_pid, cloud_field: process.pid, strength: medium }
-        - { local_field: facts.network.remote.port, cloud_field: network.destination_port, strength: medium }
+        - { local_field: facts.network.dns.raw_udp.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.network.dns.raw_udp.actor_pid, cloud_field: process.pid, strength: medium }
     assertions:
-      - { field: process.pid, operator: equals, expected_from_local: facts.network.actor_pid, severity: required }
-      - { field: process.executable, operator: equals, expected_from_local: facts.network.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.network.dns.raw_udp.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.network.dns.raw_udp.actor_executable, severity: required, normalizers: [windows_path] }
       - { field: network.transport, operator: equals, expected: udp, severity: required, normalizers: [lowercase] }
-      - { field: network.destination_ip, operator: equals, expected_from_local: facts.network.remote.address, severity: required }
-      - { field: network.destination_port, operator: equals, expected_from_local: facts.network.remote.port, severity: required }
-      - { field: dns.question, operator: equals, expected_from_local: facts.network.dns.question, severity: recommended, normalizers: [lowercase] }
+      - { field: dns.question, operator: equals, expected_from_local: facts.network.dns.raw_udp.question, severity: recommended, normalizers: [lowercase] }
+      - { field: network.destination_port, operator: equals, expected: 53, severity: recommended }
+  - id: dns-windows-client-event
+    method: { id: windows_dns_client, title: Windows DNS Client · svchost }
+    event_type: network
+    event_actions: [dns_query, udp_connect]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.network.dns.windows_dns_client.occurred_at_utc
+      anchors:
+        - { local_field: facts.network.dns.windows_dns_client.service_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.network.dns.windows_dns_client.service_pid, cloud_field: process.pid, strength: medium }
+        - { local_field: facts.network.dns.windows_dns_client.question, cloud_field: dns.question, strength: strong, normalizers: [lowercase] }
+    assertions:
+      - { field: process.pid, operator: equals, expected_from_local: facts.network.dns.windows_dns_client.service_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.network.dns.windows_dns_client.service_executable, severity: required, normalizers: [windows_path] }
+      - { field: network.transport, operator: equals, expected: udp, severity: required, normalizers: [lowercase] }
+      - { field: dns.question, operator: equals, expected_from_local: facts.network.dns.windows_dns_client.question, severity: recommended, normalizers: [lowercase] }
+      - { field: network.destination_port, operator: equals, expected: 53, severity: recommended }
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: active
-  references: [Tencent EDR NetworkEvents / SocketRequest / UDP 53]
+  change_reason: 新增由 DnsQuery_W 触发、Dnscache svchost 承载的系统 DNS 子测试；查询名缺失时仅形成部分证据。
+  references: [Windows DNS Client Dnscache, dnsapi DnsQuery_W, Tencent EDR NetworkEvents]

@@ -1,10 +1,10 @@
 {
   "schema_version": "1.1",
   "capability_id": "win.network.dns",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "display_name_zh": "DNS 查询",
   "display_name_en": "DNS Query",
-  "description": "Actor 向本机 53/UDP 受控 DNS Helper 查询唯一 invalid 域名，并验证保留测试地址响应；不会触达系统或公网 DNS。",
+  "description": "同轮执行受控原始 UDP DNS 与 Windows DnsQuery_W 子测试；后者通过 DNS Client 服务发起查询，并记录 Dnscache 所在 svchost PID 作为云端关联基准。",
   "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
   "risk_level": "L0",
   "required_privilege": "standard_user",
@@ -19,10 +19,13 @@
     "payload_size": { "type": "integer", "required": true, "default": 8192, "minimum": 256, "maximum": 1048576 }
   },
   "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
-  "network": { "required": false },
+  "network": { "required": true },
   "expected_fact_keys": [
-    "network.dns_query_succeeded", "network.occurred_at_utc", "network.actor_pid", "network.actor_executable",
-    "network.transport", "network.local.address", "network.local.port", "network.remote.address", "network.remote.port",
-    "network.dns.question", "network.dns.query_type", "network.dns.answers", "correlation.nonce"
+    "network.dns_query_succeeded", "network.subtest_count", "correlation.nonce",
+    "network.dns.raw_udp.succeeded", "network.dns.raw_udp.occurred_at_utc", "network.dns.raw_udp.actor_pid", "network.dns.raw_udp.actor_executable",
+    "network.dns.raw_udp.remote.port", "network.dns.raw_udp.question", "network.dns.raw_udp.query_type",
+    "network.dns.windows_dns_client.succeeded", "network.dns.windows_dns_client.occurred_at_utc", "network.dns.windows_dns_client.actor_pid",
+    "network.dns.windows_dns_client.question", "network.dns.windows_dns_client.native_api", "network.dns.windows_dns_client.native_status_code",
+    "network.dns.windows_dns_client.service_pid", "network.dns.windows_dns_client.service_executable"
   ]
 }

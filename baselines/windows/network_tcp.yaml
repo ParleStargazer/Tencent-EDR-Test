@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.network.tcp
-version: "0.1.0"
+version: "0.2.0"
 title: Windows TCP 连接遥测
-description: 以本机 Actor 与受控 TCP Helper 交叉确认的实际端点和时间为绝对基准，验证 EDR 出站 TCP 遥测。
+description: 以本机 Actor 与受控 TCP Helper 交叉确认的实际端点为绝对基准；按 260809213600run 实测的 NetBind 导出字段验证 Actor、TCP 协议和预绑定源端点。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -26,12 +26,12 @@ correlation:
   anchors:
     - { local_field: facts.network.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
     - { local_field: facts.network.actor_pid, cloud_field: process.pid, strength: medium }
-    - { local_field: facts.network.remote.port, cloud_field: network.destination_port, strength: medium }
+    - { local_field: facts.network.actor_command_line, cloud_field: process.command_line, strength: medium }
 cloud_expectations:
   - id: tcp-connection-event
     event_type: network
     event_actions: [tcp_connect]
-    cardinality: { min: 1, max: 10 }
+    cardinality: { min: 1 }
     correlation:
       time_from_local: facts.network.occurred_at_utc
       anchors:
@@ -40,13 +40,13 @@ cloud_expectations:
       - { field: process.pid, operator: equals, expected_from_local: facts.network.actor_pid, severity: required }
       - { field: process.executable, operator: equals, expected_from_local: facts.network.actor_executable, severity: required, normalizers: [windows_path] }
       - { field: network.transport, operator: equals, expected: tcp, severity: required, normalizers: [lowercase] }
-      - { field: network.direction, operator: equals, expected: outbound, severity: recommended, normalizers: [lowercase] }
-      - { field: network.source_ip, operator: equals, expected_from_local: facts.network.local.address, severity: recommended }
-      - { field: network.source_port, operator: equals, expected_from_local: facts.network.local.port, severity: required }
-      - { field: network.destination_ip, operator: equals, expected_from_local: facts.network.remote.address, severity: required }
-      - { field: network.destination_port, operator: equals, expected_from_local: facts.network.remote.port, severity: required }
+      - { field: network.source_ip, operator: equals, expected: 0.0.0.0, severity: required }
+      - { field: network.source_port, operator: equals, expected: 0, severity: required }
+      - { field: network.endpoint_name, operator: equals, expected: "tcp_0.0.0.0:0", severity: recommended, normalizers: [lowercase] }
+      - { field: event.provider, operator: equals, expected: KernelMon, severity: recommended }
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: active
-  references: [Tencent EDR NetworkEvents / SocketRequest]
+  change_reason: 参考 260809213600run，仅校准 TCP 可直接抓取的 NetBind 字段；目的端点继续保留为本地事实，不作为当前腾讯导出的必需字段。
+  references: [Tencent EDR NetworkEvents / NetBind / 260809213600run]

@@ -171,11 +171,19 @@ public sealed class CloudExpectation
 {
     public required string Id { get; init; }
     public MethodDefinition? Method { get; init; }
+    public StageDefinition? Stage { get; init; }
     public required string EventType { get; init; }
     public List<string> EventActions { get; init; } = [];
     public required CardinalityDefinition Cardinality { get; init; }
     public ExpectationCorrelationDefinition? Correlation { get; init; }
     public List<BaselineAssertion> Assertions { get; init; } = [];
+}
+
+public sealed class StageDefinition
+{
+    public int Sequence { get; init; }
+    public required string Title { get; init; }
+    public string? DependsOn { get; init; }
 }
 
 public sealed class MethodDefinition
@@ -476,11 +484,15 @@ public static class CompareService
                     .OrderByDescending(item => item.Qualified)
                     .ThenByDescending(item => item.AnchorQualified)
                     .ThenByDescending(item => item.Score)
+                    .ThenByDescending(item => item.TypeHintMatched)
+                    .ThenByDescending(item => item.ActionHintMatched)
                     .ThenBy(item => item.TimeDistanceMs)
                     .First())
                 .OrderByDescending(item => item.Qualified)
                 .ThenByDescending(item => item.AnchorQualified)
                 .ThenByDescending(item => item.Score)
+                .ThenByDescending(item => item.TypeHintMatched)
+                .ThenByDescending(item => item.ActionHintMatched)
                 .ThenBy(item => item.TimeDistanceMs)
                 .ThenBy(item => item.Event.RawRef, StringComparer.Ordinal)
                 .Take(MaximumDisplayedCandidates)
@@ -607,6 +619,7 @@ public static class CompareService
                 ["time_distance_ms"] = selected.TimeDistanceMs,
                 ["time_offset_ms"] = selected.TimeOffsetMs,
                 ["local_event_time_utc"] = Values.Utc(selected.LocalCorrelationTime),
+                ["event_time_utc"] = Values.ToNode(selected.Event.Get("event.created")),
                 ["matched_anchors"] = new JsonArray(selected.MatchedAnchors.Select(x => (JsonNode)x).ToArray()),
             };
             firstSelected ??= expectationSelectedEvent.DeepClone().AsObject();
@@ -627,6 +640,86 @@ public static class CompareService
             }
             methodOutcomes.Add(CreateMethodOutcome(expectation, expectationStatus, requirementStartIndex, outputRequirements,
                 candidates.Length, qualifiedCandidates.Length, expectationSelectedEvent, expectationSelectedCandidate, methodWarnings));
+        }
+
+        var outputStages = new JsonArray();
+        JsonObject? stageFlow = null;
+        var stagedOutcomes = methodOutcomes
+            .Where(outcome => outcome.Expectation.Stage is not null)
+            .OrderBy(outcome => outcome.Expectation.Stage!.Sequence)
+            .ToArray();
+        if (stagedOutcomes.Length > 0)
+        {
+            var sequenceIsValid = stagedOutcomes.Select(outcome => outcome.Expectation.Stage!.Sequence)
+                .SequenceEqual(Enumerable.Range(1, stagedOutcomes.Length));
+            if (!sequenceIsValid)
+                throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的验证阶段 sequence 必须从 1 开始且连续。");
+
+            var flowStatus = "PASS";
+            MethodOutcome? previous = null;
+            foreach (var outcome in stagedOutcomes)
+            {
+                var stage = outcome.Expectation.Stage!;
+                var stageStatus = outcome.Status;
+                string? orderStatus = null;
+                string? orderMessage = null;
+                if (stage.Sequence > 1)
+                {
+                    if (previous is null || !string.Equals(stage.DependsOn, previous.Expectation.Id, StringComparison.Ordinal))
+                        throw new InvalidDataException($"验证阶段 {outcome.Expectation.Id} 必须通过 depends_on 指向紧邻的前一阶段。");
+                    var previousTime = SelectedEventTime(previous.SelectedEvent);
+                    var currentTime = SelectedEventTime(outcome.SelectedEvent);
+                    orderStatus = previousTime is null || currentTime is null
+                        ? "not_evaluated"
+                        : currentTime >= previousTime ? "passed" : "failed";
+                    orderMessage = orderStatus switch
+                    {
+                        "passed" => $"EDR 第二阶段时间不早于前一阶段（{Values.Utc(previousTime!.Value)} → {Values.Utc(currentTime!.Value)}）。",
+                        "failed" => $"EDR 阶段顺序反转（{Values.Utc(previousTime!.Value)} → {Values.Utc(currentTime!.Value)}）。",
+                        _ => "至少一个阶段没有可可靠关联的 EDR 时间，无法验证阶段先后关系。",
+                    };
+                    outputRequirements.Add(new JsonObject
+                    {
+                        ["requirement_id"] = $"{outcome.Expectation.Id}-stage-order",
+                        ["scope"] = "cloud",
+                        ["title_zh"] = $"{stage.Title}必须晚于或等于{previous.Expectation.Stage!.Title}",
+                        ["expectation_id"] = outcome.Expectation.Id,
+                        ["field"] = "event.created_order",
+                        ["operator"] = "ordered_after",
+                        ["severity"] = "required",
+                        ["status"] = orderStatus,
+                        ["expected"] = previousTime is null ? null : Values.Utc(previousTime.Value),
+                        ["actual"] = currentTime is null ? null : Values.Utc(currentTime.Value),
+                        ["message"] = orderMessage,
+                    });
+                    stageStatus = orderStatus == "failed"
+                        ? Worse(stageStatus, "FAIL")
+                        : orderStatus == "not_evaluated" ? Worse(stageStatus, "INCONCLUSIVE") : stageStatus;
+                }
+                flowStatus = Worse(flowStatus, stageStatus);
+                outputStages.Add(new JsonObject
+                {
+                    ["sequence"] = stage.Sequence,
+                    ["title"] = stage.Title,
+                    ["expectation_id"] = outcome.Expectation.Id,
+                    ["depends_on"] = stage.DependsOn,
+                    ["status"] = stageStatus,
+                    ["candidate_count"] = outcome.Result["candidate_count"]?.DeepClone(),
+                    ["qualified_candidate_count"] = outcome.Result["qualified_candidate_count"]?.DeepClone(),
+                    ["selected_event"] = outcome.SelectedEvent?.DeepClone(),
+                    ["order_status"] = orderStatus,
+                    ["order_message"] = orderMessage,
+                    ["warnings"] = outcome.Result["warnings"]?.DeepClone(),
+                });
+                previous = outcome;
+            }
+            stageFlow = new JsonObject
+            {
+                ["strategy"] = "ordered_all",
+                ["status"] = flowStatus,
+                ["stage_count"] = stagedOutcomes.Length,
+                ["notice"] = "文件下载采用有序二轮验证：先验证连接，再验证文件写入；两轮都满足且 EDR 时间顺序正确时才能通过。",
+            };
         }
 
         if (baseline.CloudExpectations.Count == 0)
@@ -665,13 +758,17 @@ public static class CompareService
                     overallStatus = Worse(overallStatus, outcome.Status);
                     foreach (var warning in outcome.Warnings) warnings.Add($"{outcome.Expectation.Id}：{warning}");
                 }
+                if (stageFlow is not null)
+                    overallStatus = Worse(overallStatus, stageFlow["status"]!.GetValue<string>());
             }
             if (exposesMethods)
             {
                 foreach (var outcome in methodOutcomes) outputMethods.Add(outcome.Result);
             }
         }
-        return CapabilityResult(caseRunId, capabilityId, localStatus, overallStatus, exportCoverage, totalCandidates, firstSelected, outputCandidates, outputAssertions, outputRequirements, methodSelection, outputMethods, warnings);
+        return CapabilityResult(caseRunId, capabilityId, localStatus, overallStatus, exportCoverage, totalCandidates,
+            firstSelected, outputCandidates, outputAssertions, outputRequirements, methodSelection,
+            outputMethods, stageFlow, outputStages, warnings);
     }
 
     private static void AddUnevaluatedCloudRequirements(JsonArray output, BaselineDefinition baseline, LocalResolver resolver, string message)
@@ -1605,7 +1702,19 @@ public static class CompareService
             warnings);
     }
 
-    private static JsonObject CapabilityResult(string caseRunId, string capabilityId, string localStatus, string validationStatus, string exportCoverage, int candidateCount, JsonObject? selected, JsonArray candidates, JsonArray assertions, JsonArray requirements, JsonObject? methodSelection, JsonArray methods, JsonArray warnings) => new()
+    private static DateTimeOffset? SelectedEventTime(JsonObject? selectedEvent)
+    {
+        if (selectedEvent?["event_time_utc"] is not JsonValue value
+            || !value.TryGetValue<string>(out var text)
+            || !DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+            return null;
+        return parsed.ToUniversalTime();
+    }
+
+    private static JsonObject CapabilityResult(string caseRunId, string capabilityId, string localStatus,
+        string validationStatus, string exportCoverage, int candidateCount, JsonObject? selected,
+        JsonArray candidates, JsonArray assertions, JsonArray requirements, JsonObject? methodSelection,
+        JsonArray methods, JsonObject? stageFlow, JsonArray stages, JsonArray warnings) => new()
     {
         ["case_run_id"] = caseRunId,
         ["capability_id"] = capabilityId,
@@ -1619,11 +1728,15 @@ public static class CompareService
         ["baseline_requirements"] = requirements,
         ["method_selection"] = methodSelection,
         ["method_results"] = methods,
+        ["stage_flow"] = stageFlow,
+        ["stage_results"] = stages,
         ["warnings"] = warnings,
     };
 
     private static JsonObject NotCompared(string capabilityId, string caseRunId, string localStatus, string warning) =>
-        CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", "insufficient", 0, null, new JsonArray(), new JsonArray(), new JsonArray(), null, new JsonArray(), new JsonArray(warning));
+        CapabilityResult(caseRunId, capabilityId, localStatus, "NOT_COMPARED", "insufficient", 0,
+            null, new JsonArray(), new JsonArray(), new JsonArray(), null, new JsonArray(),
+            null, new JsonArray(), new JsonArray(warning));
 
     private static string Worse(string current, string candidate)
     {

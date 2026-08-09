@@ -1,10 +1,10 @@
 {
   "schema_version": "1.1",
   "capability_id": "win.network.file_download",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "display_name_zh": "文件下载",
   "display_name_en": "File Downloaded",
-  "description": "Actor 从本机受控 HTTP Helper 下载确定性二进制文件，Controller 独立校验 URL、端点、大小与 MD5/SHA-256。",
+  "description": "Actor 从本机受控 HTTP Helper 下载确定性二进制文件；Controller 先记录连接阶段，再独立记录文件写入阶段，并校验二者顺序、URL、端点、大小与 MD5/SHA-256。",
   "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
   "risk_level": "L0",
   "required_privilege": "standard_user",
@@ -21,10 +21,12 @@
   "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
   "network": { "required": false },
   "expected_fact_keys": [
-    "network.file_download_succeeded", "network.occurred_at_utc", "network.actor_pid", "network.actor_executable",
-    "network.local.address", "network.local.port", "network.remote.address", "network.remote.port",
-    "network.http.url", "network.http.host", "network.http.path", "network.http.method", "network.http.status_code",
-    "network.download.file_occurred_at_utc", "network.download.destination_path", "network.download.size_bytes",
-    "network.download.md5", "network.download.sha256", "correlation.nonce"
+    "network.file_download_succeeded", "network.download.stage_order_succeeded", "correlation.nonce",
+    "network.download.connection.succeeded", "network.download.connection.occurred_at_utc", "network.download.connection.actor_pid",
+    "network.download.connection.actor_executable", "network.download.connection.local.port", "network.download.connection.remote.port",
+    "network.download.connection.http.url", "network.download.connection.http.method", "network.download.connection.http.status_code",
+    "network.download.file.succeeded", "network.download.file.occurred_at_utc", "network.download.file.completed_at_utc",
+    "network.download.file.actor_pid", "network.download.file.actor_executable", "network.download.file.destination_path",
+    "network.download.file.size_bytes", "network.download.file.md5", "network.download.file.sha256"
   ]
 }

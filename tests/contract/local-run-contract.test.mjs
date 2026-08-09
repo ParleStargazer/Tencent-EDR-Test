@@ -63,8 +63,11 @@ test("验证结果 Schema 支持逐能力 JSON 对照与多候选高亮", async 
   assert.ok(capability.required.includes("local_baseline_matches"));
   assert.ok(capability.required.includes("method_selection"));
   assert.ok(capability.required.includes("method_results"));
+  assert.ok(capability.required.includes("stage_flow"));
+  assert.ok(capability.required.includes("stage_results"));
   assert.equal(capability.properties.method_selection.oneOf[0].properties.strategy.const, "best");
   assert.ok(baselineSchema.properties.method_selection.properties.strategy.enum.includes("best"));
+  assert.equal(baselineSchema.$defs.stage.properties.depends_on.type, "string");
   assert.ok(candidate.required.includes("baseline_matches"));
   assert.deepEqual(
     candidate.properties.baseline_matches.items.properties.kind.enum,
@@ -304,6 +307,7 @@ test("User Account Activity 五项清单、BASELINE、Canonical 字段和权限�
 
 test("Network Activity 五项清单、BASELINE、回环编排和腾讯路由完整", async () => {
   const normalizedSchema = await readJson("schemas/normalized-event.schema.json");
+  const localEventDataSchema = await readJson("schemas/local-event-data.schema.json");
   const mapping = await readFile(
     new URL("mappings/tencent-edr-proc-events-v1.yaml", root),
     "utf8",
@@ -322,14 +326,14 @@ test("Network Activity 五项清单、BASELINE、回环编排和腾讯路由完�
   );
   const startScript = await readFile(new URL("scripts/Start-EdrTest.ps1", root), "utf8");
   const capabilities = [
-    ["win.network.tcp", "network_tcp.yaml", "tcp_connect"],
-    ["win.network.udp", "network_udp.yaml", "udp_connect"],
-    ["win.network.url", "network_url.yaml", "url_access"],
-    ["win.network.dns", "network_dns.yaml", "dns_query"],
-    ["win.network.file_download", "network_file_download.yaml", "file_download"],
+    ["win.network.tcp", "network_tcp.yaml", "tcp_connect", "0.1.0"],
+    ["win.network.udp", "network_udp.yaml", "udp_connect", "0.1.0"],
+    ["win.network.url", "network_url.yaml", "url_access", "0.2.0"],
+    ["win.network.dns", "network_dns.yaml", "dns_query", "0.2.0"],
+    ["win.network.file_download", "network_file_download.yaml", "file_download", "0.2.0"],
   ];
 
-  for (const [capabilityId, baselineName, operation] of capabilities) {
+  for (const [capabilityId, baselineName, operation, version] of capabilities) {
     const manifest = await readJson(
       `sample-src/NetworkActivity/manifests/${capabilityId}/capability.json`,
     );
@@ -338,23 +342,33 @@ test("Network Activity 五项清单、BASELINE、回环编排和腾讯路由完�
       "utf8",
     );
     assert.equal(manifest.capability_id, capabilityId);
-    assert.equal(manifest.version, "0.1.0");
+    assert.equal(manifest.version, version);
     assert.equal(manifest.risk_level, "L0");
     assert.equal(manifest.required_privilege, "standard_user");
-    assert.equal(manifest.network.required, false);
+    assert.equal(manifest.network.required, capabilityId === "win.network.dns");
     assert.deepEqual(manifest.participants.map((item) => item.role), ["actor", "helper"]);
     assert.ok(manifest.expected_fact_keys.includes(`network.${operation}_succeeded`));
-    assert.ok(manifest.expected_fact_keys.includes("network.occurred_at_utc"));
-    assert.ok(manifest.expected_fact_keys.includes("network.actor_pid"));
-    assert.ok(manifest.expected_fact_keys.includes("network.remote.port"));
+    if (capabilityId === "win.network.tcp" || capabilityId === "win.network.udp") {
+      assert.ok(manifest.expected_fact_keys.includes("network.occurred_at_utc"));
+      assert.ok(manifest.expected_fact_keys.includes("network.actor_pid"));
+      assert.ok(manifest.expected_fact_keys.includes("network.remote.port"));
+    }
     assert.match(baseline, /max_time_difference_ms: 15/);
     assert.match(baseline, new RegExp(`baseline_id: ${capabilityId.replaceAll(".", "\\.")}`));
   }
 
   assert.ok("url" in normalizedSchema.properties);
   assert.ok("http" in normalizedSchema.properties);
+  const networkData = localEventDataSchema.$defs.network.properties;
+  assert.ok("subtest" in networkData);
+  assert.ok("stage" in networkData);
+  assert.ok("dns_client_service" in networkData);
+  assert.ok("native_api" in networkData.dns.properties);
+  assert.ok("write_started_at_utc" in networkData.download.properties);
   assert.match(mapping, /route_id: network-tcp-socket-request/);
   assert.match(mapping, /route_id: network-udp-socket-request/);
+  assert.match(mapping, /route_id: network-tcp-net-bind/);
+  assert.match(mapping, /route_id: network-udp-net-bind/);
   assert.match(mapping, /route_id: network-dns-socket-request/);
   assert.match(mapping, /route_id: network-http-url-access/);
   assert.match(mapping, /route_id: network-candidate-discovery/);
@@ -367,12 +381,19 @@ test("Network Activity 五项清单、BASELINE、回环编排和腾讯路由完�
     new URL("baselines/windows/network_file_download.yaml", root),
     "utf8",
   );
-  assert.match(downloadBaseline, /id: download-http-event[\s\S]*event_actions: \[url_access\]/);
-  assert.match(downloadBaseline, /id: downloaded-file-event[\s\S]*event_actions: \[create\]/);
+  assert.match(downloadBaseline, /id: download-connection-stage[\s\S]*stage: \{ sequence: 1, title: 第一轮：连接验证 \}/);
+  assert.match(downloadBaseline, /id: download-file-write-stage[\s\S]*depends_on: download-connection-stage/);
+  assert.match(downloadBaseline, /event_actions: \[create, modify\]/);
   assert.match(controller, /actor_helper_protocol_and_endpoint_cross_check/);
+  assert.match(controller, /DnsClientServicePid/);
+  assert.match(controller, /must_not_stop_during_cleanup/);
   assert.match(controller, /Hashing\.FileSha256\(state\.Destination\)/);
+  assert.match(controller, /EventAction = "file_download"/);
+  assert.doesNotMatch(controller, /file_download_connection|file_download_write/);
   assert.match(behavior, /new IPEndPoint\(IPAddress\.Loopback, 53\)/);
   assert.match(behavior, /192\.0\.2\.123/);
+  assert.match(behavior, /InternetOpenUrlW/);
+  assert.match(behavior, /DnsQuery_W/);
   assert.doesNotMatch(behavior, /8\.8\.8\.8|1\.1\.1\.1/);
   assert.match(startScript, /Build-NetworkActivitySamples\.ps1/);
 });

@@ -22,6 +22,7 @@ routes:
       "event.category": { constant: network }
       "event.id": { source: event_id }
       "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "event.provider": { source: event_provider, on_empty: null }
       "host.id": { source: host_id }
       "process.pid": { source: actor_pid }
       "process.entity_id": { source: actor_entity_id }
@@ -32,6 +33,7 @@ routes:
       "network.direction": { source: direction, transform: [lowercase] }
       "network.source_ip": { source: source_ip }
       "network.source_port": { source: source_port }
+      "network.endpoint_name": { source: endpoint_name, on_empty: null }
       "network.destination_ip": { source: destination_ip }
       "network.destination_port": { source: destination_port }
       "url.full": { source: url, on_empty: null }

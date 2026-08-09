@@ -20,6 +20,60 @@ input:
     format: unix_ms
 
 routes:
+  # 260809213600run 实测：当前产品对本机 TCP/UDP 样本导出 NetBind，而非 SocketRequest。
+  # 该记录只有协议与预绑定源端点 0.0.0.0:0；目的端点只保留在本地绝对基准中，不能伪造到云端字段。
+  - route_id: network-tcp-net-bind
+    when:
+      "@table": NetworkEvents
+      "Action.Type": Network
+      "Action.Name": NetBind
+      "Child.Protocol": tcp
+    canonical:
+      "event.type": { constant: network }
+      "event.action": { constant: tcp_connect }
+      "event.category": { constant: network }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "event.provider": { source: "Common.Source", on_empty: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid" }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName" }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path] }
+      "process.command_line": { source: "Parent.ProcCmdline" }
+      "network.transport": { source: "Child.Protocol", transform: [lowercase] }
+      "network.source_ip": { source: "Child.SrcIp" }
+      "network.source_port": { source: "Child.SrcPort" }
+      "network.endpoint_name": { source: "Child.NodeName", on_empty: null }
+
+  - route_id: network-udp-net-bind
+    when:
+      "@table": NetworkEvents
+      "Action.Type": Network
+      "Action.Name": NetBind
+      "Child.Protocol": udp
+    canonical:
+      "event.type": { constant: network }
+      "event.action": { constant: udp_connect }
+      "event.category": { constant: network }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "event.provider": { source: "Common.Source", on_empty: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid" }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName" }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path] }
+      "process.command_line": { source: "Parent.ProcCmdline" }
+      "network.transport": { source: "Child.Protocol", transform: [lowercase] }
+      "network.source_ip": { source: "Child.SrcIp" }
+      "network.source_port": { source: "Child.SrcPort" }
+      "network.endpoint_name": { source: "Child.NodeName", on_empty: null }
+
   - route_id: network-dns-socket-request
     when:
       "Action.Type": Network

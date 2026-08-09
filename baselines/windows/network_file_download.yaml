@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.network.file_download
-version: "0.1.0"
+version: "0.2.0"
 title: Windows 文件下载遥测
-description: 同时要求 EDR 关联受控 HTTP GET 与落地文件创建；本地 URL、Actor、目标路径、大小和哈希均由 Controller 独立验证。
+description: 采用有序二轮验证：第一轮关联下载进程的 TCP/HTTP 连接，第二轮关联同一进程写入的目标文件；任一轮不满足均不能判定下载能力通过。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,59 +10,67 @@ platform:
 risk_level: L0
 capability:
   id: win.network.file_download
-  version: "0.1.0"
+  version: "0.2.0"
   parameters: { setup_delay_ms: 250, post_operation_hold_ms: 1500, payload_size: 8192 }
 local_requirements:
   - { field: facts.network.file_download_succeeded, operator: equals, expected: true }
-  - { field: facts.network.occurred_at_utc, operator: present }
-  - { field: facts.network.download.file_occurred_at_utc, operator: present }
-  - { field: facts.network.actor_pid, operator: present }
-  - { field: facts.network.actor_executable, operator: present }
-  - { field: facts.network.http.url, operator: present }
-  - { field: facts.network.download.destination_path, operator: present }
-  - { field: facts.network.download.md5, operator: present }
-  - { field: facts.network.download.sha256, operator: present }
+  - { field: facts.network.download.stage_order_succeeded, operator: equals, expected: true }
+  - { field: facts.network.download.connection.succeeded, operator: equals, expected: true }
+  - { field: facts.network.download.connection.occurred_at_utc, operator: present }
+  - { field: facts.network.download.connection.actor_pid, operator: present }
+  - { field: facts.network.download.connection.actor_executable, operator: present }
+  - { field: facts.network.download.connection.http.url, operator: present }
+  - { field: facts.network.download.file.succeeded, operator: equals, expected: true }
+  - { field: facts.network.download.file.occurred_at_utc, operator: present }
+  - { field: facts.network.download.file.completed_at_utc, operator: present }
+  - { field: facts.network.download.file.destination_path, operator: present }
+  - { field: facts.network.download.file.size_bytes, operator: present }
+  - { field: facts.network.download.file.md5, operator: present }
+  - { field: facts.network.download.file.sha256, operator: present }
 correlation:
   time_before_seconds: 60
   time_after_seconds: 300
   max_time_difference_ms: 15
   anchors:
-    - { local_field: facts.network.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
-    - { local_field: facts.network.actor_pid, cloud_field: process.pid, strength: medium }
+    - { local_field: facts.network.download.connection.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.network.download.connection.actor_pid, cloud_field: process.pid, strength: medium }
 cloud_expectations:
-  - id: download-http-event
+  - id: download-connection-stage
+    stage: { sequence: 1, title: 第一轮：连接验证 }
     event_type: network
-    event_actions: [url_access]
+    event_actions: [url_access, tcp_connect]
     cardinality: { min: 1, max: 10 }
     correlation:
-      time_from_local: facts.network.occurred_at_utc
+      time_from_local: facts.network.download.connection.occurred_at_utc
       anchors:
-        - { local_field: facts.network.http.url, cloud_field: url.full, strength: strong }
-        - { local_field: facts.network.actor_pid, cloud_field: process.pid, strength: medium }
+        - { local_field: facts.network.download.connection.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.network.download.connection.actor_pid, cloud_field: process.pid, strength: medium }
+        - { local_field: facts.network.download.connection.http.url, cloud_field: url.full, strength: strong }
     assertions:
-      - { field: process.pid, operator: equals, expected_from_local: facts.network.actor_pid, severity: required }
-      - { field: process.executable, operator: equals, expected_from_local: facts.network.actor_executable, severity: required, normalizers: [windows_path] }
-      - { field: url.full, operator: equals, expected_from_local: facts.network.http.url, severity: required }
+      - { field: process.pid, operator: equals, expected_from_local: facts.network.download.connection.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.network.download.connection.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: network.transport, operator: equals, expected: tcp, severity: required, normalizers: [lowercase] }
+      - { field: url.full, operator: equals, expected_from_local: facts.network.download.connection.http.url, severity: recommended }
       - { field: http.request.method, operator: equals, expected: GET, severity: recommended }
-      - { field: network.destination_ip, operator: equals, expected_from_local: facts.network.remote.address, severity: required }
-      - { field: network.destination_port, operator: equals, expected_from_local: facts.network.remote.port, severity: required }
-  - id: downloaded-file-event
+  - id: download-file-write-stage
+    stage: { sequence: 2, title: 第二轮：文件写入验证, depends_on: download-connection-stage }
     event_type: file
-    event_actions: [create]
+    event_actions: [create, modify]
     cardinality: { min: 1, max: 10 }
     correlation:
-      time_from_local: facts.network.download.file_occurred_at_utc
+      time_from_local: facts.network.download.file.occurred_at_utc
       anchors:
-        - { local_field: facts.network.download.destination_path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
-        - { local_field: facts.network.actor_pid, cloud_field: process.pid, strength: medium }
+        - { local_field: facts.network.download.file.destination_path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.network.download.file.actor_pid, cloud_field: process.pid, strength: medium }
     assertions:
-      - { field: process.pid, operator: equals, expected_from_local: facts.network.actor_pid, severity: required }
-      - { field: process.executable, operator: equals, expected_from_local: facts.network.actor_executable, severity: required, normalizers: [windows_path] }
-      - { field: file.path, operator: equals, expected_from_local: facts.network.download.destination_path, severity: required, normalizers: [windows_path] }
-      - { field: file.size, operator: equals, expected_from_local: facts.network.download.size_bytes, severity: required }
-      - { field: file.hash.md5, operator: equals, expected_from_local: facts.network.download.md5, severity: recommended, normalizers: [lowercase] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.network.download.file.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.network.download.file.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: file.path, operator: equals, expected_from_local: facts.network.download.file.destination_path, severity: required, normalizers: [windows_path] }
+      - { field: file.size, operator: equals, expected_from_local: facts.network.download.file.size_bytes, severity: required }
+      - { field: file.hash.md5, operator: equals, expected_from_local: facts.network.download.file.md5, severity: recommended, normalizers: [lowercase] }
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: active
-  references: [Tencent EDR NetworkEvents / HttpRequest, Tencent EDR FileEvents / FileWriteClose]
+  change_reason: 将连接与文件写入拆成独立本地事件、独立时间基准和有依赖关系的两轮 EDR 验证，避免单一侧面证据直接等同于完成下载。
+  references: [Tencent EDR NetworkEvents / NetBind / HttpRequest, Tencent EDR FileEvents / FileWriteClose]

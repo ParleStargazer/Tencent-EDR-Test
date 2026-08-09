@@ -134,7 +134,9 @@
           "local_baseline_matches",
           "assertions",
           "method_selection",
-          "method_results"
+          "method_results",
+          "stage_flow",
+          "stage_results"
         ],
         "properties": {
           "case_run_id": { "type": "string", "minLength": 16 },
@@ -203,6 +205,47 @@
               }
             }
           },
+          "stage_flow": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["strategy", "status", "stage_count", "notice"],
+                "properties": {
+                  "strategy": { "const": "ordered_all" },
+                  "status": { "enum": ["PASS", "PARTIAL", "FAIL", "INCONCLUSIVE"] },
+                  "stage_count": { "type": "integer", "minimum": 1 },
+                  "notice": { "type": "string", "minLength": 1 }
+                }
+              },
+              { "type": "null" }
+            ]
+          },
+          "stage_results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sequence", "title", "expectation_id", "depends_on", "status",
+                "candidate_count", "qualified_candidate_count", "selected_event",
+                "order_status", "order_message", "warnings"
+              ],
+              "properties": {
+                "sequence": { "type": "integer", "minimum": 1 },
+                "title": { "type": "string", "minLength": 1 },
+                "expectation_id": { "type": "string", "minLength": 1 },
+                "depends_on": { "type": ["string", "null"] },
+                "status": { "enum": ["PASS", "PARTIAL", "FAIL", "INCONCLUSIVE"] },
+                "candidate_count": { "type": "integer", "minimum": 0 },
+                "qualified_candidate_count": { "type": "integer", "minimum": 0 },
+                "selected_event": { "type": ["object", "null"] },
+                "order_status": { "enum": ["passed", "failed", "not_evaluated", null] },
+                "order_message": { "type": ["string", "null"] },
+                "warnings": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          },
           "selected_event": {
             "oneOf": [
               {
@@ -234,6 +277,7 @@
                   "time_distance_ms": { "type": "integer", "minimum": 0 },
                   "time_offset_ms": { "type": ["integer", "null"] },
                   "local_event_time_utc": { "type": "string", "format": "date-time" },
+                  "event_time_utc": { "type": ["string", "null"], "format": "date-time" },
                   "matched_anchors": {
                     "type": "array",
                     "items": { "type": "string" }

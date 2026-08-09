@@ -54,6 +54,7 @@ public sealed class HelperResult
 public sealed class BehaviorResult
 {
     public required string Operation { get; init; }
+    public required string MethodId { get; init; }
     public required bool Succeeded { get; init; }
     public required DateTimeOffset OccurredAtUtc { get; init; }
     public required DateTimeOffset CompletedAtUtc { get; init; }
@@ -73,6 +74,9 @@ public sealed class BehaviorResult
     public string? DownloadMd5 { get; init; }
     public string? DownloadSha256 { get; init; }
     public DateTimeOffset? FileOccurredAtUtc { get; init; }
+    public DateTimeOffset? FileCompletedAtUtc { get; init; }
+    public string? NativeApi { get; init; }
+    public int? NativeStatusCode { get; init; }
     public string? Error { get; init; }
 }
 

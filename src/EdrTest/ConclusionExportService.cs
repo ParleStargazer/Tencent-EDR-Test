@@ -99,6 +99,18 @@ public static class ConclusionExportService
         var methodNotice = capability["method_selection"]?["notice"]?.GetValue<string>();
         if (!string.IsNullOrWhiteSpace(methodNotice)) return methodNotice;
 
+        if (capability["stage_flow"] is JsonObject stageFlow)
+        {
+            var stages = capability["stage_results"]?.AsArray()
+                .Select(value => value?.AsObject())
+                .Where(value => value is not null)
+                .Cast<JsonObject>()
+                .Select(value => $"{Text(value, "title")}：{StatusLabel(Text(value, "status"))}")
+                .ToArray() ?? [];
+            var detail = stages.Length == 0 ? string.Empty : $"（{string.Join("；", stages)}）";
+            return $"有序二轮验证为{StatusLabel(Text(stageFlow, "status"))}{detail}；必须先验证连接，再验证文件写入。";
+        }
+
         var warnings = capability["warnings"]?.AsArray()
             .Select(value => value?.GetValue<string>())
             .Where(value => !string.IsNullOrWhiteSpace(value))

@@ -168,6 +168,7 @@
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "method": { "$ref": "#/$defs/method" },
+        "stage": { "$ref": "#/$defs/stage" },
         "event_type": { "type": "string", "minLength": 1 },
         "event_actions": {
           "type": "array",
@@ -199,6 +200,16 @@
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$" },
         "title": { "type": "string", "minLength": 1 }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "title"],
+      "properties": {
+        "sequence": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "depends_on": { "type": "string", "minLength": 1 }
       }
     },
     "expectation_correlation": {
