@@ -220,6 +220,8 @@ const defaultActionNameInputs: Record<string, string> = {
   "win.process.remote_thread": "RemoteThread",
   "win.process.access": "NtOpenProcess",
   "win.process.tampering": "WriteProcessMemory",
+  "win.account.local.create": "AccountCreate",
+  "win.account.login": "LoginSuccess, LoginFailed, LoginExplicitCredentials",
   "win.file.create": "FileWriteClose",
   "win.file.modify": "FileWriteClose",
   "win.file.open": "FileWriteClose",
@@ -231,6 +233,27 @@ const defaultChildFileCreateOpNameInputs: Record<string, string> = {
 };
 const fileCapabilityIds = new Set(["win.file.create", "win.file.open", "win.file.delete", "win.file.modify", "win.file.rename"]);
 const allCapabilities = capabilityCatalog.flatMap((category) => category.capabilities.map((capability) => ({ ...capability, categoryId: category.id })));
+
+type CapabilityItemGroup<T> = {
+  id: string;
+  nameZh: string;
+  nameEn: string;
+  items: T[];
+};
+
+function groupByCapabilityCategory<T extends { capability_id: string }>(items: T[]): CapabilityItemGroup<T>[] {
+  const knownIds = new Set(capabilityCatalog.flatMap((category) => category.capabilities.map((capability) => capability.id)));
+  const groups = capabilityCatalog.map((category) => ({
+    id: category.id,
+    nameZh: category.nameZh,
+    nameEn: category.nameEn,
+    items: category.capabilities.flatMap((capability) => items.filter((item) => item.capability_id === capability.id)),
+  })).filter((category) => category.items.length > 0);
+  const uncategorized = items.filter((item) => !knownIds.has(item.capability_id));
+  return uncategorized.length > 0
+    ? [...groups, { id: "uncategorized", nameZh: "未分类能力", nameEn: "Uncategorized", items: uncategorized }]
+    : groups;
+}
 const viteEnvironment = import.meta.env as Record<string, string | undefined>;
 const apiRoot = (viteEnvironment.VITE_EDR_API_URL ?? "http://127.0.0.1:4317/api").replace(/\/$/, "");
 const apiToken = viteEnvironment.VITE_EDR_API_TOKEN;
@@ -823,26 +846,34 @@ function EdrFilterSettings({ baselines, actionValues, childFileCreateOpNameValue
   const fileBaselines = baselines.filter((baseline) => fileCapabilityIds.has(baseline.capability_id));
   const configured = [...Object.values(actionValues), ...Object.values(childFileCreateOpNameValues)]
     .filter((value) => parseFilterValues(value).length > 0).length;
-  return <section className="panel action-name-settings"><div className="panel-heading"><div><p className="section-index">B / 可选消歧</p><h2>EDR 原始字段筛选</h2><p className="panel-description">先按本地路径、程序、PID 和时间建立候选，再应用下列 EDR 字段标准。默认值可编辑；任何留空项都不会改变该能力原有的筛选规则，也不会影响本地运行规则和 LOCAL_PASS。</p></div><div className="action-settings-actions"><span className="line-badge">{configured} 项已填写</span><button className="text-button" type="button" onClick={onClear}>全部清空</button><button className="secondary-button" type="button" onClick={onSave}>保存到本机</button></div></div>
+  return <details className="panel action-name-settings compare-fold-panel"><summary className="panel-heading compare-fold-heading"><div><p className="section-index">B / 可选消歧</p><h2>EDR 原始字段筛选</h2><p className="panel-description">默认收起；展开后可按能力编辑 EDR 原始字段标准。</p></div><div className="fold-heading-meta"><span className="line-badge">{configured} 项已填写</span></div></summary><div className="compare-fold-body"><div className="action-settings-actions"><span>先按本地路径、程序、PID 和时间建立候选；下列值只做 EDR 候选的进一步筛选。</span><button className="text-button" type="button" onClick={onClear}>全部清空</button><button className="secondary-button" type="button" onClick={onSave}>保存到本机</button></div>
     <div className="edr-filter-group"><header><div><h3>Action.Name</h3><p>适用于全部已有 BASELINE；多个值采用“任选其一”。</p></div><code>EDR ONLY</code></header><div className="action-name-grid">{baselines.map((baseline) => <label className="action-name-field" key={`action-${baseline.baseline_id}`}><span><strong>{baseline.title}</strong><code>{baseline.capability_id}</code></span><input type="text" maxLength={1024} value={actionValues[baseline.capability_id] ?? ""} placeholder="留空：不按 Action.Name 筛选" onChange={(event) => onActionChange(baseline.capability_id, event.target.value)} /><em>精确匹配，不区分大小写；支持逗号、分号或换行</em></label>)}</div></div>
     <div className="edr-filter-group"><header><div><h3>Child.FileCreateOpName</h3><p>仅针对五项文件能力；删除和重命名默认留空。</p></div><code>FILE ONLY</code></header><div className="action-name-grid">{fileBaselines.map((baseline) => <label className="action-name-field" key={`file-operation-${baseline.baseline_id}`}><span><strong>{baseline.title}</strong><code>{baseline.capability_id}</code></span><input type="text" maxLength={1024} value={childFileCreateOpNameValues[baseline.capability_id] ?? ""} placeholder="留空：不按 Child.FileCreateOpName 筛选" onChange={(event) => onChildFileCreateOpNameChange(baseline.capability_id, event.target.value)} /><em>只读取 EDR 原始字段；多个值为任选其一</em></label>)}</div></div>
-  </section>;
+  </div></details>;
 }
 
 function BaselineGuide({ baselines }: { baselines: ApiBaseline[] }) {
-  return <section className="panel baseline-guide"><div className="panel-heading"><div><p className="section-index">C / BASELINE 是什么</p><h2>通过判定的要求</h2><p className="panel-description">“本地要求”证明测试行为真的发生；“EDR 要求”检查云端事件是否记录了正确内容。必需要求全部满足才算通过。</p></div><span className="line-badge">{baselines.length} 份基准</span></div><div className="baseline-card-grid">{baselines.map((baseline) => {
+  const groups = groupByCapabilityCategory(baselines);
+  return <details className="panel baseline-guide compare-fold-panel"><summary className="panel-heading compare-fold-heading"><div><p className="section-index">C / BASELINE 是什么</p><h2>通过判定的要求</h2><p className="panel-description">默认收起；展开后按能力大类查看本地要求和 EDR 要求。</p></div><div className="fold-heading-meta"><span className="line-badge">{groups.length} 类 · {baselines.length} 份基准</span></div></summary><div className="compare-fold-body baseline-category-stack">{groups.map((group) => <details className="baseline-category-card category-fold-card" key={group.id}><summary><div><strong>{group.nameZh}</strong><span>{group.nameEn}</span></div><em>{group.items.length} 份基准</em></summary><div className="baseline-card-grid">{group.items.map((baseline) => {
     const localCount = baseline.requirements.filter((item) => item.scope === "local").length; const cloudCount = baseline.requirements.length - localCount;
     return <details className="baseline-card" key={baseline.baseline_id}><summary><div><strong>{baseline.title}</strong><span>能力 v{baseline.capability_version} · {localCount} 项本地要求 · {cloudCount} 项 EDR 要求</span></div><em>{baseline.risk_level}</em></summary><div className="baseline-preview">{baseline.requirements.map((requirement) => <div key={requirement.requirement_id}><span className={`scope-chip ${requirement.scope}`}>{requirement.scope === "local" ? "本地" : "EDR"}</span><p>{requirement.title_zh}</p><em>{severityLabel(requirement.severity)}</em></div>)}</div></details>;
-  })}</div></section>;
+  })}</div></details>)}</div></details>;
 }
 
 function ComparisonResultPanel({ result, onDownloadJson, onDownloadConclusion }: { result: ValidationResult | null; onDownloadJson: () => void; onDownloadConclusion: () => void }) {
-  return <section className="panel comparison-detail-panel"><div className="panel-heading"><div><p className="section-index">D / 比较结果</p><h2>要求满足情况</h2><p className="panel-description">结果先按能力折叠；能力展开后，本地条件默认收起，EDR 条件与关联候选日志默认展开。</p></div></div>{result ? <>
+  const groups = result ? groupByCapabilityCategory(result.capabilities) : [];
+  return <section className="panel comparison-detail-panel"><div className="panel-heading"><div><p className="section-index">D / 比较结果</p><h2>要求满足情况</h2><p className="panel-description">结果先按能力大类折叠；展开大类后再选择具体能力，本地条件默认收起，EDR 条件与关联候选日志默认展开。</p></div></div>{result ? <>
     <div className={`conclusion-card ${result.conclusion.verdict.toLowerCase()}`}><div><span>总体结论</span><strong>{result.conclusion.label_zh}</strong><em>{result.conclusion.pass_rate === null ? "通过率不可计算" : `完整通过率 ${(result.conclusion.pass_rate * 100).toFixed(1)}%`}</em></div><p>{result.conclusion.statement_zh}</p></div>
     <div className="result-summary"><div><span>通过</span><strong className="pass-text">{result.summary.pass}</strong></div><div><span>部分通过</span><strong>{result.summary.partial}</strong></div><div><span>失败</span><strong className="fail-text">{result.summary.fail}</strong></div><div><span>无法判定</span><strong>{result.summary.inconclusive}</strong></div></div>
-    <div className="capability-result-stack">{result.capabilities.map((entry) => <CapabilityComparison key={entry.case_run_id} entry={entry} />)}</div>
+    <div className="comparison-category-stack">{groups.map((group) => <CapabilityResultCategory group={group} key={group.id} />)}</div>
     <div className="result-actions"><button className="secondary-button" type="button" onClick={onDownloadJson}>下载完整 JSON</button><button className="secondary-button" type="button" onClick={onDownloadConclusion}>下载中文结论</button></div>
   </> : <div className="result-placeholder"><span className="bracket" aria-hidden="true">[ ]</span><div><strong>等待离线比较</strong><p>比较完成后，这里会用简单中文列出每项 BASELINE 要求及满足情况。</p></div></div>}</section>;
+}
+
+function CapabilityResultCategory({ group }: { group: CapabilityItemGroup<ValidationEntry> }) {
+  const statuses: ValidationStatus[] = ["PASS", "PARTIAL", "FAIL", "INCONCLUSIVE", "NOT_COMPARED"];
+  const counts = Object.fromEntries(statuses.map((status) => [status, group.items.filter((item) => item.validation_status === status).length])) as Record<ValidationStatus, number>;
+  return <details className="comparison-category-card category-fold-card"><summary><div><strong>{group.nameZh}</strong><span>{group.nameEn}</span></div><div className="category-result-counts">{statuses.filter((status) => counts[status] > 0).map((status) => <span className={status.toLowerCase()} key={status}>{validationStatusLabel(status)} {counts[status]}</span>)}</div><em>{group.items.length} 项能力</em></summary><div className="capability-result-stack">{group.items.map((entry) => <CapabilityComparison key={entry.case_run_id} entry={entry} />)}</div></details>;
 }
 
 function CapabilityComparison({ entry }: { entry: ValidationEntry }) {

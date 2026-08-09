@@ -45,6 +45,8 @@
 
 本地账号创建的 `process.executable` 优先期望本地 Actor 路径，同时接受 `C:\Windows\System32\lsass.exe`。两者均满足该 EDR BASELINE 项，且不改变候选关联得分；命中 `lsass.exe` 表示 EDR 导出只呈现了 Windows 账号操作的系统执行进程，离线比较页会显示“缺少上级调用链，需要优化”，但不会降低能力结论或写入结论报告警告。
 
+离线比较页默认预填本地账号创建的 `Action.Name=AccountCreate`，以及账号登录的 `Action.Name=LoginSuccess, LoginFailed, LoginExplicitCredentials`。账号登录的三个值是同一能力的“任选其一”规则，只对已经命中本地账号、SID、Logon ID、PID 或时间关联条件的 EDR 候选做进一步筛选，不影响本地 BASELINE。
+
 ## 5. 构建与验收
 
 仅构建能力包：

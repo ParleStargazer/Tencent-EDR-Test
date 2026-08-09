@@ -131,6 +131,8 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /"win\.process\.remote_thread": "RemoteThread"/);
   assert.match(livePage, /"win\.process\.access": "NtOpenProcess"/);
   assert.match(livePage, /"win\.process\.tampering": "WriteProcessMemory"/);
+  assert.match(livePage, /"win\.account\.local\.create": "AccountCreate"/);
+  assert.match(livePage, /"win\.account\.login": "LoginSuccess, LoginFailed, LoginExplicitCredentials"/);
   assert.match(livePage, /"win\.file\.create": "FileWriteClose"/);
   assert.match(livePage, /"win\.file\.create": "新建文件"/);
   assert.match(livePage, /"win\.file\.modify": "覆盖写文件"/);
@@ -146,6 +148,11 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /能力开始/);
   assert.match(livePage, /baseline_requirements/);
   assert.match(livePage, /<details className="capability-result-card">/);
+  assert.match(livePage, /panel action-name-settings compare-fold-panel/);
+  assert.match(livePage, /panel baseline-guide compare-fold-panel/);
+  assert.match(livePage, /groupByCapabilityCategory/);
+  assert.match(livePage, /baseline-category-card category-fold-card/);
+  assert.match(livePage, /comparison-category-card category-fold-card/);
   assert.match(livePage, /open=\{isCloud\}/);
   assert.match(livePage, /EDR 原始完整日志/);
   assert.match(livePage, /打开 JSON 对照窗/);
