@@ -3,4 +3,7 @@
     <AssemblyName>ProcessActivity.Protocol</AssemblyName>
     <RootNamespace>ProcessActivity</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Common\ReliableProtocolFile.cs" Link="ReliableProtocolFile.cs" />
+  </ItemGroup>
 </Project>

@@ -454,7 +454,7 @@ internal static class Program
             Sensitive = false,
             Metadata = new JsonObject
             {
-                ["operation"] = JsonNode.Parse(File.ReadAllText(resultPath))?["operation"]?.GetValue<string>(),
+                ["operation"] = ProtocolJson.Read<BehaviorResult>(resultPath).Operation,
                 ["subtest"] = state.Subtest,
             },
         };

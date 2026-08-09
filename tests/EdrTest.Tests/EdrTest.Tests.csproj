@@ -8,5 +8,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\EdrTest\EdrTest.csproj" />
+    <Compile Include="..\..\sample-src\Common\ReliableProtocolFile.cs" Link="ReliableProtocolFile.cs" />
   </ItemGroup>
 </Project>

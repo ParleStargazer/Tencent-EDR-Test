@@ -106,6 +106,12 @@ return 0;
 
 Controller 应优先调用 `CompleteCapability` 写入准确的终态、错误码和错误摘要。退出码是进程异常退出时的回退机制，不是唯一结果接口。
 
+### 4.1 Windows 协议文件并发约束
+
+EDR 或防病毒软件可能在 Actor 发布 JSON 结果后立即扫描文件，造成数十到数百毫秒的短暂独占。Controller 不应使用“`File.Exists` 后单次 `File.ReadAllText`”作为跨进程协议，否则会把正常的安全软件扫描误判为样本失败。
+
+官方四组样本统一复用 `sample-src/Common/ReliableProtocolFile.cs`：写入端先将完整 UTF-8 JSON 写入同目录唯一临时文件并落盘，再原子替换目标；读取端以 `FileShare.ReadWrite | FileShare.Delete` 打开文件，并对共享冲突、短暂权限冲突及尚未完整可解析的 JSON 最多重试 5 秒。原子替换本身遇到目标扫描锁时也执行同样重试，失败路径会尽力清理临时文件。新增能力样本应复用该实现，不要自行引入命名互斥锁；互斥锁无法协调 EDR、防病毒扫描器等外部进程的文件句柄。
+
 ## 5. 项目引用与构建
 
 样本使用 .NET 时，可直接引用框架项目：

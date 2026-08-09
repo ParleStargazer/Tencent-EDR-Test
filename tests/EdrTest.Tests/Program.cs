@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using EdrTest;
+using EdrTest.SampleProtocol;
 
 namespace EdrTest.Tests;
 
@@ -26,6 +27,7 @@ public static class Program
 
         var failures = new List<string>();
         await RunTest("能力包路径和参数校验", TestManifestValidation, failures);
+        await RunTest("协议 JSON 遇到短暂文件独占时可靠重试", TestReliableProtocolFile, failures);
         await RunTest("L2/L3 默认风险门禁", TestHighRiskGate, failures);
         await RunTest("同一轮按顺序执行多个能力", TestMultipleCapabilities, failures);
         await RunTest("Runner 与 SQLite 完整保留长日志", TestLongControllerOutput, failures);
@@ -67,6 +69,39 @@ public static class Program
         File.WriteAllText(path, manifest.ToJsonString(JsonDefaults.Options));
         AssertThrows<InvalidDataException>(() => CapabilityCatalog.Load(path));
         return Task.CompletedTask;
+    }
+
+    private static async Task TestReliableProtocolFile()
+    {
+        using var fixture = TestDirectory.Create();
+        var path = Path.Combine(fixture.Path, "behavior-result.json");
+        ReliableProtocolFile.WriteAtomic(path, new JsonObject { ["value"] = "original" }, JsonDefaults.Options);
+
+        using (var readLock = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            var readTask = Task.Run(() => ReliableProtocolFile.Read<JsonObject>(path, JsonDefaults.Options, 3_000));
+            await Task.Delay(200);
+            Assert(!readTask.IsCompleted, "协议读取没有等待 FileShare.None 独占锁释放。");
+            readLock.Dispose();
+            var document = await readTask;
+            Assert(document["value"]?.GetValue<string>() == "original", "锁释放后的协议 JSON 内容不正确。");
+        }
+
+        using (var replaceLock = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var writeTask = Task.Run(() => ReliableProtocolFile.WriteAtomic(
+                path,
+                new JsonObject { ["value"] = "updated" },
+                JsonDefaults.Options,
+                3_000));
+            await Task.Delay(200);
+            replaceLock.Dispose();
+            await writeTask;
+        }
+
+        var updated = ReliableProtocolFile.Read<JsonObject>(path, JsonDefaults.Options);
+        Assert(updated["value"]?.GetValue<string>() == "updated", "锁释放后的原子协议替换未生效。");
+        Assert(!Directory.EnumerateFiles(fixture.Path, "*.tmp-*", SearchOption.TopDirectoryOnly).Any(), "协议写入遗留临时文件。");
     }
 
     private static async Task TestEndToEnd()

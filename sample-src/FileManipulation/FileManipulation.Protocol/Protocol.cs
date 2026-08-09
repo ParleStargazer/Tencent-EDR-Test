@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using EdrTest.SampleProtocol;
 
 namespace FileManipulation;
 
@@ -14,15 +15,11 @@ public static class ProtocolJson
     };
 
     public static T Read<T>(string path) where T : class =>
-        JsonSerializer.Deserialize<T>(File.ReadAllText(path), Options)
-        ?? throw new InvalidDataException($"协议文件不是有效的 {typeof(T).Name}：{path}");
+        ReliableProtocolFile.Read<T>(path, Options);
 
     public static void WriteAtomic<T>(string path, T value)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
-        File.WriteAllText(temporary, JsonSerializer.Serialize(value, Options));
-        File.Move(temporary, path, true);
+        ReliableProtocolFile.WriteAtomic(path, value, Options);
     }
 }
 

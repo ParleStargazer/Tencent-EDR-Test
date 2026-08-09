@@ -3,4 +3,7 @@
     <AssemblyName>FileManipulation.Protocol</AssemblyName>
     <RootNamespace>FileManipulation</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Common\ReliableProtocolFile.cs" Link="ReliableProtocolFile.cs" />
+  </ItemGroup>
 </Project>

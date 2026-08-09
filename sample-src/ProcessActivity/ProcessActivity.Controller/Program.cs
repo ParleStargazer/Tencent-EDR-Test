@@ -703,7 +703,7 @@ internal static class Program
             SizeBytes = new FileInfo(resultPath).Length,
             CreatedAtUtc = File.GetCreationTimeUtc(resultPath),
             Sensitive = false,
-            Metadata = new JsonObject { ["operation"] = JsonNode.Parse(File.ReadAllText(resultPath))?["operation"]?.GetValue<string>() },
+            Metadata = new JsonObject { ["operation"] = ProtocolJson.Read<BehaviorResult>(resultPath).Operation },
         };
     }
 
