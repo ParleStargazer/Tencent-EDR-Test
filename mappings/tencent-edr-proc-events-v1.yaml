@@ -489,7 +489,41 @@ routes:
       "file.driver_type": { source: "Child.FileDriverType", on_empty: null }
       "file.encrypted": { source: "Child.FileEncrypted", on_empty: null }
 
-  # 候选发现路由不依赖 Action.Name。它保留时间、Child 文件字段和 Parent 程序字段，
+  # 进程候选发现路由只依赖表结构，不依赖 Action.Name。这样即使用户填写了尚未写入
+  # 精确语义路由的厂商 Action，仍可先依据 Child/Parent 进程锚点建立高置信候选。
+  - route_id: process-candidate-discovery
+    when:
+      "OS": Windows
+      "@table": ProcEvents
+    canonical:
+      "event.type": { source: "Action.Type", on_empty: unknown }
+      "event.action": { source: "Action.Name", on_empty: unknown }
+      "event.category": { source: "@table", on_empty: process }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "host.os": { source: "Environment.OsVersion" }
+      "host.agent_id": { source: "Common.Guid" }
+      "host.agent_version": { source: "Common.ClientVer" }
+      "process.pid": { source: "Child.ProcPid", on_zero: null }
+      "process.entity_id": { source: "Child.ProcGuid", on_empty: null }
+      "process.name": { source: "Child.FileName", on_empty: null }
+      "process.executable": { source: "Child.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Child.ProcCmdline", on_empty: null }
+      "process.start": { source: "Child.ProcCreateTime", transform: [unix_ms_to_utc], on_zero: null }
+      "process.hash.md5": { source: "Child.FileMd5", transform: [lowercase], on_empty: null }
+      "parent_process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "parent_process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "parent_process.name": { source: "Parent.FileName", on_empty: null }
+      "parent_process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "parent_process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "parent_process.start": { source: "Parent.ProcCreateTime", transform: [unix_ms_to_utc], on_zero: null }
+      "user.name": { source: "Child.ProcUserName", on_empty: null }
+      "user.domain": { source: "Child.ProcDomainName", on_empty: null }
+
+  # 通用文件候选发现路由不依赖 Action.Name。它保留时间、Child 文件字段和 Parent 程序字段，
   # 让比较器按本地路径/程序/PID 锚点评分并以时间距离排序；事件类型和 Action 只作展示提示。
   - route_id: telemetry-candidate-discovery
     when:

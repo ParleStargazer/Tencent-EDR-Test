@@ -40,9 +40,11 @@ Controller 复用通用 SQLite Schema，无需新增专用表：
 - `baselines/windows/file_modify.yaml`
 - `baselines/windows/file_rename.yaml`
 
-强关联锚点为 JSON 文件路径和对应 Actor 可执行路径；PID 为中等锚点；事件时间使用 `facts.file.json.occurred_at_utc`。TXT 与 JSON 两项本地行为都必须成功，但云端只把 JSON 子项设为必检，避免已知不敏感的 TXT 事件拉低产品能力结论。路径、Actor 身份、操作枚举和文件大小是 required；腾讯导出支持 MD5 但少量记录为空，因此 MD5 为 recommended。本地仍保存 TXT/JSON 两套 SHA-1/SHA-256 供其他产品映射复用。
+强关联锚点为 JSON 文件路径和对应 Actor 可执行路径；PID 为中等锚点；事件时间使用 `facts.file.json.occurred_at_utc`，五项 BASELINE 均要求 EDR 时间差不超过 10 ms。10 ms 内的时间差计为强证据，但必须与至少一个文件、程序或 PID 锚点共同出现。TXT 与 JSON 两项本地行为都必须成功，但云端只把 JSON 子项设为必检，避免已知不敏感的 TXT 事件拉低产品能力结论。路径、Actor 身份、操作枚举和文件大小是 required；腾讯导出支持 MD5 但少量记录为空，因此 MD5 为 recommended。本地仍保存 TXT/JSON 两套 SHA-1/SHA-256 供其他产品映射复用。
 
 腾讯映射保留已知的 `File/FileRename` 精确语义，同时增加不依赖 `Action.Name` 的候选发现路由。因此 `InjectHook/MoveFileExW` 或后续未知名称的记录也会先进入时间窗，再依据本地源/目标路径、Actor 路径/PID和时间距离评分；不包含固定 PID、固定目录或固定 nonce，避免针对单次日志过拟合。
+
+如果同一 JSON 文件行为关联出多条强候选，可在离线比较页为对应能力填写一个或多个原始 `Action.Name`（例如 `MoveFileExW`、`FileRename`）并保存，多个值为“任选其一”。该设置只筛选 EDR 候选，不会改变本地运行规则、`LOCAL_PASS`，也不会代替本地路径、Actor、PID 和时间条件；未选中的强候选仍会显示完整 JSON。
 
 ## 4. 构建和验收
 

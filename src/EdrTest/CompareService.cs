@@ -18,7 +18,8 @@ public sealed record CompareRequest(
     string OutputPath,
     string? CloudManifestPath = null,
     string? ConclusionOutputPath = null,
-    string? ComparisonId = null);
+    string? ComparisonId = null,
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? ActionNameStandards = null);
 
 public sealed class MappingProfile
 {
@@ -140,6 +141,7 @@ public sealed class CorrelationDefinition
 {
     public int TimeBeforeSeconds { get; init; }
     public int TimeAfterSeconds { get; init; }
+    public int MaxTimeDifferenceMs { get; init; }
     public List<CorrelationAnchor> Anchors { get; init; } = [];
 }
 
@@ -164,6 +166,7 @@ public sealed class CloudExpectation
 public sealed class ExpectationCorrelationDefinition
 {
     public string? TimeFromLocal { get; init; }
+    public int? MaxTimeDifferenceMs { get; init; }
     public List<CorrelationAnchor> Anchors { get; init; } = [];
 }
 
@@ -188,9 +191,15 @@ internal sealed record Candidate(
     double Score,
     long TimeDistanceMs,
     IReadOnlyList<string> MatchedAnchors,
+    bool AnchorQualified,
     bool Qualified,
     bool TypeHintMatched,
     bool ActionHintMatched,
+    string? VendorActionName,
+    bool? CustomActionNameMatched,
+    IReadOnlyList<string> CustomActionNameStandards,
+    int MaximumTimeDifferenceMs,
+    bool TimeDifferenceMatched,
     string QualificationReason);
 internal sealed record CloudRecordObservation(DateTimeOffset? EventTime, string? HostId, string? HostName);
 internal sealed record CloudLoadResult(IReadOnlyList<CanonicalEvent> Events, IReadOnlyList<CloudRecordObservation> Observations);
@@ -207,6 +216,7 @@ public static class CompareService
     public static JsonObject Compare(CompareRequest request)
     {
         ValidateInputs(request);
+        var actionNameStandards = NormalizeActionNameStandards(request.ActionNameStandards);
         var localPath = Path.GetFullPath(request.LocalExportPath);
         var mappingPath = Path.GetFullPath(request.MappingPath);
         var localRoot = JsonNode.Parse(File.ReadAllText(localPath)) as JsonObject ?? throw new InvalidDataException("本地导出必须是 JSON 对象。");
@@ -257,7 +267,10 @@ public static class CompareService
                 else
                 {
                     var baselineEntry = matchingBaselines[0];
-                    result = CompareCapability(localRoot, capability, baselineEntry.Value, cloud, cloudManifest, manifestFilesVerified);
+                    var capabilityActionNames = actionNameStandards.TryGetValue(capabilityId, out var configuredActionNames)
+                        ? configuredActionNames
+                        : Array.Empty<string>();
+                    result = CompareCapability(localRoot, capability, baselineEntry.Value, cloud, cloudManifest, manifestFilesVerified, capabilityActionNames);
                     DecorateCapabilityResult(result, capability, baselineEntry.Value);
                 }
             }
@@ -290,6 +303,8 @@ public static class CompareService
                     ["version"] = x.Value.Version,
                     ["sha256"] = Hashing.FileSha256(x.Path),
                 }).ToArray()),
+                ["action_name_standards"] = new JsonObject(actionNameStandards.Select(value =>
+                    KeyValuePair.Create<string, JsonNode?>(value.Key, new JsonArray(value.Value.Select(action => (JsonNode)action).ToArray())))),
             },
             ["summary"] = summary,
             ["conclusion"] = conclusion,
@@ -310,7 +325,8 @@ public static class CompareService
         BaselineDefinition baseline,
         CloudLoadResult cloud,
         JsonObject? cloudManifest,
-        bool manifestFilesVerified)
+        bool manifestFilesVerified,
+        IReadOnlyList<string> actionNameStandards)
     {
         var capabilityId = RequiredString(capability, "capability_id");
         var caseRunId = RequiredString(capability, "case_run_id");
@@ -350,22 +366,35 @@ public static class CompareService
         var outputAssertions = new JsonArray();
         var outputCandidates = new JsonArray();
         JsonObject? firstSelected = null;
+        if (actionNameStandards.Count > 0)
+        {
+            warnings.Add($"已启用自定义 Action.Name 消歧：{string.Join("、", actionNameStandards)}。该条件只筛选已命中本地锚点的候选，不参与候选召回或锚点评分。");
+        }
         foreach (var expectation in baseline.CloudExpectations)
         {
             var expectationAnchors = expectation.Correlation?.Anchors is { Count: > 0 }
                 ? expectation.Correlation.Anchors
                 : baseline.Correlation.Anchors;
+            var maximumTimeDifferenceMs = expectation.Correlation?.MaxTimeDifferenceMs ?? baseline.Correlation.MaxTimeDifferenceMs;
             var correlationTime = ResolveCorrelationTime(expectation.Correlation?.TimeFromLocal, resolver, defaultCorrelationTime);
             var candidates = cloud.Events
                 .Where(item => EventWithinWindow(item, start, end, baseline.Correlation))
-                .Select(item => Score(item, expectation, expectationAnchors, resolver, correlationTime))
+                .Select(item => Score(item, expectation, expectationAnchors, resolver, correlationTime, maximumTimeDifferenceMs, actionNameStandards))
                 .GroupBy(item => item.Event.RawRef, StringComparer.Ordinal)
-                .Select(group => group.OrderByDescending(item => item.Score).ThenBy(item => item.TimeDistanceMs).First())
-                .OrderByDescending(item => item.Score)
+                .Select(group => group
+                    .OrderByDescending(item => item.Qualified)
+                    .ThenByDescending(item => item.AnchorQualified)
+                    .ThenByDescending(item => item.Score)
+                    .ThenBy(item => item.TimeDistanceMs)
+                    .First())
+                .OrderByDescending(item => item.Qualified)
+                .ThenByDescending(item => item.AnchorQualified)
+                .ThenByDescending(item => item.Score)
                 .ThenBy(item => item.TimeDistanceMs)
                 .ThenBy(item => item.Event.RawRef, StringComparer.Ordinal)
                 .Take(MaximumDisplayedCandidates)
                 .ToArray();
+            var anchorQualifiedCandidates = candidates.Where(item => item.AnchorQualified).ToArray();
             var qualifiedCandidates = candidates.Where(item => item.Qualified).ToArray();
             totalCandidates += candidates.Length;
             for (var candidateIndex = 0; candidateIndex < candidates.Length; candidateIndex++)
@@ -385,12 +414,21 @@ public static class CompareService
                     : "passed";
             var cardinalityMessage = cardinalityStatus switch
             {
+                "failed" when actionNameStandards.Count > 0 => $"EDR 日志范围足以形成判断；{anchorQualifiedCandidates.Length} 条候选命中本地锚点，其中 {qualifiedCandidates.Length} 条同时符合自定义 Action.Name。其余记录仍保留供排查。",
                 "failed" => $"EDR 日志范围足以形成判断，但只有 {qualifiedCandidates.Length} 条候选达到关联阈值；另展示 {candidates.Length - qualifiedCandidates.Length} 条低置信度记录供排查。",
+                "not_evaluated" when qualifiedCandidates.Length < expectation.Cardinality.Min && actionNameStandards.Count > 0 => $"日志范围或关联证据不足；{anchorQualifiedCandidates.Length} 条候选命中本地锚点，其中 {qualifiedCandidates.Length} 条符合自定义 Action.Name。",
                 "not_evaluated" when qualifiedCandidates.Length < expectation.Cardinality.Min => $"日志范围或关联证据不足；已展示 {candidates.Length} 条时间相近记录供继续核对。",
                 "not_evaluated" => "候选事件过多，无法唯一关联。",
                 _ => null,
             };
             outputRequirements.Add(CardinalityRequirementJson(expectation, qualifiedCandidates.Length, cardinalityStatus, cardinalityMessage));
+            if (actionNameStandards.Count > 0)
+            {
+                var actionRequirement = CustomActionNameRequirementJson(expectation, actionNameStandards, anchorQualifiedCandidates, qualifiedCandidates);
+                outputRequirements.Add(actionRequirement);
+                if (actionRequirement["status"]?.GetValue<string>() == "failed") overallStatus = Worse(overallStatus, "FAIL");
+                else if (actionRequirement["status"]?.GetValue<string>() == "not_evaluated") overallStatus = Worse(overallStatus, "INCONCLUSIVE");
+            }
             if (qualifiedCandidates.Length < expectation.Cardinality.Min)
             {
                 if (exportCoverage is "verified" or "inferred" or "assumed")
@@ -411,6 +449,7 @@ public static class CompareService
             }
             if (candidates.Length == 0)
             {
+                outputRequirements.Add(TimeDifferenceRequirementJson(expectation, maximumTimeDifferenceMs, null));
                 AddUnevaluatedExpectationRequirements(outputRequirements, expectation, resolver, "时间窗内没有可展示的 EDR 记录，无法检查该项。", includeCardinality: false);
                 continue;
             }
@@ -423,7 +462,9 @@ public static class CompareService
             var selected = qualifiedCandidates.FirstOrDefault() ?? candidates[0];
             if (!selected.Qualified)
             {
-                warnings.Add($"{expectation.Id} 当前使用低置信度候选继续展示可验证字段，不会把该候选当作已可靠关联。");
+                warnings.Add(selected.AnchorQualified && actionNameStandards.Count > 0
+                    ? $"{expectation.Id} 已找到命中本地锚点的记录，但原始 Action.Name 不符合自定义标准；仍保留该记录和逐字段结果供核对。"
+                    : $"{expectation.Id} 当前使用低置信度候选继续展示可验证字段，不会把该候选当作已可靠关联。");
                 overallStatus = Worse(overallStatus, "INCONCLUSIVE");
             }
             firstSelected ??= new JsonObject
@@ -432,11 +473,21 @@ public static class CompareService
                 ["event_id"] = Values.ToNode(selected.Event.Get("event.id")),
                 ["correlation_score"] = selected.Score,
                 ["confidence"] = CandidateConfidence(selected),
+                ["anchor_qualified"] = selected.AnchorQualified,
                 ["eligible_for_validation"] = selected.Qualified,
                 ["qualification_reason"] = selected.QualificationReason,
+                ["custom_action_name_expected"] = new JsonArray(selected.CustomActionNameStandards.Select(value => (JsonNode)value).ToArray()),
+                ["custom_action_name_actual"] = selected.VendorActionName,
+                ["custom_action_name_matched"] = selected.CustomActionNameMatched,
+                ["maximum_time_difference_ms"] = selected.MaximumTimeDifferenceMs,
+                ["time_difference_matched"] = selected.TimeDifferenceMatched,
                 ["time_distance_ms"] = selected.TimeDistanceMs,
                 ["matched_anchors"] = new JsonArray(selected.MatchedAnchors.Select(x => (JsonNode)x).ToArray()),
             };
+            var timeRequirement = TimeDifferenceRequirementJson(expectation, maximumTimeDifferenceMs, selected);
+            outputRequirements.Add(timeRequirement);
+            if (timeRequirement["status"]?.GetValue<string>() == "failed") overallStatus = Worse(overallStatus, "FAIL");
+            else if (timeRequirement["status"]?.GetValue<string>() == "not_evaluated") overallStatus = Worse(overallStatus, "INCONCLUSIVE");
             foreach (var assertion in expectation.Assertions)
             {
                 var evaluated = Evaluate(assertion, selected.Event.Get(assertion.Field), resolver);
@@ -491,6 +542,71 @@ public static class CompareService
         ["actual"] = actual,
         ["message"] = message,
     };
+
+    private static JsonObject CustomActionNameRequirementJson(
+        CloudExpectation expectation,
+        IReadOnlyList<string> standards,
+        IReadOnlyList<Candidate> anchorQualifiedCandidates,
+        IReadOnlyList<Candidate> qualifiedCandidates)
+    {
+        var actual = anchorQualifiedCandidates
+            .Select(candidate => candidate.VendorActionName)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var status = anchorQualifiedCandidates.Count == 0
+            ? "not_evaluated"
+            : qualifiedCandidates.Count > 0
+                ? "passed"
+                : "failed";
+        var message = status switch
+        {
+            "passed" => $"命中本地锚点的候选中，有 {qualifiedCandidates.Count} 条符合自定义 Action.Name。",
+            "failed" => "已找到命中本地锚点的候选，但它们的原始 Action.Name 均不符合自定义标准。",
+            _ => "尚无命中本地锚点的候选，无法应用自定义 Action.Name 消歧。",
+        };
+        return new JsonObject
+        {
+            ["requirement_id"] = $"{expectation.Id}-custom-action-name",
+            ["scope"] = "cloud",
+            ["title_zh"] = "原始 Action.Name 必须符合本次自定义标准",
+            ["expectation_id"] = expectation.Id,
+            ["field"] = "Action.Name",
+            ["operator"] = "one_of",
+            ["severity"] = "required",
+            ["status"] = status,
+            ["expected"] = new JsonArray(standards.Select(value => (JsonNode)value).ToArray()),
+            ["actual"] = new JsonArray(actual.Select(value => (JsonNode)value).ToArray()),
+            ["message"] = message,
+        };
+    }
+
+    private static JsonObject TimeDifferenceRequirementJson(CloudExpectation expectation, int maximumTimeDifferenceMs, Candidate? candidate)
+    {
+        var actual = candidate is null || candidate.TimeDistanceMs == long.MaxValue ? (long?)null : candidate.TimeDistanceMs;
+        var status = actual is null ? "not_evaluated" : actual <= maximumTimeDifferenceMs ? "passed" : "failed";
+        return new JsonObject
+        {
+            ["requirement_id"] = $"{expectation.Id}-time-difference",
+            ["scope"] = "cloud",
+            ["title_zh"] = $"EDR 事件与本地行为时间差必须不超过 {maximumTimeDifferenceMs} ms",
+            ["expectation_id"] = expectation.Id,
+            ["field"] = "event.time_difference_ms",
+            ["operator"] = "range",
+            ["severity"] = "required",
+            ["status"] = status,
+            ["expected"] = new JsonObject { ["min"] = 0, ["max"] = maximumTimeDifferenceMs },
+            ["actual"] = actual,
+            ["message"] = status switch
+            {
+                "passed" => $"EDR 事件与本地行为相差 {actual} ms，满足时间差基准。",
+                "failed" => $"EDR 事件与本地行为相差 {actual} ms，超过 {maximumTimeDifferenceMs} ms。",
+                _ => "候选缺少有效事件时间，无法计算与本地行为的时间差。",
+            },
+        };
+    }
 
     private static JsonObject RequirementJson(string requirementId, string scope, string? expectationId, AssertionEvaluation evaluation)
     {
@@ -612,12 +728,15 @@ public static class CompareService
         CloudExpectation expectation,
         IReadOnlyList<CorrelationAnchor> anchors,
         LocalResolver resolver,
-        DateTimeOffset correlationTime)
+        DateTimeOffset correlationTime,
+        int maximumTimeDifferenceMs,
+        IReadOnlyList<string> actionNameStandards)
     {
         double score = 0;
         var matched = new List<string>();
         var matchedStrong = false;
         var matchedMedium = false;
+        var matchedIdentity = false;
         var availableStrong = false;
         var availableMedium = false;
         foreach (var anchor in anchors)
@@ -631,26 +750,55 @@ public static class CompareService
             score += anchor.Strength switch { "strong" => 100, "medium" => 25, "weak" => 5, _ => 0 };
             if (anchor.Strength == "strong") matchedStrong = true;
             if (anchor.Strength == "medium") matchedMedium = true;
+            matchedIdentity = true;
             matched.Add($"{anchor.LocalField}={anchor.CloudField}");
         }
         var eventTime = CanonicalEventTime(item);
         var distance = eventTime is null
             ? long.MaxValue
             : (long)Math.Min(long.MaxValue, Math.Abs((eventTime.Value - correlationTime).TotalMilliseconds));
+        var timeDifferenceMatched = distance <= maximumTimeDifferenceMs;
+        if (timeDifferenceMatched)
+        {
+            score += 100;
+            matched.Add($"event.time_difference_ms<={maximumTimeDifferenceMs}");
+        }
         var typeHintMatched = Equivalent(item.Get("event.type"), expectation.EventType);
         var actionHintMatched = expectation.EventActions.Any(action => Equivalent(item.Get("event.action"), action));
 
-        var qualified = matchedStrong || (!availableStrong && matchedMedium);
-        var reason = qualified
-            ? matchedStrong
-                ? "命中至少一个强本地锚点"
-                : "强锚点缺失，命中可用的中等本地锚点"
-            : availableStrong
+        var anchorQualified = matchedStrong || (!availableStrong && matchedMedium) || (timeDifferenceMatched && matchedIdentity);
+        var vendorActionName = VendorActionName(item);
+        bool? customActionNameMatched = actionNameStandards.Count == 0
+            ? null
+            : actionNameStandards.Any(action => Equivalent(vendorActionName, action));
+        var qualified = anchorQualified && customActionNameMatched is not false;
+        var reason = !anchorQualified
+            ? availableStrong
                 ? "未命中可用的强本地锚点，仅作为低置信度候选展示"
                 : availableMedium
                     ? "未命中可用的中等本地锚点，仅作为低置信度候选展示"
-                    : "本地关联锚点未采集完整，仅按时间距离展示；本地基准异常会阻止能力通过";
-        return new Candidate(item, score, distance, matched, qualified, typeHintMatched, actionHintMatched, reason);
+                    : "本地关联锚点未采集完整，仅按时间距离展示；本地基准异常会阻止能力通过"
+            : customActionNameMatched is false
+                ? "已命中本地锚点，但原始 Action.Name 不符合本次自定义标准"
+                : timeDifferenceMatched && !matchedStrong
+                    ? $"时间差不超过 {maximumTimeDifferenceMs} ms，并命中至少一个本地身份锚点"
+                : matchedStrong
+                    ? timeDifferenceMatched
+                        ? $"命中至少一个强本地锚点，且时间差不超过 {maximumTimeDifferenceMs} ms"
+                        : "命中至少一个强本地锚点"
+                    : "强锚点缺失，命中可用的中等本地锚点";
+        return new Candidate(item, score, distance, matched, anchorQualified, qualified, typeHintMatched, actionHintMatched,
+            vendorActionName, customActionNameMatched, actionNameStandards, maximumTimeDifferenceMs, timeDifferenceMatched, reason);
+    }
+
+    private static string? VendorActionName(CanonicalEvent item)
+    {
+        var direct = item.Raw.FirstOrDefault(property => string.Equals(property.Key, "Action.Name", StringComparison.OrdinalIgnoreCase)).Value;
+        if (direct is JsonValue directValue && directValue.TryGetValue<string>(out var directText) && !string.IsNullOrWhiteSpace(directText)) return directText;
+        var action = item.Raw.FirstOrDefault(property => string.Equals(property.Key, "Action", StringComparison.OrdinalIgnoreCase)).Value as JsonObject;
+        var nested = action?.FirstOrDefault(property => string.Equals(property.Key, "Name", StringComparison.OrdinalIgnoreCase)).Value;
+        if (nested is JsonValue nestedValue && nestedValue.TryGetValue<string>(out var nestedText) && !string.IsNullOrWhiteSpace(nestedText)) return nestedText;
+        return null;
     }
 
     private static DateTimeOffset LocalCorrelationTime(JsonObject localRoot, string caseRunId, DateTimeOffset fallback)
@@ -728,16 +876,68 @@ public static class CompareService
                 Evaluate(assertion, candidate.Event.Get(assertion.Field), resolver),
                 resolver));
         }
+        if (candidate.CustomActionNameStandards.Count > 0)
+        {
+            var customStatus = candidate.VendorActionName is null
+                ? "not_evaluated"
+                : candidate.CustomActionNameMatched == true
+                    ? "passed"
+                    : "failed";
+            baselineMatches.Add(new JsonObject
+            {
+                ["kind"] = "custom_filter",
+                ["requirement_id"] = $"{expectationId}-custom-action-name",
+                ["status"] = customStatus,
+                ["local_field"] = null,
+                ["local_json_pointer"] = null,
+                ["canonical_field"] = "event.action",
+                ["raw_field"] = "Action.Name",
+                ["raw_json_pointer"] = VendorActionNameJsonPointer(candidate.Event),
+                ["expected"] = new JsonArray(candidate.CustomActionNameStandards.Select(value => (JsonNode)value).ToArray()),
+                ["actual"] = candidate.VendorActionName,
+                ["message"] = customStatus switch
+                {
+                    "passed" => "原始 Action.Name 符合本次自定义标准。",
+                    "failed" => "原始 Action.Name 不符合本次自定义标准。",
+                    _ => "候选记录没有可读取的原始 Action.Name。",
+                },
+            });
+        }
+        var eventTimeSource = candidate.Event.SourceField("event.created");
+        baselineMatches.Add(new JsonObject
+        {
+            ["kind"] = "correlation",
+            ["requirement_id"] = $"{expectationId}-time-difference",
+            ["status"] = candidate.Event.Get("event.created") is null ? "not_evaluated" : candidate.TimeDifferenceMatched ? "passed" : "failed",
+            ["local_field"] = expectation.Correlation?.TimeFromLocal,
+            ["local_json_pointer"] = expectation.Correlation?.TimeFromLocal is { } localTimeField ? resolver.JsonPointer(localTimeField) : null,
+            ["canonical_field"] = "event.created",
+            ["raw_field"] = eventTimeSource,
+            ["raw_json_pointer"] = eventTimeSource is null ? null : JsonPointer(eventTimeSource),
+            ["expected"] = new JsonObject { ["min"] = 0, ["max"] = candidate.MaximumTimeDifferenceMs },
+            ["actual"] = candidate.TimeDistanceMs == long.MaxValue ? null : candidate.TimeDistanceMs,
+            ["message"] = candidate.Event.Get("event.created") is null
+                ? "候选记录没有可计算的事件时间。"
+                : candidate.TimeDifferenceMatched
+                    ? $"与本地行为时间相差 {candidate.TimeDistanceMs} ms。"
+                    : $"与本地行为时间差超过 {candidate.MaximumTimeDifferenceMs} ms。",
+        });
         return new JsonObject
         {
             ["expectation_id"] = expectationId,
             ["rank"] = rank,
             ["confidence"] = CandidateConfidence(candidate),
             ["correlation_score"] = candidate.Score,
+            ["anchor_qualified"] = candidate.AnchorQualified,
             ["eligible_for_validation"] = candidate.Qualified,
             ["qualification_reason"] = candidate.QualificationReason,
             ["event_type_hint_matched"] = candidate.TypeHintMatched,
             ["event_action_hint_matched"] = candidate.ActionHintMatched,
+            ["custom_action_name_expected"] = new JsonArray(candidate.CustomActionNameStandards.Select(value => (JsonNode)value).ToArray()),
+            ["custom_action_name_actual"] = candidate.VendorActionName,
+            ["custom_action_name_matched"] = candidate.CustomActionNameMatched,
+            ["maximum_time_difference_ms"] = candidate.MaximumTimeDifferenceMs,
+            ["time_difference_matched"] = candidate.TimeDifferenceMatched,
             ["time_distance_ms"] = candidate.TimeDistanceMs,
             ["event_time_utc"] = Values.ToNode(candidate.Event.Get("event.created")),
             ["raw_ref"] = candidate.Event.RawRef,
@@ -747,6 +947,13 @@ public static class CompareService
             ["canonical_event"] = canonical,
             ["raw_event"] = candidate.Event.Raw.DeepClone(),
         };
+    }
+
+    private static string? VendorActionNameJsonPointer(CanonicalEvent item)
+    {
+        if (item.Raw.Any(property => string.Equals(property.Key, "Action.Name", StringComparison.OrdinalIgnoreCase))) return "/Action.Name";
+        if (item.Raw.Any(property => string.Equals(property.Key, "Action", StringComparison.OrdinalIgnoreCase))) return "/Action/Name";
+        return null;
     }
 
     private static JsonObject CandidateBaselineMatchJson(
@@ -1275,6 +1482,34 @@ public static class CompareService
 
     private static string RequiredString(JsonObject value, string property) => value[property]?.GetValue<string>() ?? throw new InvalidDataException($"缺少字符串字段：{property}");
 
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> NormalizeActionNameStandards(
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? configured)
+    {
+        if (configured is null || configured.Count == 0) return new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        if (configured.Count > 128) throw new ArgumentException("Action.Name 自定义标准最多覆盖 128 项能力。");
+        var normalized = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        foreach (var (capabilityId, values) in configured)
+        {
+            if (string.IsNullOrWhiteSpace(capabilityId) || capabilityId.Length > 128 || capabilityId.Any(char.IsControl))
+            {
+                throw new ArgumentException("Action.Name 自定义标准包含无效 capability_id。");
+            }
+            if (values.Count > 20) throw new ArgumentException($"能力 {capabilityId} 最多配置 20 个 Action.Name 标准值。");
+            var actions = values
+                .Select(value => value?.Trim())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (actions.Any(value => value.Length > 128 || value.Any(char.IsControl)))
+            {
+                throw new ArgumentException($"能力 {capabilityId} 的 Action.Name 标准值无效或超过 128 个字符。");
+            }
+            if (actions.Length > 0) normalized[capabilityId.Trim()] = actions;
+        }
+        return normalized;
+    }
+
     private static void ValidateInputs(CompareRequest request)
     {
         if (!File.Exists(request.LocalExportPath)) throw new FileNotFoundException("找不到本地导出。", request.LocalExportPath);
@@ -1326,6 +1561,7 @@ public static class CompareService
         if (baseline.Capability is null || string.IsNullOrWhiteSpace(baseline.Capability.Id)) throw new InvalidDataException($"BASELINE {baseline.BaselineId} 缺少 capability.id。");
         if (baseline.LocalRequirements is not { Count: > 0 }) throw new InvalidDataException($"BASELINE {baseline.BaselineId} 缺少 local_requirements。");
         if (baseline.Correlation?.Anchors is not { Count: > 0 }) throw new InvalidDataException($"BASELINE {baseline.BaselineId} 缺少 correlation.anchors。");
+        if (baseline.Correlation.MaxTimeDifferenceMs is < 1 or > 60_000) throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 correlation.max_time_difference_ms 必须在 1..60000 内。");
         if (baseline.CloudExpectations is not { Count: > 0 }) throw new InvalidDataException($"BASELINE {baseline.BaselineId} 缺少 cloud_expectations。");
         foreach (var expectation in baseline.CloudExpectations)
         {
@@ -1339,7 +1575,8 @@ public static class CompareService
             }
             if (expectation.Correlation is { } correlation
                 && (correlation.Anchors.Count == 0 || correlation.Anchors.Any(anchor => string.IsNullOrWhiteSpace(anchor.LocalField)
-                    || string.IsNullOrWhiteSpace(anchor.CloudField))))
+                    || string.IsNullOrWhiteSpace(anchor.CloudField))
+                    || correlation.MaxTimeDifferenceMs is < 1 or > 60_000))
             {
                 throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 cloud_expectation.correlation 无效。");
             }

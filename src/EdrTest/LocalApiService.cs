@@ -272,6 +272,15 @@ public static class LocalApiService
         if (string.IsNullOrWhiteSpace(mappingId)) mappingId = "tencent-edr-proc-events-v1";
         var mappingPath = catalog.ResolveMapping(mappingId);
         if (mappingPath is null) return ApiError(400, "未知 mapping_id。");
+        IReadOnlyDictionary<string, IReadOnlyList<string>> actionNameStandards;
+        try
+        {
+            actionNameStandards = ParseActionNameStandards(form["action_name_standards"].ToString());
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidDataException)
+        {
+            return ApiError(400, exception.Message);
+        }
 
         var comparisonId = Ids.NewUuid7();
         var importRoot = Path.Combine(options.ImportDirectory, comparisonId);
@@ -332,7 +341,8 @@ public static class LocalApiService
                 outputPath,
                 manifestPath,
                 conclusionPath,
-                comparisonId));
+                comparisonId,
+                actionNameStandards));
             return Results.Json(result, ApiJson);
         }
         catch (Exception exception) when (exception is InvalidDataException or JsonException or ArgumentException)
@@ -346,6 +356,31 @@ public static class LocalApiService
         await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65_536, FileOptions.Asynchronous);
         await file.CopyToAsync(stream, cancellationToken);
         await stream.FlushAsync(cancellationToken);
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> ParseActionNameStandards(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        if (text.Length > 65_536) throw new InvalidDataException("action_name_standards 超过 64 KB。");
+        var root = JsonNode.Parse(text) as JsonObject
+            ?? throw new InvalidDataException("action_name_standards 必须是 JSON 对象。");
+        var result = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        foreach (var (capabilityId, node) in root)
+        {
+            if (node is not JsonArray values || values.Any(value => value is not JsonValue))
+            {
+                throw new InvalidDataException($"能力 {capabilityId} 的 Action.Name 标准必须是字符串数组。");
+            }
+            try
+            {
+                result[capabilityId] = values.Select(value => value!.GetValue<string>()).ToArray();
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or FormatException)
+            {
+                throw new InvalidDataException($"能力 {capabilityId} 的 Action.Name 标准必须是字符串数组。");
+            }
+        }
+        return result;
     }
 
     private static IResult DownloadReport(LocalApiOptions options, string comparisonId, string fileName, string contentType, string downloadName)
@@ -486,6 +521,13 @@ internal sealed class LocalApiCatalog
                     "cloud",
                     $"必须找到至少 {expectation.Cardinality.Min} 条 {CompareService.EventActionTitle(expectation.EventType, expectation.EventActions)} EDR 事件",
                     "event.count",
+                    "range",
+                    "required"),
+                new ApiBaselineRequirement(
+                    $"{expectation.Id}-time-difference",
+                    "cloud",
+                    $"EDR 事件与本地行为时间差必须不超过 {expectation.Correlation?.MaxTimeDifferenceMs ?? baseline.Correlation.MaxTimeDifferenceMs} ms",
+                    "event.time_difference_ms",
                     "range",
                     "required"),
             }.Concat(expectation.Assertions.Select((item, index) => new ApiBaselineRequirement(

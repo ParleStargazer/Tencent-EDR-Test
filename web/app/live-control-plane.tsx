@@ -134,7 +134,7 @@ type LocalBaselineMatch = {
 };
 
 type CandidateBaselineMatch = {
-  kind: "correlation" | "assertion";
+  kind: "correlation" | "assertion" | "custom_filter";
   requirement_id: string;
   status: RequirementStatus;
   local_field?: string;
@@ -171,10 +171,16 @@ type EdrCandidate = {
   rank: number;
   confidence: "high" | "medium" | "low";
   correlation_score: number;
+  anchor_qualified: boolean;
   eligible_for_validation: boolean;
   qualification_reason: string;
   event_type_hint_matched: boolean;
   event_action_hint_matched: boolean;
+  custom_action_name_expected: string[];
+  custom_action_name_actual?: string;
+  custom_action_name_matched: boolean | null;
+  maximum_time_difference_ms: number;
+  time_difference_matched: boolean;
   time_distance_ms: number;
   event_time_utc?: string;
   raw_ref: string;
@@ -201,6 +207,7 @@ type ValidationResult = {
 type FileChoice = { file: File | null; state: "empty" | "ready"; name: string; detail: string };
 
 const emptyFile: FileChoice = { file: null, state: "empty", name: "尚未选择文件", detail: "等待导入" };
+const actionNameStorageKey = "edrtest.actionNameStandards.v1";
 const allCapabilities = capabilityCatalog.flatMap((category) => category.capabilities.map((capability) => ({ ...capability, categoryId: category.id })));
 const viteEnvironment = import.meta.env as Record<string, string | undefined>;
 const apiRoot = (viteEnvironment.VITE_EDR_API_URL ?? "http://127.0.0.1:4317/api").replace(/\/$/, "");
@@ -305,6 +312,16 @@ function displayValue(value: unknown): string {
   return typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
 }
 
+function parseActionNameValues(value: string): string[] {
+  const seen = new Set<string>();
+  return value.split(/[\r\n,，;；]+/).map((item) => item.trim()).filter((item) => {
+    const normalized = item.toLocaleLowerCase();
+    if (!item || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
 function requirementEvidence(requirement: BaselineRequirementResult): { expectedLabel: string; expectedValue: string; actualLabel: string; actualValue: string } {
   const isPid = requirement.field.endsWith(".pid");
   const isCommandLine = requirement.field.endsWith(".command_line");
@@ -371,6 +388,7 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
   const [cloudFile, setCloudFile] = useState<FileChoice>(emptyFile);
   const [manifestFile, setManifestFile] = useState<FileChoice>(emptyFile);
   const [localFile, setLocalFile] = useState<FileChoice>(emptyFile);
+  const [actionNameInputs, setActionNameInputs] = useState<Record<string, string>>({});
   const [comparison, setComparison] = useState<ValidationResult | null>(null);
   const [isComparing, setIsComparing] = useState(false);
   const [notice, setNotice] = useState("正在连接本地 Runner…");
@@ -417,6 +435,19 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
     const timer = window.setTimeout(() => void connect(), 0);
     return () => window.clearTimeout(timer);
   }, [connect]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const saved = JSON.parse(window.localStorage.getItem(actionNameStorageKey) ?? "{}") as Record<string, unknown>;
+        const values = Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+        setActionNameInputs(values);
+      } catch {
+        window.localStorage.removeItem(actionNameStorageKey);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!activeRun || !isActive(activeRun.status)) return;
@@ -485,6 +516,19 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
     event.target.value = "";
   }
 
+  function saveActionNameStandards() {
+    const saved = Object.fromEntries(Object.entries(actionNameInputs).map(([capabilityId, value]) => [capabilityId, value.trim()]).filter(([, value]) => Boolean(value)));
+    window.localStorage.setItem(actionNameStorageKey, JSON.stringify(saved));
+    setActionNameInputs(saved);
+    setNotice(`已在本机保存 ${Object.keys(saved).length} 项 Action.Name 自定义标准。`);
+  }
+
+  function clearActionNameStandards() {
+    window.localStorage.removeItem(actionNameStorageKey);
+    setActionNameInputs({});
+    setNotice("已清空本机保存的 Action.Name 自定义标准。");
+  }
+
   async function compare() {
     if (!cloudFile.file) { setNotice("请先选择从 EDR 平台导出的云端事件文件。"); return; }
     if (!localFile.file && !selectedRunId) { setNotice("请选择已完成轮次，或导入本地运行 JSON。"); return; }
@@ -492,6 +536,10 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
     const form = new FormData();
     form.append("cloud_file", cloudFile.file);
     form.append("mapping_id", mappingId);
+    const actionNameStandards = Object.fromEntries(Object.entries(actionNameInputs)
+      .map(([capabilityId, value]) => [capabilityId, parseActionNameValues(value)])
+      .filter(([, values]) => values.length > 0));
+    if (Object.keys(actionNameStandards).length) form.append("action_name_standards", JSON.stringify(actionNameStandards));
     if (manifestFile.file) form.append("cloud_manifest", manifestFile.file);
     if (localFile.file) form.append("local_file", localFile.file);
     else form.append("operation_id", selectedRunId);
@@ -532,6 +580,8 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
           apiState={apiState} baselines={baselines} mappings={mappings} mappingId={mappingId} onMappingId={setMappingId}
           completedRuns={completedRuns} selectedRunId={selectedRunId} onSelectedRunId={setSelectedRunId}
           localFile={localFile} cloudFile={cloudFile} manifestFile={manifestFile}
+          actionNameInputs={actionNameInputs} onActionNameInput={(capabilityId, value) => setActionNameInputs((current) => ({ ...current, [capabilityId]: value }))}
+          onSaveActionNames={saveActionNameStandards} onClearActionNames={clearActionNameStandards}
           onLocalFile={(event) => chooseFile(setLocalFile, event)} onCloudFile={(event) => chooseFile(setCloudFile, event)} onManifestFile={(event) => chooseFile(setManifestFile, event)}
           comparison={comparison} isComparing={isComparing} onCompare={() => void compare()}
           onDownloadJson={() => comparison && downloadJson(`validation-${comparison.comparison_id}.json`, comparison)} onDownloadConclusion={() => void downloadConclusion()}
@@ -685,6 +735,8 @@ type CompareWorkspaceProps = {
   completedRuns: ApiRun[]; selectedRunId: string; onSelectedRunId: (value: string) => void;
   localFile: FileChoice; cloudFile: FileChoice; manifestFile: FileChoice;
   onLocalFile: (event: ChangeEvent<HTMLInputElement>) => void; onCloudFile: (event: ChangeEvent<HTMLInputElement>) => void; onManifestFile: (event: ChangeEvent<HTMLInputElement>) => void;
+  actionNameInputs: Record<string, string>; onActionNameInput: (capabilityId: string, value: string) => void;
+  onSaveActionNames: () => void; onClearActionNames: () => void;
   comparison: ValidationResult | null; isComparing: boolean; onCompare: () => void; onDownloadJson: () => void; onDownloadConclusion: () => void;
 };
 
@@ -695,20 +747,28 @@ function CompareWorkspace(props: CompareWorkspaceProps) {
       <div className="compare-select-grid"><label className="field-label">使用已完成轮次<select value={props.selectedRunId} onChange={(event) => props.onSelectedRunId(event.target.value)} disabled={Boolean(props.localFile.file)}><option value="">请选择本机轮次</option>{props.completedRuns.map((run) => <option value={run.operation_id} key={run.operation_id}>{run.name} · {formatTime(run.started_at_utc)}</option>)}</select><span className="field-help">导入本地 JSON 后，此选择会被替代。</span></label><label className="field-label">EDR 字段映射<select value={props.mappingId} onChange={(event) => props.onMappingId(event.target.value)}>{props.mappings.map((mapping) => <option value={mapping.profile_id} key={mapping.profile_id}>{mapping.vendor} {mapping.product} · {mapping.profile_id}</option>)}</select><span className="field-help">负责把厂商字段转换成统一字段。</span></label></div>
       <div className="upload-grid"><FileSlot id="local-file" step="1" title="本地运行 JSON" hint="可选：用于比较其他机器或历史轮次" choice={props.localFile} onChange={props.onLocalFile} /><FileSlot id="cloud-file" step="2" title="EDR 云端事件" hint="必需：支持 JSON 数组或 JSONL" choice={props.cloudFile} required onChange={props.onCloudFile} /><FileSlot id="manifest-file" step="3" title="云端导出清单" hint="建议：证明主机与时间范围完整" choice={props.manifestFile} onChange={props.onManifestFile} /></div>
     </section>
+    <ActionNameSettings baselines={props.baselines} values={props.actionNameInputs} onChange={props.onActionNameInput} onSave={props.onSaveActionNames} onClear={props.onClearActionNames} />
     <BaselineGuide baselines={props.baselines} />
     <ComparisonResultPanel result={props.comparison} onDownloadJson={props.onDownloadJson} onDownloadConclusion={props.onDownloadConclusion} />
   </>;
 }
 
+function ActionNameSettings({ baselines, values, onChange, onSave, onClear }: {
+  baselines: ApiBaseline[]; values: Record<string, string>; onChange: (capabilityId: string, value: string) => void; onSave: () => void; onClear: () => void;
+}) {
+  const configured = Object.values(values).filter((value) => parseActionNameValues(value).length > 0).length;
+  return <section className="panel action-name-settings"><div className="panel-heading"><div><p className="section-index">B / 可选消歧</p><h2>自定义 Action.Name 标准</h2><p className="panel-description">比较器仍先按本地路径、程序、PID 和时间关联。这里只对达到本地关联阈值的 EDR 记录按原始 Action.Name 进一步筛选；它完全不影响本地运行规则和 LOCAL_PASS，留空即不启用。</p></div><div className="action-settings-actions"><span className="line-badge">{configured} 项已填写</span><button className="text-button" type="button" onClick={onClear}>清空</button><button className="secondary-button" type="button" onClick={onSave}>保存到本机</button></div></div><div className="action-name-grid">{baselines.map((baseline) => <label className="action-name-field" key={baseline.baseline_id}><span><strong>{baseline.title}</strong><code>{baseline.capability_id}</code></span><input type="text" maxLength={1024} value={values[baseline.capability_id] ?? ""} placeholder="例如：MoveFileExW、FileRename；多个值为任选其一" onChange={(event) => onChange(baseline.capability_id, event.target.value)} /><em>精确匹配，不区分大小写；支持逗号、分号或换行</em></label>)}</div></section>;
+}
+
 function BaselineGuide({ baselines }: { baselines: ApiBaseline[] }) {
-  return <section className="panel baseline-guide"><div className="panel-heading"><div><p className="section-index">B / BASELINE 是什么</p><h2>通过判定的要求</h2><p className="panel-description">“本地要求”证明测试行为真的发生；“EDR 要求”检查云端事件是否记录了正确内容。必需要求全部满足才算通过。</p></div><span className="line-badge">{baselines.length} 份基准</span></div><div className="baseline-card-grid">{baselines.map((baseline) => {
+  return <section className="panel baseline-guide"><div className="panel-heading"><div><p className="section-index">C / BASELINE 是什么</p><h2>通过判定的要求</h2><p className="panel-description">“本地要求”证明测试行为真的发生；“EDR 要求”检查云端事件是否记录了正确内容。必需要求全部满足才算通过。</p></div><span className="line-badge">{baselines.length} 份基准</span></div><div className="baseline-card-grid">{baselines.map((baseline) => {
     const localCount = baseline.requirements.filter((item) => item.scope === "local").length; const cloudCount = baseline.requirements.length - localCount;
     return <details className="baseline-card" key={baseline.baseline_id}><summary><div><strong>{baseline.title}</strong><span>能力 v{baseline.capability_version} · {localCount} 项本地要求 · {cloudCount} 项 EDR 要求</span></div><em>{baseline.risk_level}</em></summary><div className="baseline-preview">{baseline.requirements.map((requirement) => <div key={requirement.requirement_id}><span className={`scope-chip ${requirement.scope}`}>{requirement.scope === "local" ? "本地" : "EDR"}</span><p>{requirement.title_zh}</p><em>{severityLabel(requirement.severity)}</em></div>)}</div></details>;
   })}</div></section>;
 }
 
 function ComparisonResultPanel({ result, onDownloadJson, onDownloadConclusion }: { result: ValidationResult | null; onDownloadJson: () => void; onDownloadConclusion: () => void }) {
-  return <section className="panel comparison-detail-panel"><div className="panel-heading"><div><p className="section-index">C / 比较结果</p><h2>要求满足情况</h2><p className="panel-description">结果先按能力折叠；能力展开后，本地条件默认收起，EDR 条件与关联候选日志默认展开。</p></div></div>{result ? <>
+  return <section className="panel comparison-detail-panel"><div className="panel-heading"><div><p className="section-index">D / 比较结果</p><h2>要求满足情况</h2><p className="panel-description">结果先按能力折叠；能力展开后，本地条件默认收起，EDR 条件与关联候选日志默认展开。</p></div></div>{result ? <>
     <div className={`conclusion-card ${result.conclusion.verdict.toLowerCase()}`}><div><span>总体结论</span><strong>{result.conclusion.label_zh}</strong><em>{result.conclusion.pass_rate === null ? "通过率不可计算" : `完整通过率 ${(result.conclusion.pass_rate * 100).toFixed(1)}%`}</em></div><p>{result.conclusion.statement_zh}</p></div>
     <div className="result-summary"><div><span>通过</span><strong className="pass-text">{result.summary.pass}</strong></div><div><span>部分通过</span><strong>{result.summary.partial}</strong></div><div><span>失败</span><strong className="fail-text">{result.summary.fail}</strong></div><div><span>无法判定</span><strong>{result.summary.inconclusive}</strong></div></div>
     <div className="capability-result-stack">{result.capabilities.map((entry) => <CapabilityComparison key={entry.case_run_id} entry={entry} />)}</div>
@@ -722,7 +782,11 @@ function CapabilityComparison({ entry }: { entry: ValidationEntry }) {
   const passed = requirements.filter((item) => item.status === "passed").length;
   const localRequirements = requirements.filter((item) => item.scope === "local");
   const cloudRequirements = requirements.filter((item) => item.scope === "cloud");
-  const candidates = [...(entry.edr_candidates ?? [])].sort((left, right) => right.correlation_score - left.correlation_score || left.time_distance_ms - right.time_distance_ms || left.rank - right.rank);
+  const candidates = [...(entry.edr_candidates ?? [])].sort((left, right) => Number(right.eligible_for_validation) - Number(left.eligible_for_validation)
+    || Number(right.anchor_qualified) - Number(left.anchor_qualified)
+    || right.correlation_score - left.correlation_score
+    || left.time_distance_ms - right.time_distance_ms
+    || left.rank - right.rank);
   return <><details className="capability-result-card"><summary><div className="capability-summary-main"><span className={`result-status ${entry.validation_status.toLowerCase()}`}>{validationStatusLabel(entry.validation_status)}</span><div><h3>{entry.display_name_zh ?? entry.capability_id}</h3><p>{entry.baseline_title ?? entry.baseline_id ?? "没有匹配的检验基准"}</p></div></div><div className="requirement-count"><strong>{passed}/{requirements.length}</strong><span>要求已满足</span></div></summary><div className="capability-result-body"><div className="evidence-strip"><span>{coverageLabel(entry.export_coverage)}</span><span>{entry.candidate_count} 条候选事件</span><span>本地状态 {entry.local_status}</span><button className="json-compare-open" type="button" onClick={() => setShowJsonComparison(true)}>打开 JSON 对照窗</button></div>{entry.warnings?.length ? <div className="plain-warning"><strong>需要注意</strong><p>{entry.warnings.join("；")}</p></div> : null}<RequirementGroup scope="local" requirements={localRequirements} /><RequirementGroup scope="cloud" requirements={cloudRequirements} candidates={candidates} /></div></details>{showJsonComparison && <JsonComparisonModal entry={entry} candidates={candidates} onClose={() => setShowJsonComparison(false)} />}</>;
 }
 
@@ -733,7 +797,11 @@ function RequirementGroup({ scope, requirements, candidates = [] }: { scope: "lo
 }
 
 function EdrCandidateList({ candidates }: { candidates: EdrCandidate[] }) {
-  return <section className="edr-candidate-section"><div className="candidate-section-heading"><div><span>完整 EDR 日志</span><h4>关联候选事件</h4><p>严格按本地文件、程序、PID 等锚点命中强度排序，再比较时间距离；低置信度记录也会保留供人工核对，事件类型与 Action 只作提示。</p></div><em>{candidates.length} 条</em></div>{candidates.length ? <div className="candidate-list">{candidates.map((candidate, index) => <details className={`candidate-card ${candidate.eligible_for_validation ? "eligible" : "exploratory"}`} key={`${candidate.expectation_id}-${candidate.raw_ref}-${index}`}><summary><span className="candidate-rank">#{index + 1}</span><div><strong>{candidate.event_id || "无事件 ID"}</strong><code>{candidate.expectation_id} · {candidate.eligible_for_validation ? "达到关联阈值" : "低置信度排查"}</code></div><span className={`confidence-badge ${candidate.confidence}`}>{confidenceLabel(candidate.confidence)}</span><div className="candidate-score"><strong>{candidate.correlation_score} 分</strong><span>{formatDistance(candidate.time_distance_ms)}</span></div></summary><div className="candidate-detail"><div className="candidate-meta"><span>事件时间：{formatTime(candidate.event_time_utc)}</span><span>来源：{candidate.raw_ref}</span><span>{candidate.qualification_reason}</span><span>事件类型提示：{candidate.event_type_hint_matched ? "一致" : "不同"}</span><span>Action 提示：{candidate.event_action_hint_matched ? "一致" : "不同"}</span></div><div className="matched-anchor-list"><strong>命中的本地关联锚点</strong>{candidate.matched_anchors.length ? candidate.matched_anchors.map((anchor) => <code key={anchor}>{anchor}</code>) : <span>未命中本地锚点，仅按时间距离保留</span>}</div><div className="candidate-json-grid"><section><h5>规范化字段</h5><pre>{JSON.stringify(candidate.canonical_event, null, 2)}</pre></section><section><h5>EDR 原始完整日志</h5><pre>{JSON.stringify(candidate.raw_event, null, 2)}</pre></section></div></div></details>)}</div> : <div className="candidate-empty">时间窗内没有可展示的 EDR 候选日志。</div>}</section>;
+  return <section className="edr-candidate-section"><div className="candidate-section-heading"><div><span>完整 EDR 日志</span><h4>关联候选事件</h4><p>先综合本地文件、程序、PID 等身份锚点与 BASELINE 时间差建立候选，再应用可选的 EDR Action.Name 筛选；被 Action 排除的强匹配记录仍会完整保留。</p></div><em>{candidates.length} 条</em></div>{candidates.length ? <div className="candidate-list">{candidates.map((candidate, index) => {
+    const state = candidate.eligible_for_validation ? "eligible" : candidate.anchor_qualified ? "action-rejected" : "exploratory";
+    const label = candidate.eligible_for_validation ? "达到关联阈值" : candidate.anchor_qualified ? "锚点强匹配 · Action 已排除" : "低置信度排查";
+    return <details className={`candidate-card ${state}`} key={`${candidate.expectation_id}-${candidate.raw_ref}-${index}`}><summary><span className="candidate-rank">#{index + 1}</span><div><strong>{candidate.event_id || "无事件 ID"}</strong><code>{candidate.expectation_id} · {label}</code></div><span className={`confidence-badge ${candidate.confidence}`}>{confidenceLabel(candidate.confidence)}</span><div className="candidate-score"><strong>{candidate.correlation_score} 分</strong><span>{formatDistance(candidate.time_distance_ms)}</span></div></summary><div className="candidate-detail"><div className="candidate-meta"><span>事件时间：{formatTime(candidate.event_time_utc)}</span><span>来源：{candidate.raw_ref}</span><span>{candidate.qualification_reason}</span><span>时间差基准：{formatDistance(candidate.time_distance_ms)} / 上限 {candidate.maximum_time_difference_ms} ms · {candidate.time_difference_matched ? "符合" : "超出"}</span><span>事件类型提示：{candidate.event_type_hint_matched ? "一致" : "不同"}</span><span>BASELINE Action 提示：{candidate.event_action_hint_matched ? "一致" : "不同"}</span>{candidate.custom_action_name_expected.length > 0 && <span>自定义 Action.Name：{candidate.custom_action_name_actual ?? "未读取"} · {candidate.custom_action_name_matched ? "符合" : "不符合"}</span>}</div><div className="matched-anchor-list"><strong>命中的本地关联证据</strong>{candidate.matched_anchors.length ? candidate.matched_anchors.map((anchor) => <code key={anchor}>{anchor}</code>) : <span>未命中本地身份锚点，仅按宽时间窗保留</span>}</div><div className="candidate-json-grid"><section><h5>规范化字段</h5><pre>{JSON.stringify(candidate.canonical_event, null, 2)}</pre></section><section><h5>EDR 原始完整日志</h5><pre>{JSON.stringify(candidate.raw_event, null, 2)}</pre></section></div></div></details>;
+  })}</div> : <div className="candidate-empty">时间窗内没有可展示的 EDR 候选日志。</div>}</section>;
 }
 
 function JsonComparisonModal({ entry, candidates, onClose }: { entry: ValidationEntry; candidates: EdrCandidate[]; onClose: () => void }) {
@@ -754,9 +822,9 @@ function JsonComparisonModal({ entry, candidates, onClose }: { entry: Validation
 
   return <div className="json-compare-backdrop" onClick={onClose}><section className="json-compare-modal" role="dialog" aria-modal="true" aria-labelledby={`json-compare-${entry.case_run_id}`} onClick={(event) => event.stopPropagation()}><header className="json-compare-header"><div><p className="section-index">逐能力 JSON 对照</p><h2 id={`json-compare-${entry.case_run_id}`}>{entry.display_name_zh ?? entry.capability_id}</h2><code>{entry.capability_id} · {entry.baseline_id ?? "无匹配 BASELINE"}</code></div><button className="modal-close" type="button" autoFocus aria-label="关闭 JSON 对照窗" onClick={onClose}>×</button></header>
     <div className="json-candidate-toolbar"><label>选择 EDR 候选 JSON 块<select value={selectedIndex} disabled={!candidates.length} onChange={(event) => setSelectedIndex(Number(event.target.value))}>{candidates.length ? candidates.map((item, index) => <option value={index} key={`${item.expectation_id}-${item.raw_ref}-${index}`}>#{index + 1} · {item.event_id || "无事件 ID"} · {item.expectation_id} · {confidenceLabel(item.confidence)}</option>) : <option value={0}>没有可选候选</option>}</select></label><div className="candidate-switch"><button type="button" disabled={selectedIndex <= 0} onClick={() => setSelectedIndex((value) => Math.max(0, value - 1))}>上一条</button><span>{candidates.length ? `${selectedIndex + 1} / ${candidates.length}` : "0 / 0"}</span><button type="button" disabled={selectedIndex >= candidates.length - 1} onClick={() => setSelectedIndex((value) => Math.min(candidates.length - 1, value + 1))}>下一条</button></div><div className="match-legend"><i /><span>绿色行表示该候选与 BASELINE 比对一致</span><strong>{rawPointers.length} 个 EDR 字段命中</strong></div></div>
-    <div className="selected-candidate-meta">{candidate ? <><span>关联得分 {candidate.correlation_score}</span><span>{formatDistance(candidate.time_distance_ms)}</span><span>{confidenceLabel(candidate.confidence)}</span><span>{candidate.eligible_for_validation ? "达到关联阈值" : "低置信度排查块"}</span><code>{candidate.raw_ref}</code></> : <span>当前能力没有可关联的 EDR 候选 JSON 块</span>}</div>
+    <div className="selected-candidate-meta">{candidate ? <><span>关联得分 {candidate.correlation_score}</span><span>{formatDistance(candidate.time_distance_ms)} / 基准 ≤ {candidate.maximum_time_difference_ms} ms</span><span>{confidenceLabel(candidate.confidence)}</span><span>{candidate.eligible_for_validation ? "达到关联阈值" : candidate.anchor_qualified ? "锚点强匹配，但被 Action.Name 排除" : "低置信度排查块"}</span>{candidate.custom_action_name_expected.length > 0 && <span>Action.Name {candidate.custom_action_name_actual ?? "未读取"} / 标准 {candidate.custom_action_name_expected.join("、")}</span>}<code>{candidate.raw_ref}</code></> : <span>当前能力没有可关联的 EDR 候选 JSON 块</span>}</div>
     <div className="json-side-by-side"><section><header><div><span>原 JSON</span><h3>本地运行导出块</h3></div><em>{localPointers.length} 处高亮</em></header><JsonCodeViewer value={entry.local_export_block ?? {}} highlightPointers={localPointers} label="本地运行导出 JSON" /></section><section><header><div><span>导出 JSON</span><h3>EDR 平台候选块</h3></div><em>{rawPointers.length} 处高亮</em></header>{candidate ? <JsonCodeViewer value={candidate.raw_event} highlightPointers={rawPointers} label="EDR 平台导出 JSON" /> : <div className="json-candidate-placeholder"><strong>没有可关联的 EDR JSON 块</strong><p>本地 JSON 仍可查看；导入范围内没有候选事件时不会产生错误高亮。</p></div>}</section></div>
-    <footer className="json-match-footer"><strong>当前候选命中的 BASELINE 字段</strong><div>{candidateMatches.length ? candidateMatches.map((match) => <span key={`${match.kind}-${match.requirement_id}`}><i>{match.kind === "correlation" ? "关联" : "断言"}</i><code>{match.local_field ?? "固定期望"} ↔ {match.raw_field ?? match.canonical_field}</code></span>) : <em>当前候选没有完全一致的字段。</em>}</div></footer>
+    <footer className="json-match-footer"><strong>当前候选命中的 BASELINE 与自定义字段</strong><div>{candidateMatches.length ? candidateMatches.map((match) => <span key={`${match.kind}-${match.requirement_id}`}><i>{match.kind === "correlation" ? "关联" : match.kind === "custom_filter" ? "自定义" : "断言"}</i><code>{match.local_field ?? (match.kind === "custom_filter" ? "Action.Name 标准" : "固定期望")} ↔ {match.raw_field ?? match.canonical_field}</code></span>) : <em>当前候选没有完全一致的字段。</em>}</div></footer>
   </section></div>;
 }
 

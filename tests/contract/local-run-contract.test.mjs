@@ -55,6 +55,7 @@ test("轮次 Schema 与分类事件 Schema 使用 1.1 数据契约", async () =>
 
 test("验证结果 Schema 支持逐能力 JSON 对照与多候选高亮", async () => {
   const schema = await readJson("schemas/validation-result.schema.json");
+  const baselineSchema = await readJson("schemas/baseline.schema.json");
   const capability = schema.properties.capabilities.items;
   const candidate = capability.properties.edr_candidates.items;
 
@@ -63,8 +64,13 @@ test("验证结果 Schema 支持逐能力 JSON 对照与多候选高亮", async 
   assert.ok(candidate.required.includes("baseline_matches"));
   assert.deepEqual(
     candidate.properties.baseline_matches.items.properties.kind.enum,
-    ["correlation", "assertion"],
+    ["correlation", "assertion", "custom_filter"],
   );
+  assert.ok(candidate.required.includes("anchor_qualified"));
+  assert.ok(candidate.required.includes("custom_action_name_matched"));
+  assert.equal(schema.properties.inputs.properties.action_name_standards.type, "object");
+  assert.ok(baselineSchema.properties.correlation.required.includes("max_time_difference_ms"));
+  assert.equal(baselineSchema.properties.correlation.properties.max_time_difference_ms.maximum, 60000);
   assert.equal(
     candidate.properties.baseline_matches.items.properties.raw_json_pointer.type.includes("null"),
     true,
@@ -193,6 +199,7 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
   assert.match(mapping, /source: "Child\.FileTotalRead"/);
   assert.match(mapping, /source: "Child\.FileTotalWrite"/);
   assert.match(mapping, /route_id: telemetry-candidate-discovery/);
+  assert.match(mapping, /route_id: process-candidate-discovery/);
   assert.match(mapping, /"event\.action": \{ source: "Action\.Name", on_empty: unknown \}/);
 });
 

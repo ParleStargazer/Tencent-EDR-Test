@@ -26,6 +26,7 @@ local_requirements:
 correlation:
   time_before_seconds: 60
   time_after_seconds: 300
+  max_time_difference_ms: 10
   anchors:
     - local_field: programs.target.executable
       cloud_field: process.executable

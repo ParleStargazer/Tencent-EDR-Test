@@ -41,6 +41,15 @@
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/versioned_ref" }
+        },
+        "action_name_standards": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "uniqueItems": true
+          }
         }
       }
     },
@@ -140,6 +149,17 @@
                   "event_id": { "type": ["string", "null"] },
                   "correlation_score": { "type": "number", "minimum": 0 },
                   "confidence": { "enum": ["high", "medium", "low"] },
+                  "anchor_qualified": { "type": "boolean" },
+                  "eligible_for_validation": { "type": "boolean" },
+                  "qualification_reason": { "type": "string" },
+                  "custom_action_name_expected": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "custom_action_name_actual": { "type": ["string", "null"] },
+                  "custom_action_name_matched": { "type": ["boolean", "null"] },
+                  "maximum_time_difference_ms": { "type": "integer", "minimum": 1 },
+                  "time_difference_matched": { "type": "boolean" },
                   "time_distance_ms": { "type": "integer", "minimum": 0 },
                   "matched_anchors": {
                     "type": "array",
@@ -160,6 +180,16 @@
                 "rank",
                 "confidence",
                 "correlation_score",
+                "anchor_qualified",
+                "eligible_for_validation",
+                "qualification_reason",
+                "event_type_hint_matched",
+                "event_action_hint_matched",
+                "custom_action_name_expected",
+                "custom_action_name_actual",
+                "custom_action_name_matched",
+                "maximum_time_difference_ms",
+                "time_difference_matched",
                 "time_distance_ms",
                 "raw_ref",
                 "matched_anchors",
@@ -172,6 +202,19 @@
                 "rank": { "type": "integer", "minimum": 1 },
                 "confidence": { "enum": ["high", "medium", "low"] },
                 "correlation_score": { "type": "number", "minimum": 0 },
+                "anchor_qualified": { "type": "boolean" },
+                "eligible_for_validation": { "type": "boolean" },
+                "qualification_reason": { "type": "string", "minLength": 1 },
+                "event_type_hint_matched": { "type": "boolean" },
+                "event_action_hint_matched": { "type": "boolean" },
+                "custom_action_name_expected": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                },
+                "custom_action_name_actual": { "type": ["string", "null"] },
+                "custom_action_name_matched": { "type": ["boolean", "null"] },
+                "maximum_time_difference_ms": { "type": "integer", "minimum": 1 },
+                "time_difference_matched": { "type": "boolean" },
                 "time_distance_ms": { "type": "integer", "minimum": 0 },
                 "event_time_utc": { "type": ["string", "null"], "format": "date-time" },
                 "raw_ref": { "type": "string", "minLength": 1 },
@@ -199,7 +242,7 @@
                       "message"
                     ],
                     "properties": {
-                      "kind": { "enum": ["correlation", "assertion"] },
+                      "kind": { "enum": ["correlation", "assertion", "custom_filter"] },
                       "requirement_id": { "type": "string", "minLength": 1 },
                       "status": { "enum": ["passed", "failed", "not_evaluated"] },
                       "local_field": { "type": ["string", "null"] },

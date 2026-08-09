@@ -119,7 +119,12 @@ public static class Program
         Assert(validation["conclusion"]?["verdict"]?.GetValue<string>() == "PASS", "单项能力通过时总体结论应为 PASS。");
         Assert(validation["conclusion"]?["pass_rate"]?.GetValue<double>() == 1, "单项能力通过率应为 100%。");
         var requirements = validation["capabilities"]?[0]?["baseline_requirements"]?.AsArray() ?? throw new InvalidOperationException("结果应包含 BASELINE 要求。");
-        Assert(requirements.Count == 13, "进程创建应展示 5 项本地要求、1 项事件数量要求和 7 项云端字段要求。");
+        Assert(requirements.Count == 14, "进程创建应展示 5 项本地要求、事件数量与时间差要求，以及 7 项云端字段要求。");
+        var timeRequirement = requirements.Single(value => value?["field"]?.GetValue<string>() == "event.time_difference_ms");
+        Assert(timeRequirement?["status"]?.GetValue<string>() == "passed"
+            && timeRequirement["expected"]?["max"]?.GetValue<int>() == 10
+            && timeRequirement["actual"]?.GetValue<long>() <= 10,
+            "10 ms 时间差必须作为显式的必需 EDR 关联条件并保留实际毫秒差。");
         Assert(requirements.Where(value => value?["severity"]?.GetValue<string>() == "required").All(value => value?["status"]?.GetValue<string>() == "passed"), "所有必需 BASELINE 要求都应通过。");
         var firstCandidate = validation["capabilities"]?[0]?["edr_candidates"]?.AsArray().Single()
             ?? throw new InvalidOperationException("结果应包含完整 EDR 候选日志。");
@@ -170,11 +175,12 @@ public static class Program
         var multipleCloud = CreateCloudExport(local);
         var fartherCandidate = multipleCloud[0]!.DeepClone().AsObject();
         fartherCandidate["Common.EventUUId"] = Ids.NewUuid7();
-        fartherCandidate["Common.EventTime"] = DateTimeOffset.Parse(local["capabilities"]![0]!["started_at_utc"]!.GetValue<string>()).AddMinutes(2).ToUnixTimeMilliseconds();
+        fartherCandidate["Common.EventTime"] = multipleCloud[0]!["Common.EventTime"]!.GetValue<long>() + 8;
+        fartherCandidate["Action.Name"] = "PreferredProcessCreate";
         multipleCloud.Add(fartherCandidate);
         var lowerConfidenceCandidate = multipleCloud[0]!.DeepClone().AsObject();
         lowerConfidenceCandidate["Common.EventUUId"] = Ids.NewUuid7();
-        lowerConfidenceCandidate["Common.EventTime"] = DateTimeOffset.Parse(local["capabilities"]![0]!["started_at_utc"]!.GetValue<string>()).AddSeconds(1).ToUnixTimeMilliseconds();
+        lowerConfidenceCandidate["Common.EventTime"] = multipleCloud[0]!["Common.EventTime"]!.GetValue<long>() + 2;
         lowerConfidenceCandidate["Parent.FilePath"] = "C:\\different-parent.exe";
         multipleCloud.Add(lowerConfidenceCandidate);
         var multipleCloudPath = Path.Combine(fixture.Path, "multiple-cloud.json");
@@ -195,6 +201,68 @@ public static class Program
         Assert(rankedCandidates[2]?["baseline_matches"]?.AsArray().Any(value => value?["canonical_field"]?.GetValue<string>() == "parent_process.executable"
             && value?["status"]?.GetValue<string>() == "failed") == true, "候选切换时应能看到该候选自身不满足的 BASELINE 字段。");
         Assert(multipleCandidates["capabilities"]?[0]?["validation_status"]?.GetValue<string>() == "PASS", "时间距离可以消除同分候选歧义。");
+
+        var customActionResultPath = Path.Combine(fixture.Path, "custom-action-result.json");
+        var customActionCandidates = CompareService.Compare(new CompareRequest(
+            result.LocalExportPath,
+            [multipleCloudPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"),
+            [Path.Combine(repository, "baselines", "windows", "process_create.yaml")],
+            customActionResultPath,
+            ActionNameStandards: new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+            {
+                ["win.process.create"] = ["AnotherAcceptedAction", "PreferredProcessCreate"],
+            }));
+        var customCandidates = customActionCandidates["capabilities"]?[0]?["edr_candidates"]?.AsArray()
+            ?? throw new InvalidOperationException("自定义 Action.Name 结果缺少候选事件。");
+        Assert(customActionCandidates["summary"]?["pass"]?.GetValue<int>() == 1, "正确的自定义 Action.Name 应在强锚点候选中完成消歧并通过。");
+        Assert(customCandidates[0]?["raw_event"]?["Action.Name"]?.GetValue<string>() == "PreferredProcessCreate"
+            && customCandidates[0]?["anchor_qualified"]?.GetValue<bool>() == true
+            && customCandidates[0]?["eligible_for_validation"]?.GetValue<bool>() == true,
+            "自定义 Action.Name 应优先选择符合标准的强锚点记录，即使它的时间距离更远。");
+        Assert(customCandidates.Count(value => value?["anchor_qualified"]?.GetValue<bool>() == true
+            && value?["eligible_for_validation"]?.GetValue<bool>() == false) == 2,
+            "Action.Name 不符的强锚点记录仍必须保留，但不能进入自动判定。");
+        Assert(customCandidates[0]?["baseline_matches"]?.AsArray().Any(value => value?["kind"]?.GetValue<string>() == "custom_filter"
+            && value?["status"]?.GetValue<string>() == "passed"
+            && value?["raw_json_pointer"]?.GetValue<string>() == "/Action.Name") == true,
+            "符合自定义标准的原始 Action.Name 应进入候选字段高亮信息。");
+        Assert(customActionCandidates["inputs"]?["action_name_standards"]?["win.process.create"]?[1]?.GetValue<string>() == "PreferredProcessCreate",
+            "验证结果必须记录本次使用的 Action.Name 自定义标准以便审计。");
+        Assert(File.ReadAllText(ConclusionExportService.DefaultOutputPath(customActionResultPath)).Contains("PreferredProcessCreate", StringComparison.Ordinal),
+            "中文结论应记录本次使用的 Action.Name 自定义标准。");
+
+        var configuredActions = customActionCandidates["inputs"]?["action_name_standards"]?["win.process.create"]?.AsArray()
+            ?? throw new InvalidOperationException("验证结果缺少 Action.Name 多值标准。");
+        Assert(configuredActions.Count == 2
+            && configuredActions[0]?.GetValue<string>() == "AnotherAcceptedAction"
+            && configuredActions[1]?.GetValue<string>() == "PreferredProcessCreate",
+            "同一能力的多个 Action.Name 标准应采用任选其一语义并完整留痕。");
+
+        var noRawActionCloud = CreateCloudExport(local);
+        noRawActionCloud[0]!.AsObject().Remove("Action.Name");
+        var noRawActionCloudPath = Path.Combine(fixture.Path, "no-raw-action-cloud.json");
+        File.WriteAllText(noRawActionCloudPath, noRawActionCloud.ToJsonString(JsonDefaults.Options));
+        var noRawAction = CompareService.Compare(new CompareRequest(
+            result.LocalExportPath,
+            [noRawActionCloudPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"),
+            [Path.Combine(repository, "baselines", "windows", "process_create.yaml")],
+            Path.Combine(fixture.Path, "no-raw-action-result.json"),
+            ActionNameStandards: new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+            {
+                ["win.process.create"] = ["candidate"],
+            }));
+        var noRawActionCapability = noRawAction["capabilities"]?[0]?.AsObject()
+            ?? throw new InvalidOperationException("缺少无原始 Action.Name 的比较结果。");
+        Assert(noRawActionCapability["local_status"]?.GetValue<string>() == "LOCAL_PASS"
+            && noRawActionCapability["baseline_requirements"]?.AsArray()
+                .Where(value => value?["scope"]?.GetValue<string>() == "local")
+                .All(value => value?["status"]?.GetValue<string>() == "passed") == true,
+            "EDR Action.Name 筛选不得改变 LOCAL_PASS 或任何本地要求。");
+        Assert(noRawActionCapability["baseline_requirements"]?.AsArray().Any(value => value?["field"]?.GetValue<string>() == "Action.Name"
+            && value?["status"]?.GetValue<string>() == "failed") == true,
+            "原始 EDR JSON 缺少 Action.Name 时不得回退使用规范化 event.action 通过筛选。");
 
         var emptyCloudPath = Path.Combine(fixture.Path, "empty-cloud.json");
         File.WriteAllText(emptyCloudPath, "[]");
@@ -313,6 +381,7 @@ public static class Program
             correlation:
               time_before_seconds: 60
               time_after_seconds: 60
+              max_time_difference_ms: 10
               anchors:
                 - { local_field: programs.target.executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
             cloud_expectations:
@@ -616,12 +685,11 @@ public static class Program
 
     private static JsonArray CreateCloudExport(JsonObject local)
     {
-        var capability = local["capabilities"]!.AsArray()[0]!.AsObject();
         var programs = local["programs"]!.AsArray().Select(x => x!.AsObject()).ToArray();
         var actor = programs.Single(x => x["role"]!.GetValue<string>() == "actor");
         var target = programs.Single(x => x["role"]!.GetValue<string>() == "target");
         var host = local["run"]!["host"]!.AsObject();
-        var eventTime = DateTimeOffset.Parse(capability["started_at_utc"]!.GetValue<string>()).AddMilliseconds(20).ToUnixTimeMilliseconds();
+        var eventTime = DateTimeOffset.Parse(local["local_events"]!.AsArray()[0]!["occurred_at_utc"]!.GetValue<string>()).ToUnixTimeMilliseconds();
         return new JsonArray(new JsonObject
         {
             ["@table"] = "ProcEvents",
