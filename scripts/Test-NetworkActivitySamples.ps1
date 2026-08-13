@@ -55,7 +55,7 @@ foreach ($capability in $localRun.capabilities) {
     $events = @($localRun.local_events | Where-Object { $_.case_run_id -eq $capability.case_run_id } | Sort-Object sequence)
     $facts = @{}
     $localRun.local_facts | Where-Object { $_.case_run_id -eq $capability.case_run_id } | ForEach-Object { $facts[$_.key] = $_.value }
-    foreach ($event in $events | Where-Object { $_.event_type -eq "network" -and $_.data.stage.sequence -ne 2 }) {
+    foreach ($event in $events | Where-Object { $_.event_type -eq "network" -and $_.data.stage.sequence -ne 3 }) {
         $actor = $event.data.actor
         if ($event.data.dns_client_service) {
             $cloudPid = $event.data.dns_client_service.pid
@@ -70,7 +70,7 @@ foreach ($capability in $localRun.capabilities) {
         }
         $cloudProgram = $localRun.programs | Where-Object { $_.case_run_id -eq $capability.case_run_id -and $_.pid -eq $cloudPid } | Select-Object -First 1
         $genericAction = if ($event.event_action -eq "file_download") { "tcp_connect" } else { $event.event_action }
-        $calibratedBind = $capability.capability_id -in @("win.network.tcp", "win.network.udp")
+        $calibratedBind = $capability.capability_id -in @("win.network.tcp", "win.network.udp", "win.network.file_download")
         $syntheticGeneric += [ordered]@{
             fixture = "NetworkActivity"
             table = "NetworkActivity"
@@ -131,7 +131,7 @@ foreach ($capability in $localRun.capabilities) {
         }
     }
 
-    $fileEvent = $events | Where-Object { $_.event_action -eq "file_download" -and $_.data.stage.sequence -eq 2 } | Select-Object -First 1
+    $fileEvent = $events | Where-Object { $_.event_action -eq "file_download" -and $_.data.stage.sequence -eq 3 } | Select-Object -First 1
     if ($null -ne $fileEvent) {
         $actor = $fileEvent.data.actor
         $actorProgram = $localRun.programs | Where-Object { $_.program_instance_id -eq $fileEvent.actor_program_id } | Select-Object -First 1
@@ -199,11 +199,29 @@ $tencentResultPath = Join-Path $OutputRoot "validation-result.network-tencent.js
 $tencentExit = Invoke-NetworkComparison $tencentPath (Join-Path $repositoryRoot "mappings\tencent-edr-proc-events-v1.yaml") $tencentResultPath
 $tencentResult = Get-Content $tencentResultPath -Raw | ConvertFrom-Json -Depth 100 -DateKind String
 
+# 负向验证：只篡改下载文件记录的 PID，文件路径仍可强关联；三部分中的同进程关联必须使下载能力失败。
+$brokenRelationshipTencent = $syntheticTencent | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30 -DateKind String
+$brokenDownloadFileEvent = $brokenRelationshipTencent | Where-Object {
+    $_.'Action.Name' -eq "FileWriteClose" -and $_.'Child.FilePath' -like "*network_download.bin"
+} | Select-Object -First 1
+if ($null -eq $brokenDownloadFileEvent) { throw "未找到用于负向关联验证的下载文件记录。" }
+$brokenDownloadFileEvent.'Parent.ProcPid' = [int64]$brokenDownloadFileEvent.'Parent.ProcPid' + 1
+$brokenTencentPath = Join-Path $OutputRoot "synthetic-cloud.network-tencent-broken-process.json"
+$brokenRelationshipTencent | ConvertTo-Json -Depth 30 | Set-Content $brokenTencentPath -Encoding utf8NoBOM
+$brokenTencentResultPath = Join-Path $OutputRoot "validation-result.network-tencent-broken-process.json"
+$brokenTencentExit = Invoke-NetworkComparison $brokenTencentPath (Join-Path $repositoryRoot "mappings\tencent-edr-proc-events-v1.yaml") $brokenTencentResultPath
+$brokenTencentResult = Get-Content $brokenTencentResultPath -Raw | ConvertFrom-Json -Depth 100 -DateKind String
+$brokenDownloadResult = $brokenTencentResult.capabilities | Where-Object capability_id -eq "win.network.file_download" | Select-Object -First 1
+$brokenRelationshipResult = $brokenDownloadResult.stage_results | Where-Object kind -eq "relationship" | Select-Object -First 1
+
 $artifactIds = @($localRun.artifacts | ForEach-Object artifact_id)
 $invalidEvidenceRefs = @($localRun.local_events | ForEach-Object {
     foreach ($reference in $_.evidence_refs) { if ($reference -notin $artifactIds) { $reference } }
 })
 $downloadLocalEvents = @($localRun.local_events | Where-Object { $_.event_action -eq "file_download" } | Sort-Object sequence)
+$downloadCapability = $localRun.capabilities | Where-Object capability_id -eq "win.network.file_download" | Select-Object -First 1
+$downloadFacts = @{}
+$localRun.local_facts | Where-Object { $_.case_run_id -eq $downloadCapability.case_run_id } | ForEach-Object { $downloadFacts[$_.key] = $_.value }
 $genericDownloadResult = $genericResult.capabilities | Where-Object capability_id -eq "win.network.file_download" | Select-Object -First 1
 $genericConclusionPath = Join-Path ([System.IO.Path]::GetDirectoryName($genericResultPath)) `
     ([System.IO.Path]::GetFileNameWithoutExtension($genericResultPath) + "-conclusion.md")
@@ -218,9 +236,13 @@ $assertions = [ordered]@{
     helper_count_is_7 = @($localRun.programs | Where-Object role -eq "helper").Count -eq 7
     event_count_is_8 = @($localRun.local_events).Count -eq 8
     event_actions_complete = (Compare-Object @("dns_query", "dns_query", "file_download", "file_download", "tcp_connect", "udp_connect", "url_access", "url_access") @($localRun.local_events.event_action | Sort-Object)).Count -eq 0
-    download_has_2_ordered_local_stages = $downloadLocalEvents.Count -eq 2 -and `
-        $downloadLocalEvents[0].data.stage.sequence -eq 1 -and $downloadLocalEvents[1].data.stage.sequence -eq 2 -and `
+    download_has_connection_and_file_local_events = $downloadLocalEvents.Count -eq 2 -and `
+        $downloadLocalEvents[0].data.stage.sequence -eq 1 -and $downloadLocalEvents[1].data.stage.sequence -eq 3 -and `
         ([DateTimeOffset]::Parse($downloadLocalEvents[0].occurred_at_utc) -le [DateTimeOffset]::Parse($downloadLocalEvents[1].occurred_at_utc))
+    download_has_local_process_continuity_facts = $downloadFacts["network.download.association.succeeded"] -eq $true -and `
+        $downloadFacts["network.download.association.same_process_pid"] -eq $true -and `
+        $downloadFacts["network.download.association.same_process_executable"] -eq $true -and `
+        $null -ne $downloadFacts["network.download.association.local_interval_ms"]
     all_events_high_confidence = @($localRun.local_events | Where-Object confidence -ne "high").Count -eq 0
     cleanup_count_is_7 = @($localRun.cleanup_results).Count -eq 7
     all_cleanup_succeeded = @($localRun.cleanup_results | Where-Object status -ne "succeeded").Count -eq 0
@@ -229,13 +251,21 @@ $assertions = [ordered]@{
     all_manifest_expected_facts_present = $missingExpectedFacts.Count -eq 0
     generic_compare_exit_code_is_0 = $genericExit -eq 0
     generic_compare_pass_count_is_5 = $genericResult.summary.pass -eq 5
-    generic_download_stage_flow_pass = $genericDownloadResult.stage_flow.strategy -eq "ordered_all" -and `
-        $genericDownloadResult.stage_flow.status -eq "PASS" -and $genericDownloadResult.stage_results.Count -eq 2 -and `
-        $genericDownloadResult.stage_results[1].order_status -eq "passed"
-    generic_download_conclusion_describes_two_stages = (Get-Content $genericConclusionPath -Raw).Contains("有序二轮验证")
+    generic_download_three_part_flow_pass = $genericDownloadResult.stage_flow.strategy -eq "ordered_all" -and `
+        $genericDownloadResult.stage_flow.status -eq "PASS" -and $genericDownloadResult.stage_results.Count -eq 3 -and `
+        $genericDownloadResult.stage_results[1].kind -eq "relationship" -and `
+        $genericDownloadResult.stage_results[1].relationship.same_process_pid -eq $true -and `
+        $genericDownloadResult.stage_results[1].relationship.same_process_executable -eq $true -and `
+        $genericDownloadResult.stage_results[1].relationship.ordered -eq $true -and `
+        $genericDownloadResult.stage_results[1].relationship.interval_difference_ms -le 30
+    generic_download_conclusion_describes_three_parts = (Get-Content $genericConclusionPath -Raw).Contains("三部分证据链")
     tencent_compare_exit_code_is_0 = $tencentExit -eq 0
-    tencent_compare_has_3_pass_2_partial = $tencentResult.summary.pass -eq 3 -and $tencentResult.summary.partial -eq 2 -and `
+    tencent_compare_has_4_pass_1_partial = $tencentResult.summary.pass -eq 4 -and $tencentResult.summary.partial -eq 1 -and `
         $tencentResult.summary.fail -eq 0 -and $tencentResult.summary.inconclusive -eq 0 -and $tencentResult.summary.not_compared -eq 0
+    broken_process_relationship_is_rejected = $brokenTencentExit -ne 0 -and `
+        $brokenDownloadResult.validation_status -eq "FAIL" -and `
+        $brokenRelationshipResult.status -eq "FAIL" -and `
+        $brokenRelationshipResult.relationship.same_process_pid -eq $false
 }
 $failedAssertions = @($assertions.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object Key)
 $summary = [ordered]@{

@@ -121,6 +121,7 @@ public sealed class BaselineDefinition
     public required CorrelationDefinition Correlation { get; init; }
     public MethodSelectionDefinition? MethodSelection { get; init; }
     public List<CloudExpectation> CloudExpectations { get; init; } = [];
+    public List<CloudRelationship> CloudRelationships { get; init; } = [];
 }
 
 public sealed class MethodSelectionDefinition
@@ -186,6 +187,16 @@ public sealed class StageDefinition
     public string? DependsOn { get; init; }
 }
 
+public sealed class CloudRelationship
+{
+    public required string Id { get; init; }
+    public required StageDefinition Stage { get; init; }
+    public required string Type { get; init; }
+    public required string LeftExpectation { get; init; }
+    public required string RightExpectation { get; init; }
+    public int MaxIntervalDifferenceMs { get; init; }
+}
+
 public sealed class MethodDefinition
 {
     public required string Id { get; init; }
@@ -248,9 +259,15 @@ internal sealed record MethodOutcome(
     string Status,
     JsonObject Result,
     JsonObject? SelectedEvent,
+    Candidate? SelectedCandidate,
     double SelectedScore,
     long SelectedTimeDistanceMs,
     IReadOnlyList<string> Warnings);
+internal sealed record StageFlowEntry(
+    string Id,
+    StageDefinition Stage,
+    MethodOutcome? Outcome,
+    CloudRelationship? Relationship);
 
 public static class CompareService
 {
@@ -644,30 +661,49 @@ public static class CompareService
 
         var outputStages = new JsonArray();
         JsonObject? stageFlow = null;
-        var stagedOutcomes = methodOutcomes
+        var stagedEntries = methodOutcomes
             .Where(outcome => outcome.Expectation.Stage is not null)
-            .OrderBy(outcome => outcome.Expectation.Stage!.Sequence)
+            .Select(outcome => new StageFlowEntry(outcome.Expectation.Id, outcome.Expectation.Stage!, outcome, null))
+            .Concat(baseline.CloudRelationships.Select(relationship =>
+                new StageFlowEntry(relationship.Id, relationship.Stage, null, relationship)))
+            .OrderBy(entry => entry.Stage.Sequence)
             .ToArray();
-        if (stagedOutcomes.Length > 0)
+        if (stagedEntries.Length > 0)
         {
-            var sequenceIsValid = stagedOutcomes.Select(outcome => outcome.Expectation.Stage!.Sequence)
-                .SequenceEqual(Enumerable.Range(1, stagedOutcomes.Length));
+            var sequenceIsValid = stagedEntries.Select(entry => entry.Stage.Sequence)
+                .SequenceEqual(Enumerable.Range(1, stagedEntries.Length));
             if (!sequenceIsValid)
                 throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的验证阶段 sequence 必须从 1 开始且连续。");
 
             var flowStatus = "PASS";
-            MethodOutcome? previous = null;
-            foreach (var outcome in stagedOutcomes)
+            StageFlowEntry? previous = null;
+            foreach (var entry in stagedEntries)
             {
-                var stage = outcome.Expectation.Stage!;
+                var stage = entry.Stage;
+                if (stage.Sequence > 1
+                    && (previous is null || !string.Equals(stage.DependsOn, previous.Id, StringComparison.Ordinal)))
+                {
+                    throw new InvalidDataException($"验证阶段 {entry.Id} 必须通过 depends_on 指向紧邻的前一阶段。");
+                }
+
+                if (entry.Relationship is { } relationship)
+                {
+                    var left = methodOutcomes.Single(outcome => outcome.Expectation.Id == relationship.LeftExpectation);
+                    var right = methodOutcomes.Single(outcome => outcome.Expectation.Id == relationship.RightExpectation);
+                    var relationshipResult = RelationshipStageJson(relationship, left, right, outputRequirements);
+                    outputStages.Add(relationshipResult.Stage);
+                    flowStatus = Worse(flowStatus, relationshipResult.Status);
+                    previous = entry;
+                    continue;
+                }
+
+                var outcome = entry.Outcome!;
                 var stageStatus = outcome.Status;
                 string? orderStatus = null;
                 string? orderMessage = null;
-                if (stage.Sequence > 1)
+                if (previous?.Outcome is { } previousOutcome)
                 {
-                    if (previous is null || !string.Equals(stage.DependsOn, previous.Expectation.Id, StringComparison.Ordinal))
-                        throw new InvalidDataException($"验证阶段 {outcome.Expectation.Id} 必须通过 depends_on 指向紧邻的前一阶段。");
-                    var previousTime = SelectedEventTime(previous.SelectedEvent);
+                    var previousTime = SelectedEventTime(previousOutcome.SelectedEvent);
                     var currentTime = SelectedEventTime(outcome.SelectedEvent);
                     orderStatus = previousTime is null || currentTime is null
                         ? "not_evaluated"
@@ -682,7 +718,7 @@ public static class CompareService
                     {
                         ["requirement_id"] = $"{outcome.Expectation.Id}-stage-order",
                         ["scope"] = "cloud",
-                        ["title_zh"] = $"{stage.Title}必须晚于或等于{previous.Expectation.Stage!.Title}",
+                        ["title_zh"] = $"{stage.Title}必须晚于或等于{previous.Stage.Title}",
                         ["expectation_id"] = outcome.Expectation.Id,
                         ["field"] = "event.created_order",
                         ["operator"] = "ordered_after",
@@ -699,6 +735,7 @@ public static class CompareService
                 flowStatus = Worse(flowStatus, stageStatus);
                 outputStages.Add(new JsonObject
                 {
+                    ["kind"] = "event",
                     ["sequence"] = stage.Sequence,
                     ["title"] = stage.Title,
                     ["expectation_id"] = outcome.Expectation.Id,
@@ -707,18 +744,22 @@ public static class CompareService
                     ["candidate_count"] = outcome.Result["candidate_count"]?.DeepClone(),
                     ["qualified_candidate_count"] = outcome.Result["qualified_candidate_count"]?.DeepClone(),
                     ["selected_event"] = outcome.SelectedEvent?.DeepClone(),
+                    ["related_expectation_ids"] = new JsonArray((JsonNode)outcome.Expectation.Id),
+                    ["relationship"] = null,
                     ["order_status"] = orderStatus,
                     ["order_message"] = orderMessage,
                     ["warnings"] = outcome.Result["warnings"]?.DeepClone(),
                 });
-                previous = outcome;
+                previous = entry;
             }
             stageFlow = new JsonObject
             {
                 ["strategy"] = "ordered_all",
                 ["status"] = flowStatus,
-                ["stage_count"] = stagedOutcomes.Length,
-                ["notice"] = "文件下载采用有序二轮验证：先验证连接，再验证文件写入；两轮都满足且 EDR 时间顺序正确时才能通过。",
+                ["stage_count"] = stagedEntries.Length,
+                ["notice"] = baseline.CloudRelationships.Count > 0
+                    ? "文件下载采用三部分证据链：先按 TCP 标准验证连接，再证明连接与文件写入属于同一进程的连续行为，最后验证目标文件；三部分必须全部满足。"
+                    : "该能力采用有序多阶段验证；所有阶段及其依赖顺序都满足时才能通过。",
             };
         }
 
@@ -1697,9 +1738,151 @@ public static class CompareService
             status,
             result,
             selectedEvent?.DeepClone().AsObject(),
+            selectedCandidate,
             selectedCandidate?.Score ?? double.MinValue,
             selectedCandidate?.TimeDistanceMs ?? long.MaxValue,
             warnings);
+    }
+
+    private static (JsonObject Stage, string Status) RelationshipStageJson(
+        CloudRelationship relationship,
+        MethodOutcome left,
+        MethodOutcome right,
+        JsonArray outputRequirements)
+    {
+        var leftCandidate = left.SelectedCandidate;
+        var rightCandidate = right.SelectedCandidate;
+        var candidatesQualified = leftCandidate?.Qualified == true && rightCandidate?.Qualified == true;
+        var leftPid = leftCandidate?.Event.Get("process.pid");
+        var rightPid = rightCandidate?.Event.Get("process.pid");
+        var leftExecutable = NormalizeWindowsPath(leftCandidate?.Event.Get("process.executable")?.ToString());
+        var rightExecutable = NormalizeWindowsPath(rightCandidate?.Event.Get("process.executable")?.ToString());
+        bool? samePid = candidatesQualified && leftPid is not null && rightPid is not null
+            ? Equivalent(leftPid, rightPid)
+            : null;
+        bool? sameExecutable = candidatesQualified
+            && !string.IsNullOrWhiteSpace(leftExecutable)
+            && !string.IsNullOrWhiteSpace(rightExecutable)
+                ? string.Equals(leftExecutable, rightExecutable, StringComparison.OrdinalIgnoreCase)
+                : null;
+
+        var leftCloudTime = CanonicalEventTime(leftCandidate);
+        var rightCloudTime = CanonicalEventTime(rightCandidate);
+        long? localIntervalMs = candidatesQualified
+            ? (long)Math.Round((rightCandidate!.LocalCorrelationTime - leftCandidate!.LocalCorrelationTime).TotalMilliseconds)
+            : null;
+        long? cloudIntervalMs = candidatesQualified && leftCloudTime is not null && rightCloudTime is not null
+            ? (long)Math.Round((rightCloudTime.Value - leftCloudTime.Value).TotalMilliseconds)
+            : null;
+        bool? ordered = cloudIntervalMs is null ? null : cloudIntervalMs >= 0;
+        long? intervalDifferenceMs = localIntervalMs is null || cloudIntervalMs is null
+            ? null
+            : Math.Abs(cloudIntervalMs.Value - localIntervalMs.Value);
+        bool? intervalMatched = intervalDifferenceMs is null
+            ? null
+            : intervalDifferenceMs <= relationship.MaxIntervalDifferenceMs;
+
+        var checks = new[]
+        {
+            RelationshipRequirementJson(relationship, "same-pid", "连接记录与文件记录必须属于同一 PID",
+                "relationship.process.pid", "equals", samePid, leftPid, rightPid,
+                samePid is null ? "至少一条所选记录缺少可靠 PID，无法证明同一进程。" : samePid.Value ? "两条 EDR 记录的进程 PID 一致。" : "两条 EDR 记录的进程 PID 不一致。"),
+            RelationshipRequirementJson(relationship, "same-executable", "连接记录与文件记录必须属于同一程序路径",
+                "relationship.process.executable", "equals", sameExecutable, leftExecutable, rightExecutable,
+                sameExecutable is null ? "至少一条所选记录缺少程序路径，无法证明同一进程。" : sameExecutable.Value ? "两条 EDR 记录的规范化程序路径一致。" : "两条 EDR 记录的程序路径不一致。"),
+            RelationshipRequirementJson(relationship, "ordered", "文件写入时间必须晚于或等于网络连接时间",
+                "relationship.event.created_order", "ordered_after", ordered,
+                leftCloudTime is null ? null : Values.Utc(leftCloudTime.Value),
+                rightCloudTime is null ? null : Values.Utc(rightCloudTime.Value),
+                ordered is null ? "至少一条所选记录缺少可靠时间，无法检查连续行为顺序。" : ordered.Value ? "EDR 文件写入时间不早于网络连接时间。" : "EDR 文件写入时间早于网络连接时间，行为顺序反转。"),
+            RelationshipRequirementJson(relationship, "interval", $"云端行为间隔与本地行为间隔的误差必须不超过 {relationship.MaxIntervalDifferenceMs} ms",
+                "relationship.interval_difference_ms", "range", intervalMatched,
+                new JsonObject { ["local_interval_ms"] = localIntervalMs, ["maximum_difference_ms"] = relationship.MaxIntervalDifferenceMs },
+                new JsonObject { ["cloud_interval_ms"] = cloudIntervalMs, ["difference_ms"] = intervalDifferenceMs },
+                intervalMatched is null ? "缺少可靠的两侧时间，无法比较连续行为间隔。" : intervalMatched.Value
+                    ? $"本地间隔 {localIntervalMs} ms，云端间隔 {cloudIntervalMs} ms，误差 {intervalDifferenceMs} ms。"
+                    : $"本地间隔 {localIntervalMs} ms，云端间隔 {cloudIntervalMs} ms，误差 {intervalDifferenceMs} ms，超过允许值。"),
+        };
+        foreach (var check in checks) outputRequirements.Add(check);
+
+        var status = "PASS";
+        foreach (var check in checks)
+        {
+            status = check["status"]?.GetValue<string>() switch
+            {
+                "failed" => Worse(status, "FAIL"),
+                "not_evaluated" => Worse(status, "INCONCLUSIVE"),
+                _ => status,
+            };
+        }
+        var message = status switch
+        {
+            "PASS" => $"连接与文件写入由同一 PID 和程序产生，顺序正确；云端间隔 {cloudIntervalMs} ms与本地间隔 {localIntervalMs} ms一致。",
+            "FAIL" => "连接记录与文件写入记录未形成同一进程的连续行为证据链。",
+            _ => "所选 EDR 记录不足以完整证明连接与文件写入属于同一进程的连续行为。",
+        };
+        var warnings = status == "PASS" ? new JsonArray() : new JsonArray((JsonNode)message);
+        return (new JsonObject
+        {
+            ["kind"] = "relationship",
+            ["sequence"] = relationship.Stage.Sequence,
+            ["title"] = relationship.Stage.Title,
+            ["expectation_id"] = relationship.Id,
+            ["depends_on"] = relationship.Stage.DependsOn,
+            ["status"] = status,
+            ["candidate_count"] = 2,
+            ["qualified_candidate_count"] = (leftCandidate?.Qualified == true ? 1 : 0) + (rightCandidate?.Qualified == true ? 1 : 0),
+            ["selected_event"] = null,
+            ["related_expectation_ids"] = new JsonArray((JsonNode)relationship.LeftExpectation, (JsonNode)relationship.RightExpectation),
+            ["relationship"] = new JsonObject
+            {
+                ["type"] = relationship.Type,
+                ["left_expectation_id"] = relationship.LeftExpectation,
+                ["right_expectation_id"] = relationship.RightExpectation,
+                ["same_process_pid"] = samePid,
+                ["same_process_executable"] = sameExecutable,
+                ["ordered"] = ordered,
+                ["local_interval_ms"] = localIntervalMs,
+                ["cloud_interval_ms"] = cloudIntervalMs,
+                ["interval_difference_ms"] = intervalDifferenceMs,
+                ["maximum_interval_difference_ms"] = relationship.MaxIntervalDifferenceMs,
+            },
+            ["order_status"] = ordered is null ? "not_evaluated" : ordered.Value ? "passed" : "failed",
+            ["order_message"] = message,
+            ["warnings"] = warnings,
+        }, status);
+    }
+
+    private static JsonObject RelationshipRequirementJson(
+        CloudRelationship relationship,
+        string suffix,
+        string title,
+        string field,
+        string @operator,
+        bool? matched,
+        object? expected,
+        object? actual,
+        string message) => new()
+    {
+        ["requirement_id"] = $"{relationship.Id}-{suffix}",
+        ["scope"] = "cloud",
+        ["title_zh"] = title,
+        ["expectation_id"] = relationship.Id,
+        ["field"] = field,
+        ["operator"] = @operator,
+        ["severity"] = "required",
+        ["status"] = matched is null ? "not_evaluated" : matched.Value ? "passed" : "failed",
+        ["expected"] = Values.ToNode(expected),
+        ["actual"] = Values.ToNode(actual),
+        ["message"] = message,
+    };
+
+    private static DateTimeOffset? CanonicalEventTime(Candidate? candidate)
+    {
+        if (candidate?.Event.Get("event.created") is not string text
+            || !DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+            return null;
+        return parsed.ToUniversalTime();
     }
 
     private static DateTimeOffset? SelectedEventTime(JsonObject? selectedEvent)
@@ -2062,6 +2245,37 @@ public static class CompareService
                     || correlation.MaxTimeDifferenceMs is < 1 or > 60_000))
             {
                 throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 cloud_expectation.correlation 无效。");
+            }
+        }
+        var expectationIds = baseline.CloudExpectations.Select(expectation => expectation.Id).ToHashSet(StringComparer.Ordinal);
+        if (expectationIds.Count != baseline.CloudExpectations.Count)
+            throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 cloud_expectation.id 必须唯一。");
+        foreach (var relationship in baseline.CloudRelationships)
+        {
+            if (relationship.Type != "same_process_continuity"
+                || relationship.Stage is null
+                || !expectationIds.Contains(relationship.LeftExpectation)
+                || !expectationIds.Contains(relationship.RightExpectation)
+                || relationship.LeftExpectation == relationship.RightExpectation
+                || relationship.MaxIntervalDifferenceMs is < 1 or > 60_000)
+            {
+                throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 cloud_relationship {relationship.Id} 无效。");
+            }
+        }
+        var flowStages = baseline.CloudExpectations
+            .Where(expectation => expectation.Stage is not null)
+            .Select(expectation => (Id: expectation.Id, Stage: expectation.Stage!))
+            .Concat(baseline.CloudRelationships.Select(relationship => (relationship.Id, relationship.Stage)))
+            .OrderBy(item => item.Stage.Sequence)
+            .ToArray();
+        if (flowStages.Length > 0)
+        {
+            if (!flowStages.Select(item => item.Stage.Sequence).SequenceEqual(Enumerable.Range(1, flowStages.Length)))
+                throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的验证阶段 sequence 必须从 1 开始且连续。");
+            for (var index = 1; index < flowStages.Length; index++)
+            {
+                if (!string.Equals(flowStages[index].Stage.DependsOn, flowStages[index - 1].Id, StringComparison.Ordinal))
+                    throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的阶段 {flowStages[index].Id} 必须依赖紧邻的前一阶段。");
             }
         }
     }

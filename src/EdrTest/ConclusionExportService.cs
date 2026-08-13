@@ -108,7 +108,7 @@ public static class ConclusionExportService
                 .Select(value => $"{Text(value, "title")}：{StatusLabel(Text(value, "status"))}")
                 .ToArray() ?? [];
             var detail = stages.Length == 0 ? string.Empty : $"（{string.Join("；", stages)}）";
-            return $"有序二轮验证为{StatusLabel(Text(stageFlow, "status"))}{detail}；必须先验证连接，再验证文件写入。";
+            return $"三部分证据链为{StatusLabel(Text(stageFlow, "status"))}{detail}；必须依次验证网络连接、同进程连续关联和文件写入。";
         }
 
         var warnings = capability["warnings"]?.AsArray()

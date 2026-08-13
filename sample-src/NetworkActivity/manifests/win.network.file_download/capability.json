@@ -1,10 +1,10 @@
 {
   "schema_version": "1.1",
   "capability_id": "win.network.file_download",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "display_name_zh": "文件下载",
   "display_name_en": "File Downloaded",
-  "description": "Actor 从本机受控 HTTP Helper 下载确定性二进制文件；Controller 先记录连接阶段，再独立记录文件写入阶段，并校验二者顺序、URL、端点、大小与 MD5/SHA-256。",
+  "description": "Actor 从本机受控 HTTP Helper 下载确定性二进制文件；Controller 记录连接与文件写入事实，并提供同进程、顺序及本地时间间隔，供离线比较形成连接、连续关联、文件写入三部分证据链。",
   "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
   "risk_level": "L0",
   "required_privilege": "standard_user",
@@ -22,6 +22,9 @@
   "network": { "required": false },
   "expected_fact_keys": [
     "network.file_download_succeeded", "network.download.stage_order_succeeded", "correlation.nonce",
+    "network.download.association.succeeded", "network.download.association.same_process_pid",
+    "network.download.association.same_process_executable", "network.download.association.connection_event_id",
+    "network.download.association.file_event_id", "network.download.association.local_interval_ms",
     "network.download.connection.succeeded", "network.download.connection.occurred_at_utc", "network.download.connection.actor_pid",
     "network.download.connection.actor_executable", "network.download.connection.local.port", "network.download.connection.remote.port",
     "network.download.connection.http.url", "network.download.connection.http.method", "network.download.connection.http.status_code",

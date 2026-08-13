@@ -68,6 +68,7 @@ test("验证结果 Schema 支持逐能力 JSON 对照与多候选高亮", async 
   assert.equal(capability.properties.method_selection.oneOf[0].properties.strategy.const, "best");
   assert.ok(baselineSchema.properties.method_selection.properties.strategy.enum.includes("best"));
   assert.equal(baselineSchema.$defs.stage.properties.depends_on.type, "string");
+  assert.equal(baselineSchema.$defs.cloud_relationship.properties.type.const, "same_process_continuity");
   assert.ok(candidate.required.includes("baseline_matches"));
   assert.deepEqual(
     candidate.properties.baseline_matches.items.properties.kind.enum,
@@ -330,7 +331,7 @@ test("Network Activity 五项清单、BASELINE、回环编排和腾讯路由完�
     ["win.network.udp", "network_udp.yaml", "udp_connect", "0.1.0"],
     ["win.network.url", "network_url.yaml", "url_access", "0.2.0"],
     ["win.network.dns", "network_dns.yaml", "dns_query", "0.2.0"],
-    ["win.network.file_download", "network_file_download.yaml", "file_download", "0.2.0"],
+    ["win.network.file_download", "network_file_download.yaml", "file_download", "0.3.0"],
   ];
 
   for (const [capabilityId, baselineName, operation, version] of capabilities) {
@@ -381,9 +382,13 @@ test("Network Activity 五项清单、BASELINE、回环编排和腾讯路由完�
     new URL("baselines/windows/network_file_download.yaml", root),
     "utf8",
   );
-  assert.match(downloadBaseline, /id: download-connection-stage[\s\S]*stage: \{ sequence: 1, title: 第一轮：连接验证 \}/);
-  assert.match(downloadBaseline, /id: download-file-write-stage[\s\S]*depends_on: download-connection-stage/);
+  assert.match(downloadBaseline, /id: download-connection-stage[\s\S]*stage: \{ sequence: 1, title: 第一部分：网络连接 \}/);
+  assert.match(downloadBaseline, /network\.source_ip[\s\S]*expected: 0\.0\.0\.0[\s\S]*network\.source_port[\s\S]*expected: 0/);
+  assert.match(downloadBaseline, /id: download-process-continuity[\s\S]*sequence: 2[\s\S]*type: same_process_continuity/);
+  assert.match(downloadBaseline, /left_expectation: download-connection-stage[\s\S]*right_expectation: download-file-write-stage[\s\S]*max_interval_difference_ms: 30/);
+  assert.match(downloadBaseline, /id: download-file-write-stage[\s\S]*sequence: 3[\s\S]*depends_on: download-process-continuity/);
   assert.match(downloadBaseline, /event_actions: \[create, modify\]/);
+  assert.doesNotMatch(downloadBaseline, /download-file-write-stage[\s\S]*field: process\.pid/);
   assert.match(controller, /actor_helper_protocol_and_endpoint_cross_check/);
   assert.match(controller, /DnsClientServicePid/);
   assert.match(controller, /must_not_stop_during_cleanup/);

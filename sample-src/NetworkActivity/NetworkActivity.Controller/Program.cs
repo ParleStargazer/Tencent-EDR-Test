@@ -28,7 +28,7 @@ internal static class Program
             new("raw_udp", "原始 UDP DNS", true),
             new("windows_dns_client", "Windows DNS Client / svchost", false),
         ],
-        "file_download" => [new("raw_http_two_stage", "HTTP 连接 + 文件写入二轮验证", true)],
+        "file_download" => [new("raw_http_three_part", "网络连接 + 同进程关联 + 文件写入三部分验证", true)],
         "udp_connect" => [new("datagram", "UDP 数据报", true)],
         _ => [new("socket", "TCP 套接字", true)],
     };
@@ -367,7 +367,7 @@ internal static class Program
         }
         if (operation == "file_download")
         {
-            data["stage"] = new JsonObject { ["sequence"] = 1, ["title"] = "第一轮：连接验证" };
+            data["stage"] = new JsonObject { ["sequence"] = 1, ["title"] = "第一部分：网络连接" };
             data["download"] = DownloadData(result);
         }
         return new LocalEventObservation
@@ -405,7 +405,7 @@ internal static class Program
         return new LocalEventObservation
         {
             CaseRunId = invocation.CaseRunId,
-            Sequence = 2,
+            Sequence = 3,
             EventType = "network",
             EventAction = "file_download",
             Nonce = invocation.Nonce,
@@ -422,7 +422,7 @@ internal static class Program
                 ["operation"] = "file_download",
                 ["subtest"] = state.Subtest.Id,
                 ["method"] = state.Subtest.Title,
-                ["stage"] = new JsonObject { ["sequence"] = 2, ["title"] = "第二轮：文件写入验证" },
+                ["stage"] = new JsonObject { ["sequence"] = 3, ["title"] = "第三部分：文件写入验证" },
                 ["actor"] = ProcessReference(actor),
                 ["connection"] = new JsonObject
                 {
@@ -546,6 +546,16 @@ internal static class Program
             values["network.download.file.sha256"] = JsonValue.Create(result.DownloadSha256);
             values["network.download.stage_order_succeeded"] = JsonValue.Create(
                 result.OccurredAtUtc <= result.FileOccurredAtUtc && result.FileOccurredAtUtc <= result.FileCompletedAtUtc);
+            values["network.download.association.succeeded"] = JsonValue.Create(
+                result.OccurredAtUtc <= result.FileOccurredAtUtc
+                && actor.Pid > 0
+                && !string.IsNullOrWhiteSpace(actor.ExecutablePath));
+            values["network.download.association.same_process_pid"] = JsonValue.Create(true);
+            values["network.download.association.same_process_executable"] = JsonValue.Create(true);
+            values["network.download.association.connection_event_id"] = JsonValue.Create(eventId);
+            values["network.download.association.file_event_id"] = JsonValue.Create(downloadFileEventId);
+            values["network.download.association.local_interval_ms"] = JsonValue.Create(
+                (long)Math.Round((result.FileOccurredAtUtc!.Value - result.OccurredAtUtc).TotalMilliseconds));
         }
         foreach (var (key, value) in values)
         {

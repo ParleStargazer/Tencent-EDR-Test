@@ -227,11 +227,12 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
-                "sequence", "title", "expectation_id", "depends_on", "status",
+                "kind", "sequence", "title", "expectation_id", "depends_on", "status",
                 "candidate_count", "qualified_candidate_count", "selected_event",
-                "order_status", "order_message", "warnings"
+                "related_expectation_ids", "relationship", "order_status", "order_message", "warnings"
               ],
               "properties": {
+                "kind": { "enum": ["event", "relationship"] },
                 "sequence": { "type": "integer", "minimum": 1 },
                 "title": { "type": "string", "minLength": 1 },
                 "expectation_id": { "type": "string", "minLength": 1 },
@@ -240,6 +241,39 @@
                 "candidate_count": { "type": "integer", "minimum": 0 },
                 "qualified_candidate_count": { "type": "integer", "minimum": 0 },
                 "selected_event": { "type": ["object", "null"] },
+                "related_expectation_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "type": "string", "minLength": 1 },
+                  "uniqueItems": true
+                },
+                "relationship": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "type", "left_expectation_id", "right_expectation_id",
+                        "same_process_pid", "same_process_executable", "ordered",
+                        "local_interval_ms", "cloud_interval_ms", "interval_difference_ms",
+                        "maximum_interval_difference_ms"
+                      ],
+                      "properties": {
+                        "type": { "const": "same_process_continuity" },
+                        "left_expectation_id": { "type": "string", "minLength": 1 },
+                        "right_expectation_id": { "type": "string", "minLength": 1 },
+                        "same_process_pid": { "type": ["boolean", "null"] },
+                        "same_process_executable": { "type": ["boolean", "null"] },
+                        "ordered": { "type": ["boolean", "null"] },
+                        "local_interval_ms": { "type": ["integer", "null"] },
+                        "cloud_interval_ms": { "type": ["integer", "null"] },
+                        "interval_difference_ms": { "type": ["integer", "null"], "minimum": 0 },
+                        "maximum_interval_difference_ms": { "type": "integer", "minimum": 1 }
+                      }
+                    },
+                    { "type": "null" }
+                  ]
+                },
                 "order_status": { "enum": ["passed", "failed", "not_evaluated", null] },
                 "order_message": { "type": ["string", "null"] },
                 "warnings": { "type": "array", "items": { "type": "string" } }

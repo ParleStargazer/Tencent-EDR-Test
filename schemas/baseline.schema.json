@@ -88,6 +88,10 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/cloud_expectation" }
     },
+    "cloud_relationships": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/cloud_relationship" }
+    },
     "scoring": {
       "type": "object",
       "additionalProperties": false,
@@ -210,6 +214,19 @@
         "sequence": { "type": "integer", "minimum": 1 },
         "title": { "type": "string", "minLength": 1 },
         "depends_on": { "type": "string", "minLength": 1 }
+      }
+    },
+    "cloud_relationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "stage", "type", "left_expectation", "right_expectation", "max_interval_difference_ms"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "stage": { "$ref": "#/$defs/stage" },
+        "type": { "const": "same_process_continuity" },
+        "left_expectation": { "type": "string", "minLength": 1 },
+        "right_expectation": { "type": "string", "minLength": 1 },
+        "max_interval_difference_ms": { "type": "integer", "minimum": 1, "maximum": 60000 }
       }
     },
     "expectation_correlation": {

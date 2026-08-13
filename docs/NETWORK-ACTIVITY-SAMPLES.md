@@ -10,7 +10,7 @@
 | `win.network.udp` | UDP 连接 / UDP Connection | Actor 与回环 UDP Helper 交换 nonce 数据报 |
 | `win.network.url` | URL 访问 / URL | 原始套接字 HTTP、WinINet `InternetOpenUrlW` 两个子测试 |
 | `win.network.dns` | DNS 查询 / DNS Query | 受控原始 UDP DNS、Windows `DnsQuery_W`/Dnscache 两个子测试 |
-| `win.network.file_download` | 文件下载 / File Downloaded | 同一 HTTP 下载行为按“连接→文件写入”做有序二轮验证 |
+| `win.network.file_download` | 文件下载 / File Downloaded | 同一 HTTP 下载行为按“TCP 连接→同进程连续关联→文件写入”做三部分验证 |
 
 TCP、UDP、URL 和下载仅访问 IPv4 回环地址。Windows DNS Client 子测试查询带本轮唯一 nonce 的 `*.dns.msftncsi.com`，因此 DNS 能力清单声明 `network.required=true`；它不修改系统 DNS 配置，也不停止或重启 Dnscache 服务。
 
@@ -60,20 +60,22 @@ DNS 能力也同轮运行两个子测试：
 
 原始方法验证 Actor；系统方法验证 Dnscache `svchost.exe`。两种方法都要求进程身份、UDP 和时间关联，问题名与目的端口 53 是直接语义的推荐证据。若 EDR 只导出高度相关的 UDP/NetBind 记录而没有 DNS 问题名，结论为 `PARTIAL`；候选原始 JSON 仍会完整展示。
 
-## 6. 文件下载的有序二轮验证
+## 6. 文件下载的三部分证据链
 
-文件下载不能由单条连接记录或单条文件记录独立证明。一次真实 HTTP GET 在本地生成两个同属标准 `file_download` 能力的事件，通过 `stage.sequence` 区分：
+文件下载不能由单条连接记录或单条文件记录独立证明。一次真实 HTTP GET 在本地生成连接和文件写入两个同属标准 `file_download` 能力的事件；离线比较在两条真实 EDR 记录之间派生一个关联项，形成三部分：
 
-1. 第一轮“连接验证”：以 Actor PID/路径、TCP、URL 和连接发生时间关联网络事件；
-2. 第二轮“文件写入验证”：以同一 Actor、落地绝对路径、大小、MD5 和文件写入发生时间关联文件事件，并声明 `depends_on: download-connection-stage`。
+1. 第一部分“网络连接”：完全采用 TCP 能力的腾讯 `NetBind` 标准，要求 Actor PID/路径、`tcp`、源地址 `0.0.0.0`、源端口 `0`，并推荐 `tcp_0.0.0.0:0` 与 `KernelMon`；
+2. 第二部分“同进程连续行为关联”：比较第一、第三部分所选记录，必须同 PID、同规范化程序路径，文件写入不得早于网络连接；同时比较云端事件间隔与本地行为间隔，二者误差不得超过 30 ms；
+3. 第三部分“文件写入验证”：以落地绝对路径和文件写入发生时间关联文件事件，验证路径、大小和 MD5。进程身份不在这里重复断言，而由第二部分专门负责。
 
-比较器对两轮分别召回、评分、展示候选，并检查所选 EDR 文件事件时间不得早于所选连接事件时间。最终通过必须同时满足：
+第二部分不是伪造的 EDR 事件，而是对第一、第三部分各自选中的原始 JSON 块进行派生验证。最终通过必须同时满足：
 
-- 本地连接、文件写入、哈希复核和本地阶段顺序全部成立；
-- 云端两轮各自至少有一条满足必需条件的记录；
-- 云端两条所选记录的先后顺序正确。
+- 本地连接、文件写入、哈希复核、同进程事实和本地顺序全部成立；
+- 云端连接部分满足与 TCP 能力一致的 NetBind 必需字段；
+- 云端文件部分满足目标文件必需字段；
+- 两条所选云端记录满足同进程、正确顺序和间隔一致性。
 
-任一轮缺失或不满足必需字段，整项能力都不会判为 `PASS`。前端“有序二轮验证”区域分别展示两轮状态、候选数、命中字段、时间差和顺序检查，且可切换查看每轮的多个原始 JSON 块。
+任一部分缺失或不满足必需条件，整项能力都不会判为 `PASS`。前端“三部分证据链”区域分别展示连接候选、关联检查、文件候选及两侧原始 JSON；关联部分明确展示 PID、程序路径、顺序、本地间隔、EDR 间隔和间隔误差。
 
 ## 7. 数据、前后端与映射
 
@@ -99,4 +101,4 @@ pwsh -NoProfile -File scripts/Build-NetworkActivitySamples.ps1
 pwsh -NoProfile -File scripts/Test-NetworkActivitySamples.ps1
 ```
 
-验收要求：5 项均为 `LOCAL_PASS`；URL 与 DNS 各有 2 个子测试；下载有 2 个有序本地事件；通用映射为 `5 PASS`；合成腾讯字段形态为 `3 PASS + 2 PARTIAL`（URL/DNS 在只有侧面网络证据的方法上如实降级）；下载二轮的 `stage_flow` 必须为 `ordered_all / PASS`。
+验收要求：5 项均为 `LOCAL_PASS`；URL 与 DNS 各有 2 个子测试；下载包含连接、同进程关联、文件写入三部分结果；通用映射为 `5 PASS`；合成腾讯字段形态为 `4 PASS + 1 PARTIAL`（DNS 在只有侧面网络证据的方法上如实降级，URL 的 WinINet 方法可形成直接证据）；下载 `stage_flow` 必须为 `ordered_all / PASS`，关联部分的 PID、路径、顺序及 30 ms 间隔误差检查必须全部通过。

@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.network.file_download
-version: "0.2.0"
+version: "0.3.0"
 title: Windows 文件下载遥测
-description: 采用有序二轮验证：第一轮关联下载进程的 TCP/HTTP 连接，第二轮关联同一进程写入的目标文件；任一轮不满足均不能判定下载能力通过。
+description: 采用三部分证据链：第一部分按 TCP NetBind 标准验证连接；第二部分证明连接与文件写入是同一进程的连续行为；第三部分验证目标文件写入。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,7 +10,7 @@ platform:
 risk_level: L0
 capability:
   id: win.network.file_download
-  version: "0.2.0"
+  version: "0.3.0"
   parameters: { setup_delay_ms: 250, post_operation_hold_ms: 1500, payload_size: 8192 }
 local_requirements:
   - { field: facts.network.file_download_succeeded, operator: equals, expected: true }
@@ -19,7 +19,11 @@ local_requirements:
   - { field: facts.network.download.connection.occurred_at_utc, operator: present }
   - { field: facts.network.download.connection.actor_pid, operator: present }
   - { field: facts.network.download.connection.actor_executable, operator: present }
-  - { field: facts.network.download.connection.http.url, operator: present }
+  - { field: facts.network.download.connection.transport, operator: equals, expected: tcp }
+  - { field: facts.network.download.association.succeeded, operator: equals, expected: true }
+  - { field: facts.network.download.association.same_process_pid, operator: equals, expected: true }
+  - { field: facts.network.download.association.same_process_executable, operator: equals, expected: true }
+  - { field: facts.network.download.association.local_interval_ms, operator: present }
   - { field: facts.network.download.file.succeeded, operator: equals, expected: true }
   - { field: facts.network.download.file.occurred_at_utc, operator: present }
   - { field: facts.network.download.file.completed_at_utc, operator: present }
@@ -36,24 +40,26 @@ correlation:
     - { local_field: facts.network.download.connection.actor_pid, cloud_field: process.pid, strength: medium }
 cloud_expectations:
   - id: download-connection-stage
-    stage: { sequence: 1, title: 第一轮：连接验证 }
+    stage: { sequence: 1, title: 第一部分：网络连接 }
     event_type: network
-    event_actions: [url_access, tcp_connect]
-    cardinality: { min: 1, max: 10 }
+    event_actions: [tcp_connect]
+    cardinality: { min: 1 }
     correlation:
       time_from_local: facts.network.download.connection.occurred_at_utc
       anchors:
         - { local_field: facts.network.download.connection.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
         - { local_field: facts.network.download.connection.actor_pid, cloud_field: process.pid, strength: medium }
-        - { local_field: facts.network.download.connection.http.url, cloud_field: url.full, strength: strong }
+        - { local_field: facts.network.download.connection.transport, cloud_field: network.transport, strength: medium, normalizers: [lowercase] }
     assertions:
       - { field: process.pid, operator: equals, expected_from_local: facts.network.download.connection.actor_pid, severity: required }
       - { field: process.executable, operator: equals, expected_from_local: facts.network.download.connection.actor_executable, severity: required, normalizers: [windows_path] }
       - { field: network.transport, operator: equals, expected: tcp, severity: required, normalizers: [lowercase] }
-      - { field: url.full, operator: equals, expected_from_local: facts.network.download.connection.http.url, severity: recommended }
-      - { field: http.request.method, operator: equals, expected: GET, severity: recommended }
+      - { field: network.source_ip, operator: equals, expected: 0.0.0.0, severity: required }
+      - { field: network.source_port, operator: equals, expected: 0, severity: required }
+      - { field: network.endpoint_name, operator: equals, expected: "tcp_0.0.0.0:0", severity: recommended, normalizers: [lowercase] }
+      - { field: event.provider, operator: equals, expected: KernelMon, severity: recommended }
   - id: download-file-write-stage
-    stage: { sequence: 2, title: 第二轮：文件写入验证, depends_on: download-connection-stage }
+    stage: { sequence: 3, title: 第三部分：文件写入验证, depends_on: download-process-continuity }
     event_type: file
     event_actions: [create, modify]
     cardinality: { min: 1, max: 10 }
@@ -61,16 +67,20 @@ cloud_expectations:
       time_from_local: facts.network.download.file.occurred_at_utc
       anchors:
         - { local_field: facts.network.download.file.destination_path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
-        - { local_field: facts.network.download.file.actor_pid, cloud_field: process.pid, strength: medium }
     assertions:
-      - { field: process.pid, operator: equals, expected_from_local: facts.network.download.file.actor_pid, severity: required }
-      - { field: process.executable, operator: equals, expected_from_local: facts.network.download.file.actor_executable, severity: required, normalizers: [windows_path] }
       - { field: file.path, operator: equals, expected_from_local: facts.network.download.file.destination_path, severity: required, normalizers: [windows_path] }
       - { field: file.size, operator: equals, expected_from_local: facts.network.download.file.size_bytes, severity: required }
       - { field: file.hash.md5, operator: equals, expected_from_local: facts.network.download.file.md5, severity: recommended, normalizers: [lowercase] }
+cloud_relationships:
+  - id: download-process-continuity
+    stage: { sequence: 2, title: 第二部分：同进程连续行为关联, depends_on: download-connection-stage }
+    type: same_process_continuity
+    left_expectation: download-connection-stage
+    right_expectation: download-file-write-stage
+    max_interval_difference_ms: 30
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: 将连接与文件写入拆成独立本地事件、独立时间基准和有依赖关系的两轮 EDR 验证，避免单一侧面证据直接等同于完成下载。
-  references: [Tencent EDR NetworkEvents / NetBind / HttpRequest, Tencent EDR FileEvents / FileWriteClose]
+  change_reason: 网络连接改用与 TCP 能力一致的 NetBind 字段；新增同 PID、同路径、正确顺序和时间间隔一致性关联；文件写入移至第三部分并只验证文件语义。
+  references: [Tencent EDR NetworkEvents / NetBind / 260809213600run, Tencent EDR FileEvents / FileWriteClose]

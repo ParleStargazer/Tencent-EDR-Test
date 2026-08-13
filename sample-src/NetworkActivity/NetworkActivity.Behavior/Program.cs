@@ -70,7 +70,7 @@ internal static class Program
         {
             "url_access" => "raw_socket",
             "dns_query" => "raw_udp",
-            "file_download" => "raw_http_two_stage",
+            "file_download" => "raw_http_three_part",
             _ => "socket",
         };
         var resultPath = Path.GetFullPath(options.Require("result"));
