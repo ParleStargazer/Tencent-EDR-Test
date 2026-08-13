@@ -1420,7 +1420,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .method-warning { margin: 12px 14px; padding: 9px 11px; border-left: 3px solid var(--warning); background: #fffaf2; }
 .method-warning strong { font-size: 9px; }
 .method-warning p { margin-top: 3px; color: var(--muted); font-size: 9px; line-height: 1.5; }
-.method-result-body .requirement-group { border-top: 0; }
+.method-result-body > .requirement-group { border-top: 0; }
+.method-result-body > .requirement-group + .requirement-group { border-top: 1px solid var(--line-strong); }
 
 .edr-candidate-section { border-top: 1px solid var(--line-strong); background: #f8fafb; }
 .candidate-section-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; padding: 16px 18px; }

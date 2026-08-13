@@ -190,6 +190,13 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /已采用最佳方法形成结论/);
   assert.match(livePage, /selected_for_conclusion/);
   assert.match(livePage, /结论采用/);
+  assert.match(livePage, /open=\{method\.selected_for_conclusion\}/);
+  assert.match(livePage, /每种方法内分别展示本地绝对基准与该方法对应的 EDR 要求；最佳方法默认展开/);
+  assert.match(livePage, /methods\.length > 0 \? <MethodComparison[^>]+requirements=\{requirements\}/);
+  assert.match(livePage, /<RequirementGroup scope="local" requirements=\{localRequirements\} \/><RequirementGroup scope="cloud" requirements=\{methodRequirements\}/);
+  assert.match(livePage, /requirement\.scope === "cloud" && requirement\.expectation_id === method\.expectation_id/);
+  assert.doesNotMatch(livePage, /<RequirementGroup scope="local" requirements=\{localRequirements\} \/>\{methods\.length > 0/);
+  assert.match(styles, /\.method-result-body > \.requirement-group \+ \.requirement-group/);
   assert.match(livePage, /应包含的测试标记/);
   assert.match(livePage, /读取到的 PID/);
   assert.match(livePage, /总体结论/);
