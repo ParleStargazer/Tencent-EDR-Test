@@ -174,10 +174,11 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /匹配与完成情况/);
   assert.match(livePage, /候选 EDR 日志块/);
   assert.match(styles, /\.edr-conclusion-layout \{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
-  assert.match(styles, /\.edr-conclusion-layout \{[^}]*align-items:\s*stretch[^}]*max-height:\s*clamp\(440px, 68vh, 680px\)[^}]*overflow:\s*hidden/);
-  assert.match(styles, /\.edr-conclusion-layout > \.requirement-match-panel,[\s\S]*?\.edr-conclusion-layout > \.edr-candidate-section \{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\)[^}]*min-height:\s*0/);
-  assert.match(styles, /\.edr-conclusion-layout \.requirement-table,[\s\S]*?\.edr-conclusion-layout \.candidate-list \{[^}]*overflow:\s*auto[^}]*scrollbar-gutter:\s*stable/);
+  assert.match(styles, /\.edr-conclusion-layout \{[^}]*align-items:\s*start[^}]*overflow:\s*visible/);
+  assert.match(styles, /\.edr-conclusion-layout > \.requirement-match-panel,[\s\S]*?\.edr-conclusion-layout > \.edr-candidate-section \{[^}]*grid-template-rows:\s*auto auto[^}]*min-height:\s*0/);
+  assert.match(styles, /\.edr-conclusion-layout \.requirement-table,[\s\S]*?\.edr-conclusion-layout \.candidate-list \{[^}]*max-height:\s*clamp\(320px, calc\(68vh - 110px\), 570px\)[^}]*overflow:\s*auto[^}]*scrollbar-gutter:\s*stable/);
   assert.match(styles, /@media \(max-width: 900px\)[\s\S]*?\.edr-conclusion-layout \{ grid-template-columns: 1fr; max-height: none; overflow: visible; \}/);
+  assert.match(styles, /@media \(max-width: 900px\)[\s\S]*?\.edr-conclusion-layout \.requirement-table,[\s\S]*?\.edr-conclusion-layout \.candidate-list \{[^}]*max-height:\s*none[^}]*overflow:\s*visible/);
   assert.match(livePage, /initialSelectedIndex=\{jsonComparisonIndex\}/);
   assert.match(livePage, /candidates\.indexOf\(candidate\)/);
   assert.match(livePage, /打开候选 #\$\{index \+ 1\} 的 JSON 对照/);
