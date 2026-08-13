@@ -20,7 +20,9 @@ public sealed record CompareRequest(
     string? ConclusionOutputPath = null,
     string? ComparisonId = null,
     IReadOnlyDictionary<string, IReadOnlyList<string>>? ActionNameStandards = null,
-    IReadOnlyDictionary<string, IReadOnlyList<string>>? ChildFileCreateOpNameStandards = null);
+    IReadOnlyDictionary<string, IReadOnlyList<string>>? ChildFileCreateOpNameStandards = null,
+    int StrongCorrelationTimeMs = CompareService.DefaultStrongCorrelationTimeMs,
+    int CandidateTimeLimitMs = CompareService.DefaultCandidateTimeLimitMs);
 
 public sealed class MappingProfile
 {
@@ -271,6 +273,10 @@ internal sealed record StageFlowEntry(
 
 public static class CompareService
 {
+    public const int DefaultStrongCorrelationTimeMs = 15;
+    public const int DefaultCandidateTimeLimitMs = 1_000;
+    public const int MaximumStrongCorrelationTimeMs = 60_000;
+    public const int MaximumCandidateTimeLimitMs = 300_000;
     private const int MaximumDisplayedCandidates = 50;
     private static readonly HashSet<string> FileCapabilityIds = new(StringComparer.Ordinal)
     {
@@ -358,7 +364,9 @@ public static class CompareService
                         cloudManifest,
                         manifestFilesVerified,
                         capabilityActionNames,
-                        capabilityFileCreateOpNames);
+                        capabilityFileCreateOpNames,
+                        request.StrongCorrelationTimeMs,
+                        request.CandidateTimeLimitMs);
                     DecorateCapabilityResult(result, capability, baselineEntry.Value);
                 }
             }
@@ -395,6 +403,8 @@ public static class CompareService
                     KeyValuePair.Create<string, JsonNode?>(value.Key, new JsonArray(value.Value.Select(action => (JsonNode)action).ToArray())))),
                 ["child_file_create_op_name_standards"] = new JsonObject(childFileCreateOpNameStandards.Select(value =>
                     KeyValuePair.Create<string, JsonNode?>(value.Key, new JsonArray(value.Value.Select(operation => (JsonNode)operation).ToArray())))),
+                ["strong_correlation_time_ms"] = request.StrongCorrelationTimeMs,
+                ["candidate_time_limit_ms"] = request.CandidateTimeLimitMs,
             },
             ["summary"] = summary,
             ["conclusion"] = conclusion,
@@ -417,7 +427,9 @@ public static class CompareService
         JsonObject? cloudManifest,
         bool manifestFilesVerified,
         IReadOnlyList<string> actionNameStandards,
-        IReadOnlyList<string> childFileCreateOpNameStandards)
+        IReadOnlyList<string> childFileCreateOpNameStandards,
+        int strongCorrelationTimeMs,
+        int candidateTimeLimitMs)
     {
         var capabilityId = RequiredString(capability, "capability_id");
         var caseRunId = RequiredString(capability, "case_run_id");
@@ -483,9 +495,10 @@ public static class CompareService
             var expectationAnchors = expectation.Correlation?.Anchors is { Count: > 0 }
                 ? expectation.Correlation.Anchors
                 : baseline.Correlation.Anchors;
-            var maximumTimeDifferenceMs = expectation.Correlation?.MaxTimeDifferenceMs ?? baseline.Correlation.MaxTimeDifferenceMs;
+            var maximumTimeDifferenceMs = strongCorrelationTimeMs;
             var correlationTime = ResolveCorrelationTime(expectation.Correlation?.TimeFromLocal, resolver, defaultCorrelationTime);
             var candidates = cloud.Events
+                .Where(item => EventWithinCandidateTimeLimit(item, correlationTime.Value, candidateTimeLimitMs))
                 .Where(item => EventWithinWindow(item, start, end, baseline.Correlation))
                 .Select(item => Score(
                     item,
@@ -574,12 +587,12 @@ public static class CompareService
             {
                 if (exportCoverage is "verified" or "inferred" or "assumed")
                 {
-                    methodWarnings.Add($"未找到达到关联阈值的 EDR 事件（合格 {qualifiedCandidates.Length} 条，时间窗候选 {candidates.Length} 条；导出覆盖状态：{exportCoverage}）。");
+                    methodWarnings.Add($"未找到达到关联阈值的 EDR 事件（合格 {qualifiedCandidates.Length} 条，候选时间上限内 {candidates.Length} 条；导出覆盖状态：{exportCoverage}）。");
                     expectationStatus = Worse(expectationStatus, "FAIL");
                 }
                 else
                 {
-                    methodWarnings.Add($"没有候选达到关联阈值，但仍保留时间窗内低置信度记录供核对（合格 {qualifiedCandidates.Length} 条，时间窗候选 {candidates.Length} 条）。");
+                    methodWarnings.Add($"没有候选达到关联阈值，但仍保留候选时间上限内的低置信度记录供核对（合格 {qualifiedCandidates.Length} 条，候选 {candidates.Length} 条）。");
                     expectationStatus = Worse(expectationStatus, "INCONCLUSIVE");
                 }
             }
@@ -591,7 +604,7 @@ public static class CompareService
             if (candidates.Length == 0)
             {
                 outputRequirements.Add(TimeDifferenceRequirementJson(expectation, maximumTimeDifferenceMs, null));
-                AddUnevaluatedExpectationRequirements(outputRequirements, expectation, resolver, "时间窗内没有可展示的 EDR 记录，无法检查该项。", includeCardinality: false);
+                AddUnevaluatedExpectationRequirements(outputRequirements, expectation, resolver, "候选时间上限内没有可展示的 EDR 记录，无法检查该项。", includeCardinality: false);
                 methodOutcomes.Add(CreateMethodOutcome(expectation, expectationStatus, requirementStartIndex, outputRequirements,
                     localEvaluations.Length, localEvaluations.Count(value => value.Evaluation.Status == "passed"),
                     candidates.Length, qualifiedCandidates.Length, null, null, methodWarnings));
@@ -1386,6 +1399,12 @@ public static class CompareService
         return created >= start.AddSeconds(-correlation.TimeBeforeSeconds) && created <= end.AddSeconds(correlation.TimeAfterSeconds);
     }
 
+    private static bool EventWithinCandidateTimeLimit(CanonicalEvent item, DateTimeOffset localTime, int candidateTimeLimitMs)
+    {
+        var eventTime = CanonicalEventTime(item);
+        return eventTime is not null && Math.Abs((eventTime.Value - localTime).TotalMilliseconds) <= candidateTimeLimitMs;
+    }
+
     private static AssertionEvaluation Evaluate(BaselineAssertion definition, object? actual, LocalResolver resolver)
     {
         object? expected = definition.ExpectedFromLocal is not null ? resolver.Resolve(definition.ExpectedFromLocal) : definition.Expected;
@@ -2170,6 +2189,18 @@ public static class CompareService
         if (request.BaselinePaths.Count == 0) throw new ArgumentException("至少需要一个 BASELINE。");
         foreach (var path in request.BaselinePaths) if (!File.Exists(path)) throw new FileNotFoundException("找不到 BASELINE。", path);
         if (request.ComparisonId is not null && !Guid.TryParse(request.ComparisonId, out _)) throw new ArgumentException("comparison_id 必须是 UUID。");
+        if (request.StrongCorrelationTimeMs is < 1 or > MaximumStrongCorrelationTimeMs)
+        {
+            throw new ArgumentException($"强关联时间必须是 1..{MaximumStrongCorrelationTimeMs} ms 的整数。");
+        }
+        if (request.CandidateTimeLimitMs is < 1 or > MaximumCandidateTimeLimitMs)
+        {
+            throw new ArgumentException($"无关联候选事件时间上限必须是 1..{MaximumCandidateTimeLimitMs} ms 的整数。");
+        }
+        if (request.CandidateTimeLimitMs < request.StrongCorrelationTimeMs)
+        {
+            throw new ArgumentException("无关联候选事件时间上限不能小于强关联时间。");
+        }
         var output = Path.GetFullPath(request.OutputPath);
         var conclusionOutput = Path.GetFullPath(request.ConclusionOutputPath ?? ConclusionExportService.DefaultOutputPath(output));
         var inputs = request.CloudPaths

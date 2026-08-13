@@ -272,6 +272,30 @@ public static class LocalApiService
         if (string.IsNullOrWhiteSpace(mappingId)) mappingId = "tencent-edr-proc-events-v1";
         var mappingPath = catalog.ResolveMapping(mappingId);
         if (mappingPath is null) return ApiError(400, "未知 mapping_id。");
+        if (!TryParseComparisonTimeParameter(
+                form["strong_correlation_time_ms"].ToString(),
+                CompareService.DefaultStrongCorrelationTimeMs,
+                CompareService.MaximumStrongCorrelationTimeMs,
+                "强关联时间",
+                out var strongCorrelationTimeMs,
+                out var strongCorrelationTimeError))
+        {
+            return ApiError(400, strongCorrelationTimeError!);
+        }
+        if (!TryParseComparisonTimeParameter(
+                form["candidate_time_limit_ms"].ToString(),
+                CompareService.DefaultCandidateTimeLimitMs,
+                CompareService.MaximumCandidateTimeLimitMs,
+                "无关联候选事件时间上限",
+                out var candidateTimeLimitMs,
+                out var candidateTimeLimitError))
+        {
+            return ApiError(400, candidateTimeLimitError!);
+        }
+        if (candidateTimeLimitMs < strongCorrelationTimeMs)
+        {
+            return ApiError(400, "无关联候选事件时间上限不能小于强关联时间。");
+        }
         IReadOnlyDictionary<string, IReadOnlyList<string>> actionNameStandards;
         IReadOnlyDictionary<string, IReadOnlyList<string>> childFileCreateOpNameStandards;
         try
@@ -351,7 +375,9 @@ public static class LocalApiService
                 conclusionPath,
                 comparisonId,
                 actionNameStandards,
-                childFileCreateOpNameStandards));
+                childFileCreateOpNameStandards,
+                strongCorrelationTimeMs,
+                candidateTimeLimitMs));
             return Results.Json(result, ApiJson);
         }
         catch (Exception exception) when (exception is InvalidDataException or JsonException or ArgumentException)
@@ -393,6 +419,29 @@ public static class LocalApiService
             }
         }
         return result;
+    }
+
+    private static bool TryParseComparisonTimeParameter(
+        string text,
+        int defaultValue,
+        int maximumValue,
+        string displayName,
+        out int value,
+        out string? error)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            value = defaultValue;
+            error = null;
+            return true;
+        }
+        if (!int.TryParse(text, out value) || value is < 1 || value > maximumValue)
+        {
+            error = $"{displayName}必须是 1..{maximumValue} ms 的整数。";
+            return false;
+        }
+        error = null;
+        return true;
     }
 
     private static IResult DownloadReport(LocalApiOptions options, string comparisonId, string fileName, string contentType, string downloadName)

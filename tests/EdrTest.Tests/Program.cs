@@ -201,6 +201,45 @@ public static class Program
         Assert(File.Exists(conclusionPath), "应同时写出中文 Markdown 结论。");
         Assert(File.ReadAllText(conclusionPath).Contains("全部能力满足验证基准", StringComparison.Ordinal), "Markdown 应包含中文总体结论。");
 
+        var customTimeResultPath = Path.Combine(fixture.Path, "custom-time-result.json");
+        var timeFilteredCloud = CreateCloudExport(local);
+        var outsideCandidateLimit = timeFilteredCloud[0]!.DeepClone().AsObject();
+        outsideCandidateLimit["Common.EventUUId"] = Ids.NewUuid7();
+        outsideCandidateLimit["Common.EventTime"] = outsideCandidateLimit["Common.EventTime"]!.GetValue<long>() + 1_500;
+        timeFilteredCloud.Add(outsideCandidateLimit);
+        var timeFilteredCloudPath = Path.Combine(fixture.Path, "time-filtered-cloud.json");
+        File.WriteAllText(timeFilteredCloudPath, timeFilteredCloud.ToJsonString(JsonDefaults.Options));
+        var customTime = CompareService.Compare(new CompareRequest(
+            result.LocalExportPath,
+            [timeFilteredCloudPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"),
+            [Path.Combine(repository, "baselines", "windows", "process_create.yaml")],
+            customTimeResultPath,
+            StrongCorrelationTimeMs: 20,
+            CandidateTimeLimitMs: 1_000));
+        var customTimeCandidates = customTime["capabilities"]?[0]?["edr_candidates"]?.AsArray()
+            ?? throw new InvalidOperationException("自定义时间参数结果缺少候选事件。");
+        var customTimeRequirement = customTime["capabilities"]?[0]?["baseline_requirements"]?.AsArray()
+            .Single(value => value?["field"]?.GetValue<string>() == "event.time_difference_ms");
+        Assert(customTimeCandidates.Count == 1,
+            "超出无关联候选事件时间上限的 EDR 记录必须在锚点评分前被裁剪。");
+        Assert(customTimeRequirement?["expected"]?["max"]?.GetValue<int>() == 20
+            && customTime["inputs"]?["strong_correlation_time_ms"]?.GetValue<int>() == 20
+            && customTime["inputs"]?["candidate_time_limit_ms"]?.GetValue<int>() == 1_000,
+            "自定义强关联时间和候选时间上限必须覆盖本轮判断并写入结果。");
+        var customTimeConclusion = File.ReadAllText(ConclusionExportService.DefaultOutputPath(customTimeResultPath));
+        Assert(customTimeConclusion.Contains("强关联时间：`20 ms`", StringComparison.Ordinal)
+            && customTimeConclusion.Contains("无关联候选事件时间上限：`1000 ms`", StringComparison.Ordinal),
+            "中文结论必须记录本轮使用的两项时间参数。");
+        AssertThrows<ArgumentException>(() => CompareService.Compare(new CompareRequest(
+            result.LocalExportPath,
+            [timeFilteredCloudPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"),
+            [Path.Combine(repository, "baselines", "windows", "process_create.yaml")],
+            Path.Combine(fixture.Path, "invalid-time-result.json"),
+            StrongCorrelationTimeMs: 1_001,
+            CandidateTimeLimitMs: 1_000)));
+
         var missingMd5LocalPath = Path.Combine(fixture.Path, "missing-md5-local.json");
         var missingMd5Local = local.DeepClone().AsObject();
         var missingMd5Target = missingMd5Local["programs"]?.AsArray().Single(value => value?["role"]?.GetValue<string>() == "target")
@@ -687,14 +726,14 @@ public static class Program
         Assert(validation["summary"]?["pass"]?.GetValue<int>() == 1, "两个同类子项应分别关联并通过。");
         var candidates = validation["capabilities"]?[0]?["edr_candidates"]?.AsArray()
             ?? throw new InvalidOperationException("多子项结果缺少候选事件。");
-        Assert(candidates.Count == 4, "每个子项应保留自身强匹配和另一条低置信度候选供排查。");
+        Assert(candidates.Count == 2, "默认 1 秒候选上限应让每个子项只保留自身时间附近的记录。");
         var eligibleCandidates = candidates.Where(value => value?["eligible_for_validation"]?.GetValue<bool>() == true).ToArray();
         Assert(eligibleCandidates.Length == 2
             && eligibleCandidates.Any(value => value?["expectation_id"]?.GetValue<string>() == "first-event" && value?["event_id"]?.GetValue<string>() == "first-event")
             && eligibleCandidates.Any(value => value?["expectation_id"]?.GetValue<string>() == "second-event" && value?["event_id"]?.GetValue<string>() == "second-event"),
             "每个子项只能让命中自身本地路径的事件进入自动判定。");
-        Assert(candidates.Count(value => value?["eligible_for_validation"]?.GetValue<bool>() == false) == 2,
-            "未命中子项路径的事件仍应作为低置信度 JSON 块展示。");
+        Assert(candidates.All(value => value?["eligible_for_validation"]?.GetValue<bool>() == true),
+            "相隔 10 秒的其他子项事件应在锚点评分前被候选时间上限排除。");
         Assert(eligibleCandidates.All(value => value?["time_distance_ms"]?.GetValue<long>() == 0), "子项应使用自己的本地发生时间计算强匹配候选的距离。");
         var allMethodResults = validation["capabilities"]?[0]?["method_results"]?.AsArray()
             ?? throw new InvalidOperationException("多方法结果缺少 method_results。");
@@ -724,9 +763,9 @@ public static class Program
             && bestMethodSelection["selected_method_id"]?.GetValue<string>() == "second"
             && bestMethodSelection["selected_method_status"]?.GetValue<string>() == "PASS",
             "只有第二种方法检出时，应采用通过情况最好的第二种方法形成 PASS 结论。");
-        Assert(bestMethodCapability["method_results"]?.AsArray().Single(value => value?["method_id"]?.GetValue<string>() == "first")?["status"]?.GetValue<string>() == "FAIL"
+        Assert(bestMethodCapability["method_results"]?.AsArray().Single(value => value?["method_id"]?.GetValue<string>() == "first")?["status"]?.GetValue<string>() == "INCONCLUSIVE"
             && bestMethodCapability["method_results"]?.AsArray().Single(value => value?["method_id"]?.GetValue<string>() == "second")?["selected_for_conclusion"]?.GetValue<bool>() == true,
-            "未检出的第一种方法仍应显示失败，第二种方法应标记为结论采用。");
+            "第一种方法在导出范围不足且没有 1 秒内候选时应显示无法判定，第二种方法应标记为结论采用。");
         Assert(bestMethodSelection["notice"]?.GetValue<string>().Contains("结果最好的“第二种加载方法”", StringComparison.Ordinal) == true
             && File.ReadAllText(ConclusionExportService.DefaultOutputPath(bestMethodResultPath)).Contains("第二种加载方法", StringComparison.Ordinal),
             "结构化结果和中文结论都应提示采用了哪一种最佳方法。");
@@ -1187,16 +1226,23 @@ public static class Program
         var capability = local["capabilities"]!.AsArray()[0]!.AsObject();
         var start = DateTimeOffset.Parse(capability["started_at_utc"]!.GetValue<string>());
         var end = DateTimeOffset.Parse(capability["ended_at_utc"]!.GetValue<string>());
+        var occurred = DateTimeOffset.Parse(local["local_events"]!.AsArray()[0]!["occurred_at_utc"]!.GetValue<string>());
         var first = CreateCloudExport(local)[0]!.DeepClone().AsObject();
-        first["Common.EventTime"] = start.AddSeconds(-1).ToUnixTimeMilliseconds();
+        first["Common.EventTime"] = occurred.AddMilliseconds(-500).ToUnixTimeMilliseconds();
         first["Child.FilePath"] = @"C:\unrelated\first.exe";
         first["Child.ProcCmdline"] = @"C:\unrelated\first.exe --noise";
         first["Parent.FilePath"] = @"C:\unrelated\parent.exe";
         first["Parent.ProcCmdline"] = @"C:\unrelated\parent.exe --noise";
         var second = first.DeepClone().AsObject();
         second["Common.EventUUId"] = Ids.NewUuid7();
-        second["Common.EventTime"] = end.AddSeconds(1).ToUnixTimeMilliseconds();
-        return new JsonArray(first, second);
+        second["Common.EventTime"] = occurred.AddMilliseconds(500).ToUnixTimeMilliseconds();
+        var coverageStart = first.DeepClone().AsObject();
+        coverageStart["Common.EventUUId"] = Ids.NewUuid7();
+        coverageStart["Common.EventTime"] = start.AddSeconds(-1).ToUnixTimeMilliseconds();
+        var coverageEnd = first.DeepClone().AsObject();
+        coverageEnd["Common.EventUUId"] = Ids.NewUuid7();
+        coverageEnd["Common.EventTime"] = end.AddSeconds(1).ToUnixTimeMilliseconds();
+        return new JsonArray(first, second, coverageStart, coverageEnd);
     }
 
     private static string FindRepositoryRoot()

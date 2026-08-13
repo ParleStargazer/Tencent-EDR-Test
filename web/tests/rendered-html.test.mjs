@@ -124,6 +124,16 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /edrtest\.actionNameStandards\.v1/);
   assert.match(livePage, /child_file_create_op_name_standards/);
   assert.match(livePage, /edrtest\.childFileCreateOpNameStandards\.v1/);
+  assert.match(livePage, /edrtest\.comparisonTimeSettings\.v1/);
+  assert.match(livePage, /strong_correlation_time_ms/);
+  assert.match(livePage, /candidate_time_limit_ms/);
+  assert.match(livePage, /强关联时间（ms）/);
+  assert.match(livePage, /无关联候选事件时间上限（ms）/);
+  assert.match(livePage, /本轮时间参数/);
+  assert.match(livePage, /先按候选上限裁剪，再执行锚点评分/);
+  assert.match(livePage, /defaultStrongCorrelationTimeMs = 15/);
+  assert.match(livePage, /defaultCandidateTimeLimitMs = 1000/);
+  assert.match(styles, /\.comparison-time-grid \{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(livePage, /EDR 原始字段筛选/);
   assert.match(livePage, /Child\.FileCreateOpName/);
   assert.match(livePage, /"win\.file\.rename": "FileRename"/);

@@ -85,6 +85,8 @@ public static class ConclusionExportService
                 .ToArray() ?? [];
             if (values.Length > 0) builder.AppendLine($"- 自定义 Child.FileCreateOpName：`{standard.Key}` → `{string.Join("`、`", values)}`");
         }
+        builder.AppendLine($"- 强关联时间：`{inputs?["strong_correlation_time_ms"]?.GetValue<int>() ?? CompareService.DefaultStrongCorrelationTimeMs} ms`");
+        builder.AppendLine($"- 无关联候选事件时间上限：`{inputs?["candidate_time_limit_ms"]?.GetValue<int>() ?? CompareService.DefaultCandidateTimeLimitMs} ms`");
         builder.AppendLine($"- 检验基准数量：{inputs?["baselines"]?.AsArray().Count ?? 0}");
         builder.AppendLine();
         builder.AppendLine("> 结论仅适用于本次本地运行窗口、用户导入的 EDR 日志范围以及报告中列出的字段映射和 BASELINE 版本。");

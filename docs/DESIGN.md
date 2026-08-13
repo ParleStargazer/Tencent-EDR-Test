@@ -480,7 +480,9 @@ EdrTest.exe compare `
 
 PID 不能单独形成 PASS。Windows 路径比较需统一分隔符、大小写和设备路径前缀，但报告同时保留原始值。
 
-时间方向按 `edr.event.created - local.occurred_at_utc` 计算并保存为 `time_offset_ms`：负数表示 EDR 早于本地行为（提前），正数表示 EDR 晚于本地行为（延后），零表示时间一致。阈值仍按其绝对值 `time_distance_ms = abs(time_offset_ms)` 判断；`≤ max_time_difference_ms` 会增加 100 分强证据，并在 EDR 条件中产生独立的 required 结果。超过上限时即使路径和 PID 一致，也不能得到 PASS。时间证据只有与至少一个身份锚点同时命中时才能帮助候选达到关联阈值。
+时间方向按 `edr.event.created - local.occurred_at_utc` 计算并保存为 `time_offset_ms`：负数表示 EDR 早于本地行为（提前），正数表示 EDR 晚于本地行为（延后），零表示时间一致。阈值仍按其绝对值 `time_distance_ms = abs(time_offset_ms)` 判断；本轮可调的 `strong_correlation_time_ms`（默认 15 ms）覆盖 BASELINE 中的 `max_time_difference_ms`，达到阈值会增加 100 分强证据，并在 EDR 条件中产生独立的 required 结果。超过上限时即使路径和 PID 一致，也不能得到 PASS。时间证据只有与至少一个身份锚点同时命中时才能帮助候选达到关联阈值。
+
+候选召回另设 `candidate_time_limit_ms`（默认 1000 ms）。比较器先按每个子项自己的本地行为时间裁掉绝对时间差超过该上限的 EDR 事件，再执行路径、程序、PID 等锚点评分；这既保留强关联窗口外的近邻排查记录，也避免对 BASELINE 原有 60 秒前、300 秒后的宽导出窗口内全部无关日志逐项评分。候选上限必须大于或等于强关联时间，两项参数都会写入结构化结果和中文结论。
 
 本地运行日志是绝对基准，正常情况下应完整提供路径、程序身份、PID 和发生时间。候选分层只描述云端记录与这些本地条件的关联程度：高/中置信度候选可进入自动判定；低置信度候选只供继续排查，不能因为时间接近或 `Action.Name` 相同就自动通过。
 

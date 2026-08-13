@@ -258,6 +258,7 @@ type EdrCandidate = {
 type ValidationResult = {
   comparison_id: string;
   compared_at_utc: string;
+  inputs?: { strong_correlation_time_ms?: number; candidate_time_limit_ms?: number };
   summary: { pass: number; partial: number; fail: number; inconclusive: number; not_compared: number };
   conclusion: {
     verdict: Exclude<ValidationStatus, "NOT_COMPARED">;
@@ -273,6 +274,9 @@ type FileChoice = { file: File | null; state: "empty" | "ready"; name: string; d
 const emptyFile: FileChoice = { file: null, state: "empty", name: "尚未选择文件", detail: "等待导入" };
 const actionNameStorageKey = "edrtest.actionNameStandards.v1";
 const childFileCreateOpNameStorageKey = "edrtest.childFileCreateOpNameStandards.v1";
+const comparisonTimeStorageKey = "edrtest.comparisonTimeSettings.v1";
+const defaultStrongCorrelationTimeMs = 15;
+const defaultCandidateTimeLimitMs = 1000;
 const defaultActionNameInputs: Record<string, string> = {
   "win.file.rename": "FileRename",
   "win.process.create": "ProcessCreate",
@@ -501,6 +505,8 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
   const [localFile, setLocalFile] = useState<FileChoice>(emptyFile);
   const [actionNameInputs, setActionNameInputs] = useState<Record<string, string>>(defaultActionNameInputs);
   const [childFileCreateOpNameInputs, setChildFileCreateOpNameInputs] = useState<Record<string, string>>(defaultChildFileCreateOpNameInputs);
+  const [strongCorrelationTimeMs, setStrongCorrelationTimeMs] = useState(defaultStrongCorrelationTimeMs);
+  const [candidateTimeLimitMs, setCandidateTimeLimitMs] = useState(defaultCandidateTimeLimitMs);
   const [comparison, setComparison] = useState<ValidationResult | null>(null);
   const [isComparing, setIsComparing] = useState(false);
   const [notice, setNotice] = useState("正在连接本地 Runner…");
@@ -567,6 +573,20 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
       };
       setActionNameInputs(loadStandards(actionNameStorageKey, defaultActionNameInputs));
       setChildFileCreateOpNameInputs(loadStandards(childFileCreateOpNameStorageKey, defaultChildFileCreateOpNameInputs));
+      const serializedTimeSettings = window.localStorage.getItem(comparisonTimeStorageKey);
+      if (serializedTimeSettings !== null) {
+        try {
+          const saved = JSON.parse(serializedTimeSettings) as { strongCorrelationTimeMs?: unknown; candidateTimeLimitMs?: unknown };
+          if (typeof saved.strongCorrelationTimeMs === "number" && saved.strongCorrelationTimeMs >= 1 && saved.strongCorrelationTimeMs <= 60_000) {
+            setStrongCorrelationTimeMs(saved.strongCorrelationTimeMs);
+          }
+          if (typeof saved.candidateTimeLimitMs === "number" && saved.candidateTimeLimitMs >= 1 && saved.candidateTimeLimitMs <= 300_000) {
+            setCandidateTimeLimitMs(saved.candidateTimeLimitMs);
+          }
+        } catch {
+          window.localStorage.removeItem(comparisonTimeStorageKey);
+        }
+      }
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -659,13 +679,48 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
     setNotice("已清空两类 EDR 原始字段筛选；留空能力将沿用原关联规则。");
   }
 
+  function saveComparisonTimeSettings() {
+    if (!validComparisonTimeSettings()) return;
+    window.localStorage.setItem(comparisonTimeStorageKey, JSON.stringify({ strongCorrelationTimeMs, candidateTimeLimitMs }));
+    setNotice(`已保存时间参数：强关联 ${strongCorrelationTimeMs} ms，候选上限 ${candidateTimeLimitMs} ms。`);
+  }
+
+  function resetComparisonTimeSettings() {
+    setStrongCorrelationTimeMs(defaultStrongCorrelationTimeMs);
+    setCandidateTimeLimitMs(defaultCandidateTimeLimitMs);
+    window.localStorage.setItem(comparisonTimeStorageKey, JSON.stringify({
+      strongCorrelationTimeMs: defaultStrongCorrelationTimeMs,
+      candidateTimeLimitMs: defaultCandidateTimeLimitMs,
+    }));
+    setNotice("已恢复默认时间参数：强关联 15 ms，候选上限 1000 ms。");
+  }
+
+  function validComparisonTimeSettings(): boolean {
+    if (!Number.isInteger(strongCorrelationTimeMs) || strongCorrelationTimeMs < 1 || strongCorrelationTimeMs > 60_000) {
+      setNotice("强关联时间必须是 1–60000 ms 的整数。");
+      return false;
+    }
+    if (!Number.isInteger(candidateTimeLimitMs) || candidateTimeLimitMs < 1 || candidateTimeLimitMs > 300_000) {
+      setNotice("无关联候选事件时间上限必须是 1–300000 ms 的整数。");
+      return false;
+    }
+    if (candidateTimeLimitMs < strongCorrelationTimeMs) {
+      setNotice("无关联候选事件时间上限不能小于强关联时间。");
+      return false;
+    }
+    return true;
+  }
+
   async function compare() {
     if (!cloudFile.file) { setNotice("请先选择从 EDR 平台导出的云端事件文件。"); return; }
     if (!localFile.file && !selectedRunId) { setNotice("请选择已完成轮次，或导入本地运行 JSON。"); return; }
     if (!mappingId) { setNotice("本地仓库没有可用的字段映射。"); return; }
+    if (!validComparisonTimeSettings()) return;
     const form = new FormData();
     form.append("cloud_file", cloudFile.file);
     form.append("mapping_id", mappingId);
+    form.append("strong_correlation_time_ms", String(strongCorrelationTimeMs));
+    form.append("candidate_time_limit_ms", String(candidateTimeLimitMs));
     const actionNameStandards = Object.fromEntries(Object.entries(actionNameInputs)
       .map(([capabilityId, value]) => [capabilityId, parseFilterValues(value)])
       .filter(([, values]) => values.length > 0));
@@ -718,6 +773,9 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
           actionNameInputs={actionNameInputs} onActionNameInput={(capabilityId, value) => setActionNameInputs((current) => ({ ...current, [capabilityId]: value }))}
           childFileCreateOpNameInputs={childFileCreateOpNameInputs} onChildFileCreateOpNameInput={(capabilityId, value) => setChildFileCreateOpNameInputs((current) => ({ ...current, [capabilityId]: value }))}
           onSaveEdrFilters={saveEdrFilterStandards} onClearEdrFilters={clearEdrFilterStandards}
+          strongCorrelationTimeMs={strongCorrelationTimeMs} candidateTimeLimitMs={candidateTimeLimitMs}
+          onStrongCorrelationTimeMs={setStrongCorrelationTimeMs} onCandidateTimeLimitMs={setCandidateTimeLimitMs}
+          onSaveComparisonTimeSettings={saveComparisonTimeSettings} onResetComparisonTimeSettings={resetComparisonTimeSettings}
           onLocalFile={(event) => chooseFile(setLocalFile, event)} onCloudFile={(event) => chooseFile(setCloudFile, event)} onManifestFile={(event) => chooseFile(setManifestFile, event)}
           comparison={comparison} isComparing={isComparing} onCompare={() => void compare()}
           onDownloadJson={() => comparison && downloadJson(`validation-${comparison.comparison_id}.json`, comparison)} onDownloadConclusion={() => void downloadConclusion()}
@@ -874,6 +932,9 @@ type CompareWorkspaceProps = {
   actionNameInputs: Record<string, string>; onActionNameInput: (capabilityId: string, value: string) => void;
   childFileCreateOpNameInputs: Record<string, string>; onChildFileCreateOpNameInput: (capabilityId: string, value: string) => void;
   onSaveEdrFilters: () => void; onClearEdrFilters: () => void;
+  strongCorrelationTimeMs: number; candidateTimeLimitMs: number;
+  onStrongCorrelationTimeMs: (value: number) => void; onCandidateTimeLimitMs: (value: number) => void;
+  onSaveComparisonTimeSettings: () => void; onResetComparisonTimeSettings: () => void;
   comparison: ValidationResult | null; isComparing: boolean; onCompare: () => void; onDownloadJson: () => void; onDownloadConclusion: () => void;
 };
 
@@ -882,6 +943,7 @@ function CompareWorkspace(props: CompareWorkspaceProps) {
     <PageHeader index="03" eyebrow="离线比较" title="核对 EDR 日志" description="选择本地运行结果和 EDR 导出日志。系统会按 BASELINE 逐条说明要求是什么、是否满足，以及依据是什么。" apiState={props.apiState} />
     <section className="panel compare-input-panel"><div className="panel-heading compare-heading"><div><p className="section-index">A / 准备输入</p><h2>选择本地结果与 EDR 日志</h2><p className="panel-description">文件只会发送到 127.0.0.1 的本地比较服务。</p></div><button className="primary-button compact" type="button" onClick={props.onCompare} disabled={props.isComparing || props.apiState !== "online"}>{props.isComparing ? "正在逐项核对" : "开始离线比较"}<span aria-hidden="true">→</span></button></div>
       <div className="compare-select-grid"><label className="field-label">使用已完成轮次<select value={props.selectedRunId} onChange={(event) => props.onSelectedRunId(event.target.value)} disabled={Boolean(props.localFile.file)}><option value="">请选择本机轮次</option>{props.completedRuns.map((run) => <option value={run.operation_id} key={run.operation_id}>{run.name} · {formatTime(run.started_at_utc)}</option>)}</select><span className="field-help">导入本地 JSON 后，此选择会被替代。</span></label><label className="field-label">EDR 字段映射<select value={props.mappingId} onChange={(event) => props.onMappingId(event.target.value)}>{props.mappings.map((mapping) => <option value={mapping.profile_id} key={mapping.profile_id}>{mapping.vendor} {mapping.product} · {mapping.profile_id}</option>)}</select><span className="field-help">负责把厂商字段转换成统一字段。</span></label></div>
+      <div className="comparison-time-settings"><div className="comparison-time-heading"><div><span>时间关联参数</span><strong>先裁剪候选，再判断强关联</strong><p>候选上限越小，需要评分的无关 EDR 日志越少；两项都以本地行为时间为基准。</p></div><div><button className="text-button" type="button" onClick={props.onResetComparisonTimeSettings}>恢复默认</button><button className="secondary-button" type="button" onClick={props.onSaveComparisonTimeSettings}>保存到本机</button></div></div><div className="comparison-time-grid"><label className="field-label">强关联时间（ms）<input type="number" min="1" max="60000" step="1" value={props.strongCorrelationTimeMs} onChange={(event) => props.onStrongCorrelationTimeMs(Number(event.target.value))} /><span className="field-help">默认 15 ms；命中身份锚点且时间差不超过该值时形成强时间证据。</span></label><label className="field-label">无关联候选事件时间上限（ms）<input type="number" min="1" max="300000" step="1" value={props.candidateTimeLimitMs} onChange={(event) => props.onCandidateTimeLimitMs(Number(event.target.value))} /><span className="field-help">默认 1000 ms（1 秒）；超出范围的 EDR 事件不进入锚点评分和候选展示。</span></label></div></div>
       <div className="upload-grid"><FileSlot id="local-file" step="1" title="本地运行 JSON" hint="可选：用于比较其他机器或历史轮次" choice={props.localFile} onChange={props.onLocalFile} /><FileSlot id="cloud-file" step="2" title="EDR 云端事件" hint="必需：支持 JSON 数组或 JSONL" choice={props.cloudFile} required onChange={props.onCloudFile} /><FileSlot id="manifest-file" step="3" title="云端导出清单" hint="建议：证明主机与时间范围完整" choice={props.manifestFile} onChange={props.onManifestFile} /></div>
     </section>
     <EdrFilterSettings
@@ -928,6 +990,7 @@ function ComparisonResultPanel({ result, onDownloadJson, onDownloadConclusion }:
   const groups = result ? groupByCapabilityCategory(result.capabilities) : [];
   return <section className="panel comparison-detail-panel"><div className="panel-heading"><div><p className="section-index">D / 比较结果</p><h2>要求满足情况</h2><p className="panel-description">结果先按能力大类折叠；展开大类后再选择具体能力，本地条件默认收起，EDR 条件与关联候选日志默认展开。</p></div></div>{result ? <>
     <div className={`conclusion-card ${result.conclusion.verdict.toLowerCase()}`}><div><span>总体结论</span><strong>{result.conclusion.label_zh}</strong><em>{result.conclusion.pass_rate === null ? "通过率不可计算" : `完整通过率 ${(result.conclusion.pass_rate * 100).toFixed(1)}%`}</em></div><p>{result.conclusion.statement_zh}</p></div>
+    <div className="comparison-parameter-summary"><span>本轮时间参数</span><strong>强关联 ≤ {result.inputs?.strong_correlation_time_ms ?? defaultStrongCorrelationTimeMs} ms</strong><strong>候选上限 ≤ {result.inputs?.candidate_time_limit_ms ?? defaultCandidateTimeLimitMs} ms</strong><em>先按候选上限裁剪，再执行锚点评分</em></div>
     <div className="result-summary"><div><span>通过</span><strong className="pass-text">{result.summary.pass}</strong></div><div><span>部分通过</span><strong>{result.summary.partial}</strong></div><div><span>失败</span><strong className="fail-text">{result.summary.fail}</strong></div><div><span>无法判定</span><strong>{result.summary.inconclusive}</strong></div></div>
     <div className="comparison-category-stack">{groups.map((group) => <CapabilityResultCategory group={group} key={group.id} />)}</div>
     <div className="result-actions"><button className="secondary-button" type="button" onClick={onDownloadJson}>下载完整 JSON</button><button className="secondary-button" type="button" onClick={onDownloadConclusion}>下载中文结论</button></div>
@@ -995,7 +1058,7 @@ function EdrCandidateList({ candidates, onOpenCandidate }: { candidates: EdrCand
     const state = candidate.eligible_for_validation ? "eligible" : candidate.anchor_qualified ? "action-rejected" : "exploratory";
     const label = candidate.eligible_for_validation ? "达到关联阈值" : candidate.anchor_qualified ? "锚点强匹配 · EDR 字段已排除" : "低置信度排查";
     return <button className={`candidate-card ${state}`} type="button" aria-label={`打开候选 #${index + 1} 的 JSON 对照`} onClick={() => onOpenCandidate?.(candidate)} key={`${candidate.expectation_id}-${candidate.raw_ref}-${index}`}><span className="candidate-rank">#{index + 1}</span><span className="candidate-identity"><strong>{candidate.event_id || "无事件 ID"}</strong><code>{candidate.expectation_id} · {label}</code></span><span className={`confidence-badge ${candidate.confidence}`}>{confidenceLabel(candidate.confidence)}</span><span className="candidate-score"><strong>{candidate.correlation_score} 分</strong><span>{formatSignedTimeOffset(candidate.time_offset_ms)}</span></span><span className="candidate-open-action">对照 JSON</span></button>;
-  })}</div> : <div className="candidate-empty">时间窗内没有可展示的 EDR 候选日志。</div>}</section>;
+  })}</div> : <div className="candidate-empty">候选时间上限内没有可展示的 EDR 日志。</div>}</section>;
 }
 
 function JsonComparisonModal({ entry, candidates, initialSelectedIndex, onClose }: { entry: ValidationEntry; candidates: EdrCandidate[]; initialSelectedIndex: number; onClose: () => void }) {

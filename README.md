@@ -86,6 +86,8 @@ dotnet run --project src/EdrTest -- compare `
   --cloud .\cloud-events.json `
   --mapping .\mappings\tencent-edr-proc-events-v1.yaml `
   --baseline .\baselines\windows\process_create.yaml `
+  --strong-correlation-time-ms 15 `
+  --candidate-time-limit-ms 1000 `
   --out .\validation-result.json `
   --conclusion-out .\validation-conclusion.md
 ```

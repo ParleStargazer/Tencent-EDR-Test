@@ -105,6 +105,20 @@ public static class Program
         {
             baselines.AddRange(Directory.EnumerateFiles(baselineDirectory, "*.yaml", SearchOption.AllDirectories).Select(Path.GetFullPath));
         }
+        var strongCorrelationTimeMs = ParseIntegerOption(
+            options.Get("strong-correlation-time-ms"),
+            CompareService.DefaultStrongCorrelationTimeMs,
+            CompareService.MaximumStrongCorrelationTimeMs,
+            "--strong-correlation-time-ms");
+        var candidateTimeLimitMs = ParseIntegerOption(
+            options.Get("candidate-time-limit-ms"),
+            CompareService.DefaultCandidateTimeLimitMs,
+            CompareService.MaximumCandidateTimeLimitMs,
+            "--candidate-time-limit-ms");
+        if (candidateTimeLimitMs < strongCorrelationTimeMs)
+        {
+            throw new ArgumentException("--candidate-time-limit-ms 不能小于 --strong-correlation-time-ms。");
+        }
         var request = new CompareRequest(
             options.Require("local"),
             options.GetMany("cloud"),
@@ -112,7 +126,9 @@ public static class Program
             baselines,
             options.Require("out"),
             options.Get("cloud-manifest"),
-            options.Get("conclusion-out"));
+            options.Get("conclusion-out"),
+            StrongCorrelationTimeMs: strongCorrelationTimeMs,
+            CandidateTimeLimitMs: candidateTimeLimitMs);
         var result = CompareService.Compare(request);
         var summary = result["summary"]!.AsObject();
         Console.WriteLine($"比较完成：PASS={summary["pass"]} PARTIAL={summary["partial"]} FAIL={summary["fail"]} INCONCLUSIVE={summary["inconclusive"]}");
@@ -154,6 +170,13 @@ public static class Program
         ? port
         : throw new ArgumentException("--port 必须在 1024..65535 内。");
 
+    private static int ParseIntegerOption(string? text, int defaultValue, int maximumValue, string optionName) =>
+        text is null
+            ? defaultValue
+            : int.TryParse(text, out var value) && value is >= 1 && value <= maximumValue
+                ? value
+                : throw new ArgumentException($"{optionName} 必须是 1..{maximumValue} 的整数。");
+
     private static string? ReadInlineOrFile(string? value)
     {
         if (value is null) return null;
@@ -175,6 +198,7 @@ public static class Program
                   --mapping <mapping.yaml> --baseline <baseline.yaml> [--baseline <...>]
                   [--cloud-manifest <manifest.json>] --out <validation-result.json>
                   [--conclusion-out <validation-conclusion.md>]
+                  [--strong-correlation-time-ms 15] [--candidate-time-limit-ms 1000]
               inspect --db <run.db>
               serve [--host 127.0.0.1] [--port 4317] [--repo-root <path>]
                   [--samples-root samples] [--runs-dir runs]
