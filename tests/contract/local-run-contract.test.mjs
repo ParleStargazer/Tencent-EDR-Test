@@ -306,6 +306,43 @@ test("User Account Activity 五项清单、BASELINE、Canonical 字段和权限�
   assert.match(accountController, /contains_password.*false/s);
 });
 
+test("Registry Activity 双方法样本、真实 RegEvents 字段和 BASSLINE 校准完整", async () => {
+  const normalizedSchema = await readJson("schemas/normalized-event.schema.json");
+  const profile = await readJson("docs/reference/tencent-edr-reg-events-field-profile.json");
+  const mapping = await readFile(new URL("mappings/tencent-edr-proc-events-v1.yaml", root), "utf8");
+  const controller = await readFile(new URL("sample-src/RegistryActivity/RegistryActivity.Controller/Program.cs", root), "utf8");
+  const behavior = await readFile(new URL("sample-src/RegistryActivity/RegistryActivity.Behavior/Program.cs", root), "utf8");
+
+  for (const operation of ["create", "modify", "delete"]) {
+    const manifest = await readJson(`sample-src/RegistryActivity/manifests/win.registry.${operation}/capability.json`);
+    const baseline = await readFile(new URL(`baselines/windows/registry_${operation}.yaml`, root), "utf8");
+    assert.equal(manifest.version, "0.2.0");
+    assert.ok(manifest.expected_fact_keys.includes(`registry.isolated_key.${operation}_succeeded`));
+    assert.ok(manifest.expected_fact_keys.includes(`registry.run_key_native.${operation}_succeeded`));
+    assert.match(baseline, /method_selection: \{ strategy: best \}/);
+    assert.match(baseline, /method: \{ id: isolated_key,/);
+    assert.match(baseline, /method: \{ id: run_key_native,/);
+    assert.match(baseline, /max_time_difference_ms: 15/);
+  }
+
+  ["old_value_data", "value_type", "old_value_type", "group_name"].forEach((field) =>
+    assert.ok(field in normalizedSchema.properties.registry.properties));
+  assert.equal(profile.source.event_count, 2168);
+  assert.equal(profile.event_identity.action_names.RegSetValue, 2168);
+  assert.equal(profile.registry_groups["启动项"], 26);
+  assert.equal(profile.old_value_consistency.old_type_zero_and_old_data_present, 0);
+  assert.match(controller, /Methods = \["isolated_key", "run_key_native"\]/);
+  assert.match(controller, /remove_exact_run_value_only/);
+  assert.match(behavior, /RegSetValueExW/);
+  assert.match(behavior, /RegDeleteValueW/);
+  assert.match(mapping, /route_id: registry-set-value/);
+  assert.match(mapping, /source: "Child\.RegOldValData"/);
+  assert.match(mapping, /source: "Child\.RegGroupName"/);
+  const compareService = await readFile(new URL("src/EdrTest/CompareService.cs", root), "utf8");
+  assert.match(compareService, /registry_hive_path/);
+  assert.match(compareService, /hkey_users\\\\s-1-5-21/);
+});
+
 test("Network Activity 五项清单、BASELINE、回环编排和腾讯路由完整", async () => {
   const normalizedSchema = await readJson("schemas/normalized-event.schema.json");
   const localEventDataSchema = await readJson("schemas/local-event-data.schema.json");

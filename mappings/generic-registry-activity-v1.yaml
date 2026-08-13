@@ -33,6 +33,10 @@ routes:
       "registry.key": { source: registry_key, transform: [windows_path] }
       "registry.value_name": { source: registry_value_name }
       "registry.value_data": { source: registry_value_data, on_empty: null }
+      "registry.old_value_data": { source: registry_old_value_data, on_empty: null }
+      "registry.value_type": { source: registry_value_type, on_empty: null }
+      "registry.old_value_type": { source: registry_old_value_type, on_empty: null }
+      "registry.group_name": { source: registry_group_name, on_empty: null }
 
 raw_reference: { id_field: event_id, ordinal_base: 0 }
 unmapped_fields: { policy: count-and-ignore, preserve_in_report: false }

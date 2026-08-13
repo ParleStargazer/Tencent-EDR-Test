@@ -46,33 +46,40 @@ foreach ($capability in $localRun.capabilities) {
 $genericCloud = @()
 $tencentCloud = @()
 foreach ($capability in $localRun.capabilities) {
-    $event = $localRun.local_events | Where-Object case_run_id -eq $capability.case_run_id | Select-Object -First 1
-    $actor = $localRun.programs | Where-Object program_instance_id -eq $event.actor_program_id | Select-Object -First 1
     $facts = @{}
     $localRun.local_facts | Where-Object case_run_id -eq $capability.case_run_id | ForEach-Object { $facts[$_.key] = $_.value }
-    $cloudValue = if ($event.event_action -eq "delete") { $facts["registry.before.value_data"] } else { $facts["registry.after.value_data"] }
-    $genericCloud += [ordered]@{
-        table = "RegistryActivity"; event_id = $event.local_event_id; host_id = $localRun.run.host.machine_id
-        event_time = $event.occurred_at_utc; action = $event.event_action; actor_pid = $actor.pid
-        actor_entity_id = $actor.program_instance_id; actor_name = $actor.file_name; actor_executable = $actor.executable
-        actor_command_line = $actor.command_line; user_name = $env:USERNAME; user_domain = $env:USERDOMAIN
-        registry_key = $facts["registry.key_path"]; registry_value_name = $facts["registry.value_name"]
-        registry_value_data = $cloudValue
-    }
-    $actionName = switch ($event.event_action) {
-        "create" { "RegCreateKeyExW" }
-        "modify" { "RegSetValue" }
-        "delete" { "RegDeleteValueW" }
-    }
-    $tencentCloud += [ordered]@{
-        OS = "Windows"; '@table' = "RegEvents"; '@timestamp' = $event.observed_at_utc
-        'Action.Type' = "Reg"; 'Action.Name' = $actionName; 'Common.EventUUId' = $event.local_event_id
-        'Common.EventTime' = [DateTimeOffset]::Parse($event.occurred_at_utc).ToUnixTimeMilliseconds()
-        'Common.Mid' = $localRun.run.host.machine_id; 'Environment.HostName' = $localRun.run.host.hostname
-        'Parent.ProcPid' = $actor.pid; 'Parent.FileName' = $actor.file_name; 'Parent.FilePath' = $actor.executable
-        'Parent.ProcCmdline' = $actor.command_line; 'Parent.ProcUserName' = $env:USERNAME; 'Parent.ProcDomainName' = $env:USERDOMAIN
-        'Child.RegistryPath' = $facts["registry.key_path"]; 'Child.RegistryValueName' = $facts["registry.value_name"]
-        'Child.RegValData' = $cloudValue
+    foreach ($event in @($localRun.local_events | Where-Object case_run_id -eq $capability.case_run_id)) {
+        $method = $event.data.method
+        $prefix = "registry.$method"
+        $actor = $localRun.programs | Where-Object program_instance_id -eq $event.actor_program_id | Select-Object -First 1
+        $cloudValue = if ($event.event_action -eq "delete") { $facts["$prefix.before.value_data"] } else { $facts["$prefix.after.value_data"] }
+        $genericCloud += [ordered]@{
+            table = "RegistryActivity"; event_id = $event.local_event_id; host_id = $localRun.run.host.machine_id
+            event_time = $event.occurred_at_utc; action = $event.event_action; actor_pid = $actor.pid
+            actor_entity_id = $actor.program_instance_id; actor_name = $actor.file_name; actor_executable = $actor.executable
+            actor_command_line = $actor.command_line; user_name = $env:USERNAME; user_domain = $env:USERDOMAIN
+            registry_key = $facts["$prefix.key_path"]; registry_value_name = $facts["$prefix.value_name"]
+            registry_value_data = $cloudValue; registry_old_value_data = $facts["$prefix.before.value_data"]
+            registry_old_value_type = if ($event.event_action -eq "create") { 0 } else { "字符串" }
+            registry_value_type = "字符串"; registry_group_name = if ($method -eq "run_key_native") { "启动项" } else { "测试路径" }
+        }
+        $actionName = switch ($event.event_action) {
+            "create" { if ($method -eq "run_key_native") { "RegSetValue" } else { "RegCreateKeyExW" } }
+            "modify" { "RegSetValue" }
+            "delete" { "RegDeleteValueW" }
+        }
+        $tencentCloud += [ordered]@{
+            OS = "Windows"; '@table' = "RegEvents"; '@timestamp' = $event.observed_at_utc
+            'Action.Type' = "Reg"; 'Action.Name' = $actionName; 'Common.EventUUId' = $event.local_event_id
+            'Common.EventTime' = [DateTimeOffset]::Parse($event.occurred_at_utc).ToUnixTimeMilliseconds()
+            'Common.Mid' = $localRun.run.host.machine_id; 'Environment.HostName' = $localRun.run.host.hostname
+            'Parent.ProcPid' = $actor.pid; 'Parent.FileName' = $actor.file_name; 'Parent.FilePath' = $actor.executable
+            'Parent.ProcCmdline' = $actor.command_line; 'Parent.ProcUserName' = $env:USERNAME; 'Parent.ProcDomainName' = $env:USERDOMAIN
+            'Child.RegKeyPath' = $facts["$prefix.key_path"]; 'Child.RegValName' = $facts["$prefix.value_name"]
+            'Child.RegValData' = $cloudValue; 'Child.RegOldValData' = $facts["$prefix.before.value_data"]
+            'Child.RegOldValType' = if ($event.event_action -eq "create") { 0 } else { "字符串" }
+            'Child.RegValType' = "字符串"; 'Child.RegGroupName' = if ($method -eq "run_key_native") { "启动项" } else { "测试路径" }
+        }
     }
 }
 $genericPath = Join-Path $OutputRoot "synthetic-cloud.registry.json"
@@ -96,15 +103,21 @@ $tencentResult = Get-Content $tencentResultPath -Raw | ConvertFrom-Json -Depth 1
 $currentRunRegistryKeysCleaned = $true
 foreach ($capability in $localRun.capabilities) {
     $keyPath = $localRun.local_facts |
-        Where-Object { $_.case_run_id -eq $capability.case_run_id -and $_.key -eq "registry.key_path" } |
+        Where-Object { $_.case_run_id -eq $capability.case_run_id -and $_.key -eq "registry.isolated_key.key_path" } |
         Select-Object -First 1 -ExpandProperty value
-    if ([string]::IsNullOrWhiteSpace($keyPath) -or -not $keyPath.StartsWith("HKCU\Software\EdrTest\Runs\", [System.StringComparison]::OrdinalIgnoreCase)) {
+    if ([string]::IsNullOrWhiteSpace($keyPath) -or -not $keyPath.StartsWith("HKEY_CURRENT_USER\Software\EdrTest\Runs\", [System.StringComparison]::OrdinalIgnoreCase)) {
         $currentRunRegistryKeysCleaned = $false
         continue
     }
-    $providerPath = "HKCU:\" + $keyPath.Substring(5)
+    $providerPath = "HKCU:\" + $keyPath.Substring(18)
     $nonceContainer = $providerPath.Substring(0, $providerPath.LastIndexOf('\'))
     if ((Test-Path $providerPath) -or (Test-Path $nonceContainer)) {
+        $currentRunRegistryKeysCleaned = $false
+    }
+    $runValueName = $localRun.local_facts |
+        Where-Object { $_.case_run_id -eq $capability.case_run_id -and $_.key -eq "registry.run_key_native.value_name" } |
+        Select-Object -First 1 -ExpandProperty value
+    if ((Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $runValueName -ErrorAction SilentlyContinue).$runValueName) {
         $currentRunRegistryKeysCleaned = $false
     }
 }
@@ -112,10 +125,10 @@ $assertions = [ordered]@{
     run_completed = $localRun.run.status -eq "COMPLETED"
     capability_count_is_3 = @($localRun.capabilities).Count -eq 3
     all_capabilities_local_pass = $failedCapabilities.Count -eq 0
-    program_count_is_6 = @($localRun.programs).Count -eq 6
-    event_count_is_3 = @($localRun.local_events).Count -eq 3
-    artifact_count_is_3 = @($localRun.artifacts).Count -eq 3
-    cleanup_count_is_3 = @($localRun.cleanup_results).Count -eq 3
+    program_count_is_9 = @($localRun.programs).Count -eq 9
+    event_count_is_6 = @($localRun.local_events).Count -eq 6
+    artifact_count_is_6 = @($localRun.artifacts).Count -eq 6
+    cleanup_count_is_6 = @($localRun.cleanup_results).Count -eq 6
     all_cleanup_succeeded = $failedCleanup.Count -eq 0
     all_manifest_expected_facts_present = $missingFacts.Count -eq 0
     current_run_registry_keys_and_nonce_containers_removed = $currentRunRegistryKeysCleaned

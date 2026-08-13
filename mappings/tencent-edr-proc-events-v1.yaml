@@ -777,9 +777,9 @@ routes:
       "winlog.logon.id": { source: "Child.TargetLogonId" }
       "winlog.logon.type": { source: "Child.LogonType", on_empty: null }
 
-  # 腾讯官方文档确认注册表内核事件位于 RegEvents，设置动作使用 RegSetValue，
-  # 且值数据字段为 Child.RegValData。其余键路径/值名字段在不同 EDR 版本的导出
-  # 中存在命名差异，因此按优先级读取兼容别名；实际使用时应以测试机新导出继续校准。
+  # reference/reg/edr_reg_relate.json 的 2168 条真实导出均来自 RegEvents，动作均为
+  # RegSetValue。产品只输出已归入 Child.RegGroupName 的重点注册表区域；新旧值与
+  # 新旧类型的实际字段如下。兼容别名保留在真实字段之后，用于旧版导出。
   - route_id: registry-create
     when:
       "OS": Windows
@@ -803,15 +803,19 @@ routes:
       "registry.key": { sources: ["Child.RegKeyPath", "Child.RegPath", "Child.RegistryPath", "Child.RegObject"], transform: [windows_path], on_empty: null }
       "registry.value_name": { sources: ["Child.RegValName", "Child.RegValueName", "Child.RegistryValueName"], on_empty: null }
       "registry.value_data": { source: "Child.RegValData", on_empty: null }
+      "registry.old_value_data": { source: "Child.RegOldValData", on_empty: null }
+      "registry.value_type": { source: "Child.RegValType", on_empty: null }
+      "registry.old_value_type": { source: "Child.RegOldValType", on_empty: null }
+      "registry.group_name": { source: "Child.RegGroupName", on_empty: null }
 
-  - route_id: registry-modify
+  - route_id: registry-set-value
     when:
       "OS": Windows
       "@table": RegEvents
       "Action.Name": [RegSetValue, RegSetValueEx, RegSetValueExW]
     canonical:
       "event.type": { constant: registry }
-      "event.action": { constant: modify }
+      "event.action": { constant: set_value }
       "event.category": { constant: registry }
       "event.id": { source: "Common.EventUUId" }
       "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
@@ -827,6 +831,10 @@ routes:
       "registry.key": { sources: ["Child.RegKeyPath", "Child.RegPath", "Child.RegistryPath", "Child.RegObject"], transform: [windows_path], on_empty: null }
       "registry.value_name": { sources: ["Child.RegValName", "Child.RegValueName", "Child.RegistryValueName"], on_empty: null }
       "registry.value_data": { source: "Child.RegValData", on_empty: null }
+      "registry.old_value_data": { source: "Child.RegOldValData", on_empty: null }
+      "registry.value_type": { source: "Child.RegValType", on_empty: null }
+      "registry.old_value_type": { source: "Child.RegOldValType", on_empty: null }
+      "registry.group_name": { source: "Child.RegGroupName", on_empty: null }
 
   - route_id: registry-delete
     when:
@@ -851,6 +859,10 @@ routes:
       "registry.key": { sources: ["Child.RegKeyPath", "Child.RegPath", "Child.RegistryPath", "Child.RegObject"], transform: [windows_path], on_empty: null }
       "registry.value_name": { sources: ["Child.RegValName", "Child.RegValueName", "Child.RegistryValueName"], on_empty: null }
       "registry.value_data": { source: "Child.RegValData", on_empty: null }
+      "registry.old_value_data": { source: "Child.RegOldValData", on_empty: null }
+      "registry.value_type": { source: "Child.RegValType", on_empty: null }
+      "registry.old_value_type": { source: "Child.RegOldValType", on_empty: null }
+      "registry.group_name": { source: "Child.RegGroupName", on_empty: null }
 
   # 未识别的新动作仍进入候选池；它不会绕过本地键路径、值名、Actor 和时间基准，
   # 仅用于在厂商版本变化时展示可能相关的低置信 JSON 块。
@@ -876,6 +888,10 @@ routes:
       "registry.key": { sources: ["Child.RegKeyPath", "Child.RegPath", "Child.RegistryPath", "Child.RegObject"], transform: [windows_path], on_empty: null }
       "registry.value_name": { sources: ["Child.RegValName", "Child.RegValueName", "Child.RegistryValueName"], on_empty: null }
       "registry.value_data": { source: "Child.RegValData", on_empty: null }
+      "registry.old_value_data": { source: "Child.RegOldValData", on_empty: null }
+      "registry.value_type": { source: "Child.RegValType", on_empty: null }
+      "registry.old_value_type": { source: "Child.RegOldValType", on_empty: null }
+      "registry.group_name": { source: "Child.RegGroupName", on_empty: null }
 
   # 进程候选发现路由只依赖表结构，不依赖 Action.Name。这样即使用户填写了尚未写入
   # 精确语义路由的厂商 Action，仍可先依据 Child/Parent 进程锚点建立高置信候选。

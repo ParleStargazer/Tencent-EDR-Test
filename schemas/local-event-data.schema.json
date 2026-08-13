@@ -500,6 +500,7 @@
       "properties": {
         "kind": { "const": "registry" },
         "operation": { "enum": ["create", "modify", "delete"] },
+        "method": { "enum": ["isolated_key", "run_key_native"] },
         "actor": { "$ref": "#/$defs/process_ref" },
         "hive": { "enum": ["HKCU", "HKLM", "HKCR", "HKU", "HKCC"] },
         "key_path": { "type": "string", "minLength": 1 },

@@ -1651,6 +1651,7 @@ public static class CompareService
                 "lowercase" => value?.ToString()?.ToLowerInvariant(),
                 "trim" => value?.ToString()?.Trim(),
                 "windows_path" => NormalizeWindowsPath(value?.ToString()),
+                "registry_hive_path" => NormalizeRegistryHivePath(value?.ToString()),
                 "sid" => value?.ToString()?.Trim().ToUpperInvariant(),
                 "ip" => value?.ToString()?.Trim().ToLowerInvariant(),
                 "timestamp_utc" when DateTimeOffset.TryParse(value?.ToString(), out var timestamp) => Values.Utc(timestamp),
@@ -1663,6 +1664,17 @@ public static class CompareService
     private static string? NormalizeWindowsPath(string? value) => string.IsNullOrWhiteSpace(value)
         ? value
         : value.Trim().Replace('/', '\\').TrimEnd('\\').ToLowerInvariant();
+
+    private static string? NormalizeRegistryHivePath(string? value)
+    {
+        var path = NormalizeWindowsPath(value);
+        if (string.IsNullOrWhiteSpace(path)) return path;
+        path = Regex.Replace(path, @"^hkey_users\\s-1-5-21-(?:\d+-){3}\d+\\", @"hkey_current_user\", RegexOptions.CultureInvariant);
+        path = Regex.Replace(path, @"^hkcu\\", @"hkey_current_user\", RegexOptions.CultureInvariant);
+        path = Regex.Replace(path, @"^hklm\\", @"hkey_local_machine\", RegexOptions.CultureInvariant);
+        path = Regex.Replace(path, @"^hkcr\\", @"hkey_classes_root\", RegexOptions.CultureInvariant);
+        return Regex.Replace(path, @"^hkcc\\", @"hkey_current_config\", RegexOptions.CultureInvariant);
+    }
 
     private static string? NormalizeNetworkDirection(string? value) => value?.Trim().ToLowerInvariant() switch
     {

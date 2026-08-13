@@ -1,10 +1,10 @@
 {
   "schema_version": "1.1",
   "capability_id": "win.registry.modify",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "display_name_zh": "键/值修改",
   "display_name_en": "Key/Value Modification",
-  "description": "Controller 预置本轮唯一 HKCU 键值，Actor 将 REG_SZ 数据修改为含 nonce 的新值，Controller 独立校验前后数据和 SHA-256 均发生变化。",
+  "description": "同轮执行隔离 HKCU 键（.NET API）与 HKCU Run 启动项（Win32 API）两个独立修改子测试；Controller 校验修改前后数据及 SHA-256。",
   "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
   "risk_level": "L1",
   "required_privilege": "standard_user",
@@ -16,10 +16,9 @@
   "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
   "network": { "required": false },
   "expected_fact_keys": [
-    "registry.modify_succeeded", "registry.occurred_at_utc", "registry.hive", "registry.key_path", "registry.value_name", "registry.view",
-    "registry.actor_pid", "registry.actor_executable", "registry.actor_command_line",
-    "registry.before.key_exists", "registry.before.value_exists", "registry.before.value_kind", "registry.before.value_data", "registry.before.value_data_sha256",
-    "registry.after.key_exists", "registry.after.value_exists", "registry.after.value_kind", "registry.after.value_data", "registry.after.value_data_sha256",
+    "registry.modify_succeeded",
+    "registry.isolated_key.modify_succeeded", "registry.isolated_key.occurred_at_utc", "registry.isolated_key.key_path", "registry.isolated_key.value_name", "registry.isolated_key.actor_pid", "registry.isolated_key.actor_executable", "registry.isolated_key.before.value_data", "registry.isolated_key.after.value_data",
+    "registry.run_key_native.modify_succeeded", "registry.run_key_native.occurred_at_utc", "registry.run_key_native.key_path", "registry.run_key_native.value_name", "registry.run_key_native.actor_pid", "registry.run_key_native.actor_executable", "registry.run_key_native.before.value_data", "registry.run_key_native.before.value_data_sha256", "registry.run_key_native.after.value_data", "registry.run_key_native.after.value_data_sha256",
     "correlation.nonce"
   ]
 }

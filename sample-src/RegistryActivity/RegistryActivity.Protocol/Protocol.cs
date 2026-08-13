@@ -29,6 +29,7 @@ public sealed class RegistrySnapshot
 
 public sealed class BehaviorResult
 {
+    public required string Method { get; init; }
     public required string Operation { get; init; }
     public required bool Succeeded { get; init; }
     public required DateTimeOffset OccurredAtUtc { get; init; }

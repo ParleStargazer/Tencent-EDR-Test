@@ -298,6 +298,8 @@ const defaultActionNameInputs: Record<string, string> = {
   "win.process.tampering": "WriteProcessMemory",
   "win.account.local.create": "AccountCreate",
   "win.account.login": "LoginSuccess, LoginFailed, LoginExplicitCredentials",
+  "win.registry.create": "RegSetValue",
+  "win.registry.modify": "RegSetValue",
   "win.file.create": "FileWriteClose",
   "win.file.modify": "FileWriteClose",
   "win.file.open": "FileWriteClose",

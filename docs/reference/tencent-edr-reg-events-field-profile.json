@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "source": {
+    "path": "reference/reg/edr_reg_relate.json",
+    "sha256": "b86c8f69ebfdec08e3cf31970af956485fd0fcd4aac1227404b9a9d5821fb37e",
+    "event_count": 2168,
+    "field_count": 135,
+    "analyzed_at": "2026-08-13"
+  },
+  "event_identity": {
+    "tables": { "RegEvents": 2168 },
+    "action_types": { "Reg": 2168 },
+    "action_names": { "RegSetValue": 2168 }
+  },
+  "registry_groups": {
+    "系统服务": 1075,
+    "组策略": 469,
+    "应用卸载设置": 204,
+    "浏览器默认搜索引擎": 176,
+    "文件关联": 165,
+    "URL协议关联": 40,
+    "启动项": 26,
+    "浏览器右键菜单": 9,
+    "本地安全策略": 2,
+    "系统常用文件夹": 1,
+    "系统证书": 1
+  },
+  "baseline_fields": [
+    { "field": "Common.EventTime", "canonical": "event.created", "present": 2168, "ratio": 1.0, "example": 1786629278872, "meaning": "Unix 毫秒事件时间" },
+    { "field": "Parent.ProcPid", "canonical": "process.pid", "present": 2168, "ratio": 1.0, "example": 13268 },
+    { "field": "Parent.FilePath", "canonical": "process.executable", "present": 2168, "ratio": 1.0, "example": "C:\\Users\\tester\\Desktop\\FileRename.exe" },
+    { "field": "Parent.ProcCmdline", "canonical": "process.command_line", "present": 2168, "ratio": 1.0, "example": "\"C:\\Users\\tester\\Desktop\\FileRename.exe\"" },
+    { "field": "Child.RegGroupName", "canonical": "registry.group_name", "present": 2168, "ratio": 1.0, "example": "启动项" },
+    { "field": "Child.RegKeyPath", "canonical": "registry.key", "present": 2168, "ratio": 1.0, "example": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce" },
+    { "field": "Child.RegValName", "canonical": "registry.value_name", "present": 2000, "ratio": 0.922509, "example": "wextract_cleanup2" },
+    { "field": "Child.RegValData", "canonical": "registry.value_data", "present": 2030, "ratio": 0.936347, "example": "EDRTEST_EXAMPLE_VALUE" },
+    { "field": "Child.RegValType", "canonical": "registry.value_type", "present": 2168, "ratio": 1.0, "example": "字符串" },
+    { "field": "Child.RegOldValData", "canonical": "registry.old_value_data", "present": 110, "ratio": 0.050738, "example": "EDRTEST_EXAMPLE_OLD_VALUE" },
+    { "field": "Child.RegOldValType", "canonical": "registry.old_value_type", "present": 2168, "ratio": 1.0, "example": 0 }
+  ],
+  "old_value_consistency": {
+    "old_type_zero_and_old_data_present": 0,
+    "old_type_nonzero_and_old_data_absent": 0,
+    "interpretation": "旧类型 0 可作为值此前不存在的证据；旧类型非 0 时可用旧值校验修改前状态。"
+  },
+  "design_decision": {
+    "likely_collection_model": "产品对重点注册表区域分类后输出，而非导出所有任意路径写入。",
+    "new_method": "run_key_native",
+    "target": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+    "api": ["RegSetValueExW", "RegDeleteValueW"],
+    "cleanup": "只删除本轮唯一 EdrTest_ 前缀值；Run 键若原本不存在则仅在仍为空时删除，绝不删除或覆盖其中其他数据。"
+  }
+}

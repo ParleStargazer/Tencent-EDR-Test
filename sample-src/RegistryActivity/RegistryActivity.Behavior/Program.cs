@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32;
 
@@ -11,14 +12,16 @@ internal static class Program
     public static int Main(string[] args)
     {
         string? resultPath = null;
+        string method = "unknown";
         string operation = "unknown";
         string keyPath = string.Empty;
         string valueName = string.Empty;
         try
         {
             var options = ArgumentReader.Parse(args);
+            method = options.Require("method");
             operation = options.Require("operation");
-            keyPath = ValidateSubKey(options.Require("key-path"));
+            keyPath = ValidateSubKey(method, options.Require("key-path"));
             valueName = options.Require("value-name");
             resultPath = Path.GetFullPath(options.Require("result"));
             var valueData = options.Require("value-data");
@@ -26,16 +29,17 @@ internal static class Program
 
             var before = Snapshot(keyPath, valueName);
             var occurredAtUtc = DateTimeOffset.UtcNow;
-            Execute(operation, keyPath, valueName, valueData);
+            Execute(method, operation, keyPath, valueName, valueData);
             var after = Snapshot(keyPath, valueName);
             var succeeded = Verify(operation, before, after, valueData);
             var result = new BehaviorResult
             {
+                Method = method,
                 Operation = operation,
                 Succeeded = succeeded,
                 OccurredAtUtc = occurredAtUtc,
                 Hive = "HKCU",
-                KeyPath = $"HKCU\\{keyPath}",
+                KeyPath = $"HKEY_CURRENT_USER\\{keyPath}",
                 ValueName = valueName,
                 RegistryView = "default",
                 Before = before,
@@ -54,11 +58,12 @@ internal static class Program
                 var snapshot = SafeSnapshot(keyPath, valueName);
                 ProtocolJson.WriteAtomic(resultPath, new BehaviorResult
                 {
+                    Method = method,
                     Operation = operation,
                     Succeeded = false,
                     OccurredAtUtc = DateTimeOffset.UtcNow,
                     Hive = "HKCU",
-                    KeyPath = string.IsNullOrWhiteSpace(keyPath) ? "HKCU" : $"HKCU\\{keyPath}",
+                    KeyPath = string.IsNullOrWhiteSpace(keyPath) ? "HKEY_CURRENT_USER" : $"HKEY_CURRENT_USER\\{keyPath}",
                     ValueName = valueName,
                     RegistryView = "default",
                     Before = snapshot,
@@ -72,7 +77,18 @@ internal static class Program
         }
     }
 
-    private static void Execute(string operation, string keyPath, string valueName, string valueData)
+    private static void Execute(string method, string operation, string keyPath, string valueName, string valueData)
+    {
+        if (method == "run_key_native")
+        {
+            ExecuteNative(operation, keyPath, valueName, valueData);
+            return;
+        }
+        if (method != "isolated_key") throw new ArgumentException($"不支持的注册表测试方法：{method}");
+        ExecuteManaged(operation, keyPath, valueName, valueData);
+    }
+
+    private static void ExecuteManaged(string operation, string keyPath, string valueName, string valueData)
     {
         switch (operation)
         {
@@ -112,13 +128,41 @@ internal static class Program
         }
     }
 
+    private static void ExecuteNative(string operation, string keyPath, string valueName, string valueData)
+    {
+        const int keyQueryValue = 0x0001;
+        const int keySetValue = 0x0002;
+        var openResult = RegOpenKeyExW(HkeyCurrentUser, keyPath, 0, keyQueryValue | keySetValue, out var key);
+        if (openResult != 0) throw new IOException($"RegOpenKeyExW 失败：{openResult}");
+        try
+        {
+            int result;
+            if (operation is "create" or "modify")
+            {
+                var bytes = Encoding.Unicode.GetBytes(valueData + '\0');
+                result = RegSetValueExW(key, valueName, 0, RegSz, bytes, bytes.Length);
+            }
+            else if (operation == "delete")
+            {
+                result = RegDeleteValueW(key, valueName);
+            }
+            else throw new ArgumentException($"不支持的注册表操作：{operation}");
+            if (result != 0) throw new IOException($"Win32 注册表操作失败：{result}");
+            RegFlushKey(key);
+        }
+        finally
+        {
+            RegCloseKey(key);
+        }
+    }
+
     private static bool Verify(string operation, RegistrySnapshot before, RegistrySnapshot after, string expectedData) => operation switch
     {
-        "create" => !before.KeyExists && !before.ValueExists && after.KeyExists && after.ValueExists
+        "create" => !before.ValueExists && after.KeyExists && after.ValueExists
             && after.ValueKind == "String" && after.ValueData == expectedData,
         "modify" => before.KeyExists && before.ValueExists && after.KeyExists && after.ValueExists
             && before.ValueData != after.ValueData && after.ValueData == expectedData,
-        "delete" => before.KeyExists && before.ValueExists && !after.KeyExists && !after.ValueExists,
+        "delete" => before.KeyExists && before.ValueExists && !after.ValueExists,
         _ => false,
     };
 
@@ -154,12 +198,33 @@ internal static class Program
         catch { return new RegistrySnapshot { KeyExists = false, ValueExists = false }; }
     }
 
-    private static string ValidateSubKey(string value)
+    private static string ValidateSubKey(string method, string value)
     {
         var keyPath = value.Trim().TrimStart('\\');
-        if (!keyPath.StartsWith("Software\\EdrTest\\", StringComparison.OrdinalIgnoreCase)
-            || keyPath.Contains("..", StringComparison.Ordinal))
-            throw new ArgumentException("注册表测试只允许 HKCU\\Software\\EdrTest 下的本轮临时键。", nameof(value));
+        var isolated = method == "isolated_key"
+            && keyPath.StartsWith("Software\\EdrTest\\", StringComparison.OrdinalIgnoreCase);
+        var runKey = method == "run_key_native"
+            && keyPath.Equals("Software\\Microsoft\\Windows\\CurrentVersion\\Run", StringComparison.OrdinalIgnoreCase);
+        if ((!isolated && !runKey) || keyPath.Contains("..", StringComparison.Ordinal))
+            throw new ArgumentException("注册表测试路径与声明的方法不匹配。", nameof(value));
         return keyPath;
     }
+
+    private static readonly IntPtr HkeyCurrentUser = new(unchecked((int)0x80000001));
+    private const int RegSz = 1;
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int RegOpenKeyExW(IntPtr hKey, string subKey, int options, int desiredAccess, out IntPtr result);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int RegSetValueExW(IntPtr hKey, string valueName, int reserved, int type, byte[] data, int dataSize);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int RegDeleteValueW(IntPtr hKey, string valueName);
+
+    [DllImport("advapi32.dll")]
+    private static extern int RegFlushKey(IntPtr hKey);
+
+    [DllImport("advapi32.dll")]
+    private static extern int RegCloseKey(IntPtr hKey);
 }

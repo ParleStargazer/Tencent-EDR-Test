@@ -1,69 +1,67 @@
 # Registry Activity 三项能力样本
 
-## 1. 已实现范围
+## 1. 真实导出结论
 
-已实现三个 Windows 注册表活动能力包：
+本轮以 `reference/reg/edr_reg_relate.json` 为校准依据。文件 SHA-256 为
+`b86c8f69ebfdec08e3cf31970af956485fd0fcd4aac1227404b9a9d5821fb37e`，包含 2,168 条、135 个字段的腾讯 EDR 注册表记录。
 
-| 能力 ID | 中文 / English | Actor 行为 |
+关键发现：
+
+- 全部记录均为 `@table = RegEvents`、`Action.Name = RegSetValue`；
+- 全部记录都有 `Child.RegGroupName`，并被归类为系统服务、组策略、应用卸载设置、浏览器设置、文件关联、启动项等重点区域；
+- 路径、分组、新旧值类型、Parent PID/路径/命令行及毫秒事件时间均为 100% 存在；
+- `Child.RegOldValType = 0` 的 1,958 条记录没有旧值，可作为新值创建的强证据；旧类型非 0 的 110 条记录全部有旧值，可与本地修改前值直接比较；
+- 当前隔离样本写入 `HKCU\Software\EdrTest\...`，不属于导出中任何重点分组。这说明未采集的主要原因更可能是产品侧重点路径过滤，而不是本地调用失败；同时换用 Win32 API 可消除 .NET 封装调用方式的剩余不确定性。
+
+可复用的字段统计见 [tencent-edr-reg-events-field-profile.json](reference/tencent-edr-reg-events-field-profile.json)。
+
+## 2. 双方法测试设计
+
+三个能力均在同轮运行以下两个独立子测试，并在前端分别展示结果：
+
+| 方法 ID | 中文名称 | 路径与调用方式 |
 | --- | --- | --- |
-| `win.registry.create` | 键/值创建 / Key/Value Creation | 创建本轮唯一键，并写入唯一 `REG_SZ` 值 |
-| `win.registry.modify` | 键/值修改 / Key/Value Modification | 修改 Controller 预置值，前后内容不同 |
-| `win.registry.delete` | 键/值删除 / Key/Value Deletion | 删除指定值，再删除空键 |
+| `isolated_key` | 隔离 HKCU 键（.NET API） | `HKCU\Software\EdrTest\Runs\<nonce>\<operation>`，保留原有低干扰测试 |
+| `run_key_native` | 启动项（Win32 API，推荐） | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，直接调用 `RegSetValueExW` / `RegDeleteValueW` |
 
-每个能力包包含独立命名的 Controller 和 Actor 两个 EXE。源码共享协议、行为和控制实现，构建时直接覆盖 `samples/win.registry.*` 旧能力包。
+`run_key_native` 不覆盖已有启动项：值名为本轮唯一的 `EdrTest_<nonce-tag>_<operation>`，Controller 在执行前确认不存在，结束后只删除这个精确值。若当前用户原本没有 `Run` 键，则清理仅在该键仍为空时恢复为“不存在”；若原本已有该键则绝不删除。测试不会触发登录或重启，故该值不会实际启动程序。隔离方法则只删除本轮唯一子树。
 
-## 2. 安全边界与本地绝对基准
+本地绝对基准对两种方法都必须通过；云端使用 `method_selection: best`，默认选取 EDR 结果最好的一种方法形成能力结论。这样既能验证重点注册表采集，也能保留产品对普通路径覆盖范围的观察结果。
 
-所有操作只允许当前用户配置单元：
+## 3. BASSLINE 校准
 
-```text
-HKCU\Software\EdrTest\Runs\<nonce-tag>\<operation>
-```
+三份 BASSLINE 已升级为 0.2.0：
 
-- 不访问 `HKLM`、服务、启动项或系统策略，无需管理员权限；
-- 每轮键名由 nonce 派生，执行前拒绝复用已有测试键；
-- Controller 只负责预置、独立复核和精确清理，Actor 执行真正被测行为；
-- 清理函数再次验证路径前缀，只删除本轮精确子树；
-- 值数据包含 nonce，但不包含凭据或隐私信息。
+- 创建：完整键路径、值名、Actor PID/EXE、新值为必需项；启动项方法额外要求 `Child.RegOldValType = 0`、新值类型和 `Child.RegGroupName = 启动项`；
+- 修改：将 `Child.RegOldValData` 与本地修改前值比较，将 `Child.RegValData` 与本地修改后值比较；新旧类型与启动项分组也是启动项方法的必需项；
+- 删除：参考导出没有任何删除动作，不能据此臆测其字段形态。比较器仍召回时间、路径、值名和程序相近的 JSON 块，但只有映射为 `delete` 的真实删除动作才能通过，不会用 `RegSetValue` 代替删除能力证据。
 
-Controller 将以下高可用信息写入本轮 SQLite 和 `local-run.json`：
+三类方法都继续以本地发生时间为基准，默认 15 ms 为强关联阈值。`Action.Name` 仍只用于 EDR 候选消歧，不影响本地运行规则；创建和修改的默认值为 `RegSetValue`，删除保持留空，等待真实删除日志后再校准。
 
-- Actor PID、EXE、命令行、开始/结束时间；
-- 紧邻注册表 API 调用采集的 `occurred_at_utc`；
-- Hive、完整键路径、值名、注册表视图；
-- 操作前后的键/值存在状态、值类型、值数据及数据 SHA-256；
-- Actor 原子协议 JSON、独立注册表复核和清理结果。
+腾讯映射现在优先读取已由真实导出确认的字段：
 
-## 3. BASSLINE 设计
+- `Child.RegKeyPath` → `registry.key`
+- `Child.RegValName` → `registry.value_name`
+- `Child.RegValData` → `registry.value_data`
+- `Child.RegOldValData` → `registry.old_value_data`
+- `Child.RegValType` → `registry.value_type`
+- `Child.RegOldValType` → `registry.old_value_type`
+- `Child.RegGroupName` → `registry.group_name`
 
-三份 BASSLINE 位于：
+键路径断言使用 `registry_hive_path` 归一化：它只把 `HKCU`、`HKEY_CURRENT_USER` 与腾讯可能导出的当前用户 `HKEY_USERS\<SID>` 表达统一，后续子路径仍须完全一致；进程路径仍使用普通 `windows_path`，不会放宽。
 
-- `baselines/windows/registry_create.yaml`
-- `baselines/windows/registry_modify.yaml`
-- `baselines/windows/registry_delete.yaml`
+## 4. 构建和验证
 
-本地条件是绝对前置基准。EDR 候选先按完整键路径、值名、Actor 程序、PID 和时间关联；单事件强关联时间默认不超过 15 ms。云端必需字段为 `registry.key`、`registry.value_name`、`process.pid`、`process.executable`，值数据和用户名为推荐项，避免产品默认隐藏敏感注册表数据时直接误判核心能力。
-
-键/值删除的 Actor 会依次触发值删除和空键删除。当前能力结论只要求找到至少一条能以本地键路径、值名和 Actor 身份证明删除行为的 EDR 记录；候选窗口允许同一行为产生多条记录，并全部在 JSON 对照窗口展示。
-
-## 4. 腾讯 EDR 映射依据
-
-腾讯官方文档确认：
-
-- 注册表内核事件表为 `RegEvents`，包括创建、设置、删除动作；
-- 设置值的动作示例为 `Action.Name = RegSetValue`；
-- 值数据示例字段为 `Child.RegValData`。
-
-参考：[行为采集范围说明](https://cloud.tencent.com/document/product/1092/128451)、[威胁狩猎常用 SQL](https://cloud.tencent.com/document/product/1092/107833)。
-
-因此 `mappings/tencent-edr-proc-events-v1.yaml` 增加了 `RegEvents` 的创建、修改、删除和候选发现路由。历史 `260808210300run` 全字段导出没有注册表事件，无法从本地参考文件确认键路径和值名字段。映射暂按优先级兼容 `Child.RegKeyPath`、`Child.RegPath`、`Child.RegistryPath`、`Child.RegObject` 以及相应值名别名；比较报告会保留实际命中的原始字段指针。拿到新一轮 `RegEvents` 导出后，应据此收敛并校准字段优先级，但不需要修改样本或 BASSLINE 本地规则。
-
-## 5. 构建和验证
-
-构建并覆盖三个本地能力包：
+构建会直接覆盖三个旧能力包：
 
 ```powershell
 pwsh -NoProfile -File scripts\Build-RegistryActivitySamples.ps1 -Configuration Release
 ```
 
-平台启动脚本已自动执行该构建。三个能力使用标准用户权限，可直接在前端“注册表活动”大类中选择并运行。
+端到端测试会运行 3 个 Controller、6 个 Actor、6 个本地事件和 6 次精确清理，并同时验证通用映射与腾讯映射：
+
+```powershell
+pwsh -NoProfile -File scripts\Test-RegistryActivitySamples.ps1 -Configuration Release
+```
+
+腾讯官方文档对 `RegEvents` 和 `RegSetValue` 的说明仍作为产品语义参考：[行为采集范围说明](https://cloud.tencent.com/document/product/1092/128451)、[威胁狩猎常用 SQL](https://cloud.tencent.com/document/product/1092/107833)。

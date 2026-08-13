@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.registry.delete
-version: "0.1.0"
+version: "0.2.0"
 title: Windows 注册表键/值删除遥测
-description: 以本地 HKCU 唯一键值的删除前状态、Actor 身份和毫秒时间为绝对基准，验证 EDR 是否记录值及空键删除。
+description: 同轮执行隔离 HKCU 键与启动项 Win32 API 两种删除子测试；仅真实删除动作可形成通过结论，不以 RegSetValue 旁证替代删除事件。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,50 +10,69 @@ platform:
 risk_level: L1
 capability:
   id: win.registry.delete
-  version: "0.1.0"
+  version: "0.2.0"
   parameters: { post_operation_hold_ms: 1500 }
 local_requirements:
   - { field: facts.registry.delete_succeeded, operator: equals, expected: true }
-  - { field: facts.registry.hive, operator: equals, expected: HKCU }
-  - { field: facts.registry.key_path, operator: present }
-  - { field: facts.registry.value_name, operator: present }
-  - { field: facts.registry.before.key_exists, operator: equals, expected: true }
-  - { field: facts.registry.before.value_exists, operator: equals, expected: true }
-  - { field: facts.registry.before.value_kind, operator: equals, expected: String }
-  - { field: facts.registry.before.value_data, operator: present }
-  - { field: facts.registry.before.value_data_sha256, operator: present }
-  - { field: facts.registry.after.key_exists, operator: equals, expected: false }
-  - { field: facts.registry.after.value_exists, operator: equals, expected: false }
-  - { field: facts.registry.actor_pid, operator: present }
+  - { field: facts.registry.isolated_key.delete_succeeded, operator: equals, expected: true }
+  - { field: facts.registry.run_key_native.delete_succeeded, operator: equals, expected: true }
+  - { field: facts.registry.isolated_key.before.value_exists, operator: equals, expected: true }
+  - { field: facts.registry.isolated_key.after.value_exists, operator: equals, expected: false }
+  - { field: facts.registry.run_key_native.before.value_exists, operator: equals, expected: true }
+  - { field: facts.registry.run_key_native.after.value_exists, operator: equals, expected: false }
+  - { field: facts.registry.run_key_native.before.value_data, operator: present }
+  - { field: facts.registry.run_key_native.actor_pid, operator: present }
 correlation:
   time_before_seconds: 60
   time_after_seconds: 300
   max_time_difference_ms: 15
   anchors:
-    - { local_field: facts.registry.key_path, cloud_field: registry.key, strength: strong, normalizers: [windows_path] }
-    - { local_field: facts.registry.value_name, cloud_field: registry.value_name, strength: strong, normalizers: [lowercase] }
-    - { local_field: facts.registry.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
-    - { local_field: facts.registry.actor_pid, cloud_field: process.pid, strength: medium }
+    - { local_field: facts.registry.run_key_native.key_path, cloud_field: registry.key, strength: strong, normalizers: [registry_hive_path] }
+    - { local_field: facts.registry.run_key_native.value_name, cloud_field: registry.value_name, strength: strong, normalizers: [lowercase] }
+    - { local_field: facts.registry.run_key_native.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.registry.run_key_native.actor_pid, cloud_field: process.pid, strength: medium }
+method_selection: { strategy: best }
 cloud_expectations:
-  - id: registry-delete-event
+  - id: registry-delete-isolated-event
+    method: { id: isolated_key, title: 隔离 HKCU 键（.NET API） }
     event_type: registry
     event_actions: [delete]
     cardinality: { min: 1, max: 10 }
     correlation:
-      time_from_local: facts.registry.occurred_at_utc
+      time_from_local: facts.registry.isolated_key.occurred_at_utc
       anchors:
-        - { local_field: facts.registry.key_path, cloud_field: registry.key, strength: strong, normalizers: [windows_path] }
-        - { local_field: facts.registry.value_name, cloud_field: registry.value_name, strength: strong, normalizers: [lowercase] }
-        - { local_field: facts.registry.actor_pid, cloud_field: process.pid, strength: medium }
+        - { local_field: facts.registry.isolated_key.key_path, cloud_field: registry.key, strength: strong, normalizers: [registry_hive_path] }
+        - { local_field: facts.registry.isolated_key.value_name, cloud_field: registry.value_name, strength: strong, normalizers: [lowercase] }
+        - { local_field: facts.registry.isolated_key.actor_pid, cloud_field: process.pid, strength: medium }
     assertions:
-      - { field: registry.key, operator: equals, expected_from_local: facts.registry.key_path, severity: required, normalizers: [windows_path] }
-      - { field: registry.value_name, operator: equals, expected_from_local: facts.registry.value_name, severity: required, normalizers: [lowercase] }
-      - { field: process.pid, operator: equals, expected_from_local: facts.registry.actor_pid, severity: required }
-      - { field: process.executable, operator: equals, expected_from_local: facts.registry.actor_executable, severity: required, normalizers: [windows_path] }
-      - { field: registry.value_data, operator: equals, expected_from_local: facts.registry.before.value_data, severity: recommended }
-      - { field: user.name, operator: present, severity: recommended }
+      - { field: event.action, operator: equals, expected: delete, severity: required }
+      - { field: registry.key, operator: equals, expected_from_local: facts.registry.isolated_key.key_path, severity: required, normalizers: [registry_hive_path] }
+      - { field: registry.value_name, operator: equals, expected_from_local: facts.registry.isolated_key.value_name, severity: required, normalizers: [lowercase] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.registry.isolated_key.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.registry.isolated_key.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: registry.value_data, operator: equals, expected_from_local: facts.registry.isolated_key.before.value_data, severity: recommended }
+  - id: registry-delete-run-key-event
+    method: { id: run_key_native, title: 启动项（Win32 API，推荐） }
+    event_type: registry
+    event_actions: [delete]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.registry.run_key_native.occurred_at_utc
+      anchors:
+        - { local_field: facts.registry.run_key_native.key_path, cloud_field: registry.key, strength: strong, normalizers: [registry_hive_path] }
+        - { local_field: facts.registry.run_key_native.value_name, cloud_field: registry.value_name, strength: strong, normalizers: [lowercase] }
+        - { local_field: facts.registry.run_key_native.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: event.action, operator: equals, expected: delete, severity: required }
+      - { field: registry.key, operator: equals, expected_from_local: facts.registry.run_key_native.key_path, severity: required, normalizers: [registry_hive_path] }
+      - { field: registry.value_name, operator: equals, expected_from_local: facts.registry.run_key_native.value_name, severity: required, normalizers: [lowercase] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.registry.run_key_native.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.registry.run_key_native.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: registry.value_data, operator: equals, expected_from_local: facts.registry.run_key_native.before.value_data, severity: recommended }
+      - { field: registry.group_name, operator: equals, expected: 启动项, severity: recommended }
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: active
-  references: [HKCU controlled key, canonical registry fields]
+  change_reason: 参考导出未包含删除动作，故不臆测字段；保留候选召回，但必须命中映射后的 delete 才可通过。
+  references: [reference/reg/edr_reg_relate.json, Tencent EDR RegEvents]

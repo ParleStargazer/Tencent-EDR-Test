@@ -648,7 +648,7 @@ public static class Program
         var baselinePaths = new List<string>();
         var definitions = new[]
         {
-            (Capability: "win.registry.create", Action: "create", Baseline: "registry_create.yaml", TencentAction: "RegCreateKeyExW"),
+            (Capability: "win.registry.create", Action: "create", Baseline: "registry_create.yaml", TencentAction: "RegSetValue"),
             (Capability: "win.registry.modify", Action: "modify", Baseline: "registry_modify.yaml", TencentAction: "RegSetValue"),
             (Capability: "win.registry.delete", Action: "delete", Baseline: "registry_delete.yaml", TencentAction: "RegDeleteValueW"),
         };
@@ -658,7 +658,7 @@ public static class Program
             var caseRunId = Ids.NewUuid7();
             var eventId = Ids.NewUuid7();
             var occurredAt = baseTime.AddSeconds(index * 10);
-            var keyPath = $@"HKCU\Software\EdrTest\Runs\fixture{index}\{definition.Action}";
+            var keyPath = $@"HKEY_CURRENT_USER\Software\EdrTest\Runs\fixture{index}\{definition.Action}";
             var valueName = "EdrTestValue";
             var beforeData = definition.Action == "create" ? null : $"EDRTEST|fixture-{index}|REGISTRY_BEFORE";
             var afterData = definition.Action == "delete" ? null : $"EDRTEST|fixture-{index}|REGISTRY_{definition.Action.ToUpperInvariant()}";
@@ -666,7 +666,7 @@ public static class Program
             var actorPath = $@"C:\EDR-Test\Registry{definition.Action}.Actor.exe";
             local["capabilities"]!.AsArray().Add(new JsonObject
             {
-                ["case_run_id"] = caseRunId, ["capability_id"] = definition.Capability, ["capability_version"] = "0.1.0",
+                ["case_run_id"] = caseRunId, ["capability_id"] = definition.Capability, ["capability_version"] = "0.2.0",
                 ["display_name_zh"] = definition.Action, ["display_name_en"] = definition.Action, ["status"] = "LOCAL_PASS",
                 ["nonce"] = $"registry-fixture-{index}", ["started_at_utc"] = Values.Utc(occurredAt.AddSeconds(-1)),
                 ["ended_at_utc"] = Values.Utc(occurredAt.AddSeconds(1)),
@@ -685,16 +685,29 @@ public static class Program
             var facts = new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
             {
                 [$"registry.{definition.Action}_succeeded"] = true,
-                ["registry.occurred_at_utc"] = Values.Utc(occurredAt), ["registry.hive"] = "HKCU",
-                ["registry.key_path"] = keyPath, ["registry.value_name"] = valueName, ["registry.view"] = "default",
-                ["registry.actor_pid"] = actorPid, ["registry.actor_executable"] = actorPath,
-                ["registry.before.key_exists"] = definition.Action != "create", ["registry.before.value_exists"] = definition.Action != "create",
-                ["registry.before.value_kind"] = definition.Action == "create" ? null : "String",
-                ["registry.before.value_data"] = beforeData, ["registry.before.value_data_sha256"] = beforeData is null ? null : new string('a', 64),
-                ["registry.after.key_exists"] = definition.Action != "delete", ["registry.after.value_exists"] = definition.Action != "delete",
-                ["registry.after.value_kind"] = definition.Action == "delete" ? null : "String",
-                ["registry.after.value_data"] = afterData, ["registry.after.value_data_sha256"] = afterData is null ? null : new string('b', 64),
             };
+            foreach (var method in new[] { "isolated_key", "run_key_native" })
+            {
+                var prefix = $"registry.{method}";
+                facts[$"{prefix}.{definition.Action}_succeeded"] = true;
+                facts[$"{prefix}.occurred_at_utc"] = Values.Utc(occurredAt);
+                facts[$"{prefix}.hive"] = "HKCU";
+                facts[$"{prefix}.key_path"] = keyPath;
+                facts[$"{prefix}.value_name"] = valueName;
+                facts[$"{prefix}.view"] = "default";
+                facts[$"{prefix}.actor_pid"] = actorPid;
+                facts[$"{prefix}.actor_executable"] = actorPath;
+                facts[$"{prefix}.before.key_exists"] = definition.Action != "create";
+                facts[$"{prefix}.before.value_exists"] = definition.Action != "create";
+                facts[$"{prefix}.before.value_kind"] = definition.Action == "create" ? null : "String";
+                facts[$"{prefix}.before.value_data"] = beforeData;
+                facts[$"{prefix}.before.value_data_sha256"] = beforeData is null ? null : new string('a', 64);
+                facts[$"{prefix}.after.key_exists"] = definition.Action != "delete";
+                facts[$"{prefix}.after.value_exists"] = definition.Action != "delete";
+                facts[$"{prefix}.after.value_kind"] = definition.Action == "delete" ? null : "String";
+                facts[$"{prefix}.after.value_data"] = afterData;
+                facts[$"{prefix}.after.value_data_sha256"] = afterData is null ? null : new string('b', 64);
+            }
             foreach (var (key, value) in facts)
             {
                 local["local_facts"]!.AsArray().Add(new JsonObject
@@ -713,6 +726,8 @@ public static class Program
                 ["actor_executable"] = actorPath, ["actor_command_line"] = $"{actorPath} --operation {definition.Action}",
                 ["user_name"] = "fixture", ["user_domain"] = "REGISTRY-FIXTURE", ["registry_key"] = keyPath,
                 ["registry_value_name"] = valueName, ["registry_value_data"] = cloudValue,
+                ["registry_old_value_data"] = beforeData, ["registry_old_value_type"] = definition.Action == "create" ? 0 : "字符串",
+                ["registry_value_type"] = "字符串", ["registry_group_name"] = "启动项",
             });
             tencentCloud.Add(new JsonObject
             {
@@ -723,7 +738,12 @@ public static class Program
                 ["Parent.ProcPid"] = actorPid, ["Parent.FileName"] = Path.GetFileName(actorPath),
                 ["Parent.FilePath"] = actorPath, ["Parent.ProcCmdline"] = $"{actorPath} --operation {definition.Action}",
                 ["Parent.ProcUserName"] = "fixture", ["Parent.ProcDomainName"] = "REGISTRY-FIXTURE",
-                ["Child.RegistryPath"] = keyPath, ["Child.RegistryValueName"] = valueName, ["Child.RegValData"] = cloudValue,
+                ["Child.RegistryPath"] = definition.Action == "create"
+                    ? keyPath.Replace("HKEY_CURRENT_USER", "HKEY_USERS\\S-1-5-21-111-222-333-1001", StringComparison.Ordinal)
+                    : keyPath,
+                ["Child.RegistryValueName"] = valueName, ["Child.RegValData"] = cloudValue,
+                ["Child.RegOldValData"] = beforeData, ["Child.RegOldValType"] = definition.Action == "create" ? 0 : "字符串",
+                ["Child.RegValType"] = "字符串", ["Child.RegGroupName"] = "启动项",
             });
             baselinePaths.Add(Path.Combine(repository, "baselines", "windows", definition.Baseline));
         }
