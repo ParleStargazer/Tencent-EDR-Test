@@ -160,6 +160,12 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /comparison-category-card category-fold-card/);
   assert.match(livePage, /open=\{isCloud\}/);
   assert.match(livePage, /EDR 原始完整日志/);
+  assert.match(livePage, /edr-conclusion-layout/);
+  assert.match(livePage, /匹配与完成情况/);
+  assert.match(livePage, /候选 EDR 日志块/);
+  assert.match(styles, /\.edr-conclusion-layout \{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /\.edr-conclusion-layout \.candidate-json-grid \{[^}]*grid-template-columns:\s*1fr/);
+  assert.match(styles, /@media \(max-width: 900px\)[\s\S]*?\.edr-conclusion-layout \{ grid-template-columns: 1fr; \}/);
   assert.match(livePage, /打开 JSON 对照窗/);
   assert.match(livePage, /逐能力 JSON 对照/);
   assert.match(livePage, /选择 EDR 候选 JSON 块/);
