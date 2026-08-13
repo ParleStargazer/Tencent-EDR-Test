@@ -62,7 +62,7 @@ pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -SkipBuild
 | GET | `/api/reports/{comparison-id}/result` | 下载结构化 JSON 验证结果 |
 | GET | `/api/reports/{comparison-id}/conclusion` | 下载中文 Markdown 验证结论 |
 
-`POST /api/compare` 必须提供 `cloud_file`，并在 `operation_id` 与 `local_file` 中二选一。可选字段包括 `cloud_manifest`、`mapping_id` 和一个或多个 `baseline_id`；未指定 BASELINE 时，API 按本地导出中的能力 ID 自动选择。
+`POST /api/compare` 必须提供 `cloud_file`，并在 `operation_id` 与 `local_file` 中二选一。可选字段包括 `cloud_manifest`、`mapping_id` 和一个或多个 `baseline_id`；未指定 BASELINE 时，API 按本地导出中的能力 ID 自动选择。默认响应仍为完整 JSON；提交 `stream_progress=true` 时改为 NDJSON 流，在开始和每项能力完成后返回 `progress` 事件，最后返回携带完整报告的 `result` 事件。进度严格按“已完成能力数 ÷ 参测能力总数 × 100%”计算。
 
 比较结果中的每项能力还包含 `local_export_block`、`local_baseline_matches`，每条 `edr_candidates` 则包含独立的 `baseline_matches`。其中的 JSON Pointer 用于把 Canonical 字段准确映射回本地导出块或厂商原始字段，支持前端多候选切换和逐行高亮。
 
@@ -80,4 +80,4 @@ pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -SkipBuild
 
 ## 5. 前端行为
 
-前端始终展示规范化的 16 个活动域和 53 项能力，并拆分为工作台 `/`、进行测试 `/test` 和离线比较 `/compare` 三个路由。只有 API 实际发现的能力包可勾选，其余项目显示“样本待实现”。包含 L2/L3 能力时必须在页面显式确认高风险执行。测试页轮询真实逐能力进度，显示串行步骤、等待倒计时、重点日志和 Controller stdout/stderr；比较页展示总体结论及每条 BASELINE 要求的期望值、实际值和满足状态，并为每项能力提供可切换候选块的本地/EDR JSON 对照悬浮窗。
+前端始终展示规范化的 16 个活动域和 53 项能力，并拆分为工作台 `/`、进行测试 `/test` 和离线比较 `/compare` 三个路由。只有 API 实际发现的能力包可勾选，其余项目显示“样本待实现”。包含 L2/L3 能力时必须在页面显式确认高风险执行。测试页轮询真实逐能力进度，显示串行步骤、等待倒计时、重点日志和 Controller stdout/stderr；比较页消费后端 NDJSON 进度流，每完成一项能力立即更新已完成数、参测总数和百分比，并展示总体结论及每条 BASELINE 要求的期望值、实际值和满足状态。每项能力还提供可切换候选块的本地/EDR JSON 对照悬浮窗。

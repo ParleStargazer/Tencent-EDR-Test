@@ -119,7 +119,7 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(compareRoute, /view="compare"/);
   assert.match(livePage, /127\.0\.0\.1:4317\/api/);
   assert.match(livePage, /apiRequest<ApiRun>\("\/runs"/);
-  assert.match(livePage, /apiRequest<ValidationResult>\("\/compare"/);
+  assert.match(livePage, /apiStreamComparison\(form, setComparisonProgress\)/);
   assert.match(livePage, /action_name_standards/);
   assert.match(livePage, /edrtest\.actionNameStandards\.v1/);
   assert.match(livePage, /child_file_create_op_name_standards/);
@@ -131,6 +131,14 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /无关联候选事件时间上限（ms）/);
   assert.match(livePage, /本轮时间参数/);
   assert.match(livePage, /先按候选上限裁剪，再执行锚点评分/);
+  assert.match(livePage, /form\.append\("stream_progress", "true"\)/);
+  assert.match(livePage, /apiStreamComparison\(form, setComparisonProgress\)/);
+  assert.match(livePage, /response\.body\.getReader\(\)/);
+  assert.match(livePage, /已完成能力数 ÷ 参测能力总数 × 100%/);
+  assert.match(livePage, /role="progressbar"/);
+  assert.match(livePage, /已完成 \$\{progress\.completed_capabilities\} \/ \$\{progress\.total_capabilities\} 项能力/);
+  assert.match(styles, /\.comparison-progress-panel \{[^}]*border-top:/);
+  assert.match(styles, /\.comparison-progress-track \{[^}]*margin:\s*0 20px/);
   assert.match(livePage, /defaultStrongCorrelationTimeMs = 15/);
   assert.match(livePage, /defaultCandidateTimeLimitMs = 1000/);
   assert.match(styles, /\.comparison-time-grid \{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);

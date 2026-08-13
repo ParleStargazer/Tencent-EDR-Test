@@ -254,6 +254,7 @@ public static class LocalApiService
     {
         if (!context.Request.HasFormContentType) return ApiError(415, "比较接口需要 multipart/form-data。");
         var form = await context.Request.ReadFormAsync(context.RequestAborted);
+        var streamProgress = string.Equals(form["stream_progress"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
         var cloudFile = form.Files.GetFile("cloud_file");
         if (cloudFile is null) return ApiError(400, "必须上传 cloud_file。");
         if (!ValidJsonExtension(cloudFile.FileName)) return ApiError(400, "cloud_file 仅支持 .json 或 .jsonl。");
@@ -365,6 +366,13 @@ public static class LocalApiService
         var conclusionPath = Path.Combine(reportRoot, "validation-conclusion.md");
         try
         {
+            if (streamProgress)
+            {
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType = "application/x-ndjson; charset=utf-8";
+                context.Response.Headers.CacheControl = "no-store";
+                context.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+            }
             var result = CompareService.Compare(new CompareRequest(
                 localPath,
                 [cloudPath],
@@ -377,13 +385,52 @@ public static class LocalApiService
                 actionNameStandards,
                 childFileCreateOpNameStandards,
                 strongCorrelationTimeMs,
-                candidateTimeLimitMs));
+                candidateTimeLimitMs,
+                streamProgress
+                    ? update => WriteComparisonStreamEventAsync(context.Response, new JsonObject
+                    {
+                        ["type"] = "progress",
+                        ["completed_capabilities"] = update.CompletedCapabilities,
+                        ["total_capabilities"] = update.TotalCapabilities,
+                        ["progress"] = update.Progress,
+                        ["capability_id"] = update.CapabilityId,
+                        ["display_name_zh"] = update.DisplayNameZh,
+                        ["validation_status"] = update.ValidationStatus,
+                    }, context.RequestAborted).GetAwaiter().GetResult()
+                    : null));
+            if (streamProgress)
+            {
+                await WriteComparisonStreamEventAsync(context.Response, new JsonObject
+                {
+                    ["type"] = "result",
+                    ["result"] = result.DeepClone(),
+                }, context.RequestAborted);
+                return Results.Empty;
+            }
             return Results.Json(result, ApiJson);
         }
         catch (Exception exception) when (exception is InvalidDataException or JsonException or ArgumentException)
         {
+            if (streamProgress && context.Response.HasStarted)
+            {
+                await WriteComparisonStreamEventAsync(context.Response, new JsonObject
+                {
+                    ["type"] = "error",
+                    ["error"] = exception.Message,
+                }, context.RequestAborted);
+                return Results.Empty;
+            }
             return ApiError(400, exception.Message);
         }
+    }
+
+    private static async Task WriteComparisonStreamEventAsync(
+        HttpResponse response,
+        JsonObject payload,
+        CancellationToken cancellationToken)
+    {
+        await response.WriteAsync(payload.ToJsonString(ApiJson) + "\n", cancellationToken);
+        await response.Body.FlushAsync(cancellationToken);
     }
 
     private static async Task SaveUploadAsync(IFormFile file, string path, CancellationToken cancellationToken)

@@ -269,6 +269,20 @@ type ValidationResult = {
   capabilities: ValidationEntry[];
 };
 
+type ComparisonProgress = {
+  completed_capabilities: number;
+  total_capabilities: number;
+  progress: number;
+  capability_id?: string;
+  display_name_zh?: string;
+  validation_status?: ValidationStatus;
+};
+
+type ComparisonStreamEvent =
+  | ({ type: "progress" } & ComparisonProgress)
+  | { type: "result"; result: ValidationResult }
+  | { type: "error"; error: string };
+
 type FileChoice = { file: File | null; state: "empty" | "ready"; name: string; detail: string };
 
 const emptyFile: FileChoice = { file: null, state: "empty", name: "尚未选择文件", detail: "等待导入" };
@@ -351,6 +365,45 @@ async function apiDownload(path: string): Promise<Blob> {
   const response = await fetch(`${apiRoot}${path}`, { headers: apiHeaders() });
   if (!response.ok) throw new Error(`报告下载失败（HTTP ${response.status}）`);
   return response.blob();
+}
+
+async function apiStreamComparison(form: FormData, onProgress: (progress: ComparisonProgress) => void): Promise<ValidationResult> {
+  const response = await fetch(`${apiRoot}/compare`, { method: "POST", body: form, headers: apiHeaders() });
+  if (!response.ok) {
+    let message = `本地服务返回 HTTP ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) message = payload.error;
+    } catch {
+      // 非 JSON 错误响应保留状态码。
+    }
+    throw new Error(message);
+  }
+  if (!response.body) throw new Error("本地服务没有返回离线比较进度流。");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: ValidationResult | null = null;
+  const consumeLine = (line: string) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line) as ComparisonStreamEvent;
+    if (event.type === "progress") onProgress(event);
+    else if (event.type === "result") result = event.result;
+    else throw new Error(event.error || "离线比较失败。");
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    lines.forEach(consumeLine);
+    if (done) break;
+  }
+  consumeLine(buffer);
+  if (!result) throw new Error("离线比较已结束，但没有返回完整结果。");
+  return result;
 }
 
 function isActive(status: RunStatus): boolean {
@@ -508,6 +561,7 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
   const [strongCorrelationTimeMs, setStrongCorrelationTimeMs] = useState(defaultStrongCorrelationTimeMs);
   const [candidateTimeLimitMs, setCandidateTimeLimitMs] = useState(defaultCandidateTimeLimitMs);
   const [comparison, setComparison] = useState<ValidationResult | null>(null);
+  const [comparisonProgress, setComparisonProgress] = useState<ComparisonProgress | null>(null);
   const [isComparing, setIsComparing] = useState(false);
   const [notice, setNotice] = useState("正在连接本地 Runner…");
 
@@ -733,9 +787,12 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
     if (manifestFile.file) form.append("cloud_manifest", manifestFile.file);
     if (localFile.file) form.append("local_file", localFile.file);
     else form.append("operation_id", selectedRunId);
+    form.append("stream_progress", "true");
+    setComparison(null);
+    setComparisonProgress({ completed_capabilities: 0, total_capabilities: 0, progress: 0 });
     setIsComparing(true);
     try {
-      const result = await apiRequest<ValidationResult>("/compare", { method: "POST", body: form });
+      const result = await apiStreamComparison(form, setComparisonProgress);
       setComparison(result);
       setNotice(`比较完成：${result.summary.pass} 项通过，${result.summary.fail} 项失败。`);
     } catch (error) {
@@ -777,7 +834,7 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
           onStrongCorrelationTimeMs={setStrongCorrelationTimeMs} onCandidateTimeLimitMs={setCandidateTimeLimitMs}
           onSaveComparisonTimeSettings={saveComparisonTimeSettings} onResetComparisonTimeSettings={resetComparisonTimeSettings}
           onLocalFile={(event) => chooseFile(setLocalFile, event)} onCloudFile={(event) => chooseFile(setCloudFile, event)} onManifestFile={(event) => chooseFile(setManifestFile, event)}
-          comparison={comparison} isComparing={isComparing} onCompare={() => void compare()}
+          comparison={comparison} comparisonProgress={comparisonProgress} isComparing={isComparing} onCompare={() => void compare()}
           onDownloadJson={() => comparison && downloadJson(`validation-${comparison.comparison_id}.json`, comparison)} onDownloadConclusion={() => void downloadConclusion()}
         />}
         <footer className="footer-line"><span>EDR CAPABILITY VALIDATION</span><span>本地优先 · 串行执行 · 离线比较 · 证据可追溯</span></footer>
@@ -935,7 +992,7 @@ type CompareWorkspaceProps = {
   strongCorrelationTimeMs: number; candidateTimeLimitMs: number;
   onStrongCorrelationTimeMs: (value: number) => void; onCandidateTimeLimitMs: (value: number) => void;
   onSaveComparisonTimeSettings: () => void; onResetComparisonTimeSettings: () => void;
-  comparison: ValidationResult | null; isComparing: boolean; onCompare: () => void; onDownloadJson: () => void; onDownloadConclusion: () => void;
+  comparison: ValidationResult | null; comparisonProgress: ComparisonProgress | null; isComparing: boolean; onCompare: () => void; onDownloadJson: () => void; onDownloadConclusion: () => void;
 };
 
 function CompareWorkspace(props: CompareWorkspaceProps) {
@@ -945,6 +1002,7 @@ function CompareWorkspace(props: CompareWorkspaceProps) {
       <div className="compare-select-grid"><label className="field-label">使用已完成轮次<select value={props.selectedRunId} onChange={(event) => props.onSelectedRunId(event.target.value)} disabled={Boolean(props.localFile.file)}><option value="">请选择本机轮次</option>{props.completedRuns.map((run) => <option value={run.operation_id} key={run.operation_id}>{run.name} · {formatTime(run.started_at_utc)}</option>)}</select><span className="field-help">导入本地 JSON 后，此选择会被替代。</span></label><label className="field-label">EDR 字段映射<select value={props.mappingId} onChange={(event) => props.onMappingId(event.target.value)}>{props.mappings.map((mapping) => <option value={mapping.profile_id} key={mapping.profile_id}>{mapping.vendor} {mapping.product} · {mapping.profile_id}</option>)}</select><span className="field-help">负责把厂商字段转换成统一字段。</span></label></div>
       <div className="comparison-time-settings"><div className="comparison-time-heading"><div><span>时间关联参数</span><strong>先裁剪候选，再判断强关联</strong><p>候选上限越小，需要评分的无关 EDR 日志越少；两项都以本地行为时间为基准。</p></div><div><button className="text-button" type="button" onClick={props.onResetComparisonTimeSettings}>恢复默认</button><button className="secondary-button" type="button" onClick={props.onSaveComparisonTimeSettings}>保存到本机</button></div></div><div className="comparison-time-grid"><label className="field-label">强关联时间（ms）<input type="number" min="1" max="60000" step="1" value={props.strongCorrelationTimeMs} onChange={(event) => props.onStrongCorrelationTimeMs(Number(event.target.value))} /><span className="field-help">默认 15 ms；命中身份锚点且时间差不超过该值时形成强时间证据。</span></label><label className="field-label">无关联候选事件时间上限（ms）<input type="number" min="1" max="300000" step="1" value={props.candidateTimeLimitMs} onChange={(event) => props.onCandidateTimeLimitMs(Number(event.target.value))} /><span className="field-help">默认 1000 ms（1 秒）；超出范围的 EDR 事件不进入锚点评分和候选展示。</span></label></div></div>
       <div className="upload-grid"><FileSlot id="local-file" step="1" title="本地运行 JSON" hint="可选：用于比较其他机器或历史轮次" choice={props.localFile} onChange={props.onLocalFile} /><FileSlot id="cloud-file" step="2" title="EDR 云端事件" hint="必需：支持 JSON 数组或 JSONL" choice={props.cloudFile} required onChange={props.onCloudFile} /><FileSlot id="manifest-file" step="3" title="云端导出清单" hint="建议：证明主机与时间范围完整" choice={props.manifestFile} onChange={props.onManifestFile} /></div>
+      {props.comparisonProgress && <ComparisonProgressBar progress={props.comparisonProgress} isComparing={props.isComparing} />}
     </section>
     <EdrFilterSettings
       baselines={props.baselines}
@@ -958,6 +1016,17 @@ function CompareWorkspace(props: CompareWorkspaceProps) {
     <BaselineGuide baselines={props.baselines} />
     <ComparisonResultPanel result={props.comparison} onDownloadJson={props.onDownloadJson} onDownloadConclusion={props.onDownloadConclusion} />
   </>;
+}
+
+function ComparisonProgressBar({ progress, isComparing }: { progress: ComparisonProgress; isComparing: boolean }) {
+  const percentage = Math.min(100, Math.max(0, progress.progress));
+  const hasTotal = progress.total_capabilities > 0;
+  const statusLabel = progress.validation_status ? validationStatusLabel(progress.validation_status) : null;
+  return <section className={`comparison-progress-panel ${isComparing ? "running" : percentage >= 100 ? "complete" : "stopped"}`} aria-live="polite" aria-label="离线比较进度">
+    <div className="comparison-progress-heading"><div><span>离线比较进度</span><strong>{hasTotal ? `已完成 ${progress.completed_capabilities} / ${progress.total_capabilities} 项能力` : "正在读取参测能力"}</strong><p>{progress.display_name_zh ? `刚完成：${progress.display_name_zh}${statusLabel ? `（${statusLabel}）` : ""}` : "每完成一项能力，进度将立即更新。"}</p></div><em>{percentage.toFixed(1)}%</em></div>
+    <div className="progress-track large comparison-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percentage} aria-valuetext={hasTotal ? `已完成 ${progress.completed_capabilities} 项，共 ${progress.total_capabilities} 项` : "正在读取参测能力"}><span style={{ width: `${percentage}%` }} /></div>
+    <div className="comparison-progress-formula"><span>计算公式</span><code>已完成能力数 ÷ 参测能力总数 × 100%</code><em>{isComparing ? percentage >= 100 ? "能力核对完成，正在生成报告" : "正在逐项核对" : percentage >= 100 ? "离线比较已完成" : "比较未完成"}</em></div>
+  </section>;
 }
 
 function EdrFilterSettings({ baselines, actionValues, childFileCreateOpNameValues, onActionChange, onChildFileCreateOpNameChange, onSave, onClear }: {

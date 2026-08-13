@@ -22,7 +22,20 @@ public sealed record CompareRequest(
     IReadOnlyDictionary<string, IReadOnlyList<string>>? ActionNameStandards = null,
     IReadOnlyDictionary<string, IReadOnlyList<string>>? ChildFileCreateOpNameStandards = null,
     int StrongCorrelationTimeMs = CompareService.DefaultStrongCorrelationTimeMs,
-    int CandidateTimeLimitMs = CompareService.DefaultCandidateTimeLimitMs);
+    int CandidateTimeLimitMs = CompareService.DefaultCandidateTimeLimitMs,
+    Action<CompareProgressUpdate>? ProgressCallback = null);
+
+public sealed record CompareProgressUpdate(
+    int CompletedCapabilities,
+    int TotalCapabilities,
+    string? CapabilityId,
+    string? DisplayNameZh,
+    string? ValidationStatus)
+{
+    public double Progress => TotalCapabilities == 0
+        ? 0
+        : Math.Round(CompletedCapabilities * 100d / TotalCapabilities, 1, MidpointRounding.AwayFromZero);
+}
 
 public sealed class MappingProfile
 {
@@ -303,6 +316,9 @@ public static class CompareService
         var localPath = Path.GetFullPath(request.LocalExportPath);
         var mappingPath = Path.GetFullPath(request.MappingPath);
         var localRoot = JsonNode.Parse(File.ReadAllText(localPath)) as JsonObject ?? throw new InvalidDataException("本地导出必须是 JSON 对象。");
+        var capabilityNodes = localRoot["capabilities"]?.AsArray()
+            ?? throw new InvalidDataException("本地导出缺少 capabilities。");
+        ReportProgress(request, new CompareProgressUpdate(0, capabilityNodes.Count, null, null, null));
         var mapping = ReadYaml<MappingProfile>(mappingPath);
         ValidateMapping(mapping);
         var baselines = request.BaselinePaths.Select(path => (Path: Path.GetFullPath(path), Value: ReadYaml<BaselineDefinition>(path))).ToArray();
@@ -319,8 +335,9 @@ public static class CompareService
             && ManifestFilesMatch(cloudManifest, request.CloudManifestPath!, request.CloudPaths);
         var results = new JsonArray();
 
-        foreach (var capabilityNode in localRoot["capabilities"]?.AsArray() ?? throw new InvalidDataException("本地导出缺少 capabilities。"))
+        for (var capabilityIndex = 0; capabilityIndex < capabilityNodes.Count; capabilityIndex++)
         {
+            var capabilityNode = capabilityNodes[capabilityIndex];
             var capability = capabilityNode?.AsObject() ?? throw new InvalidDataException("capabilities 元素必须是对象。");
             var capabilityId = RequiredString(capability, "capability_id");
             var capabilityVersion = RequiredString(capability, "capability_version");
@@ -372,6 +389,12 @@ public static class CompareService
             }
             AttachJsonComparisonEvidence(result, localRoot, capability);
             results.Add(result);
+            ReportProgress(request, new CompareProgressUpdate(
+                capabilityIndex + 1,
+                capabilityNodes.Count,
+                capabilityId,
+                capability["display_name_zh"]?.GetValue<string>() ?? capabilityId,
+                result["validation_status"]?.GetValue<string>()));
         }
 
         var summary = Summarize(results);
@@ -417,6 +440,23 @@ public static class CompareService
         File.WriteAllText(output, root.ToJsonString(JsonDefaults.Options) + Environment.NewLine, new UTF8Encoding(false));
         ConclusionExportService.Export(root, conclusionOutput);
         return root;
+    }
+
+    private static void ReportProgress(CompareRequest request, CompareProgressUpdate update)
+    {
+        if (request.ProgressCallback is null) return;
+        try
+        {
+            request.ProgressCallback(update);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"离线比较进度回调失败：{exception.Message}");
+        }
     }
 
     private static JsonObject CompareCapability(

@@ -144,12 +144,25 @@ public static class Program
         File.WriteAllText(cloudPath, CreateCloudExport(local).ToJsonString(JsonDefaults.Options));
         var repository = FindRepositoryRoot();
         var validationPath = Path.Combine(fixture.Path, "validation-result.json");
+        var comparisonProgress = new List<CompareProgressUpdate>();
         var validation = CompareService.Compare(new CompareRequest(
             result.LocalExportPath,
             [cloudPath],
             Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"),
             [Path.Combine(repository, "baselines", "windows", "process_create.yaml")],
-            validationPath));
+            validationPath,
+            ProgressCallback: comparisonProgress.Add));
+        Assert(comparisonProgress.Count == 2
+            && comparisonProgress[0].CompletedCapabilities == 0
+            && comparisonProgress[0].TotalCapabilities == 1
+            && comparisonProgress[0].Progress == 0
+            && comparisonProgress[1].CompletedCapabilities == 1
+            && comparisonProgress[1].TotalCapabilities == 1
+            && comparisonProgress[1].Progress == 100,
+            "离线比较应在开始和每项能力完成后报告“已完成/总数×100%”的真实进度。");
+        Assert(new CompareProgressUpdate(1, 3, null, null, null).Progress == 33.3
+            && new CompareProgressUpdate(2, 3, null, null, null).Progress == 66.7,
+            "离线比较进度百分比应保留一位小数并按能力数计算。");
         Assert(validation["summary"]?["pass"]?.GetValue<int>() == 1, $"合成云端事件应通过比较：{validation.ToJsonString(JsonDefaults.Options)}");
         Assert(validation["summary"]?["fail"]?.GetValue<int>() == 0, "不应出现 FAIL。");
         Assert(validation["schema_version"]?.GetValue<string>() == "1.1", "验证结果 Schema 应为 1.1。");
