@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>RegistryActivity.Controller</AssemblyName>
+    <RootNamespace>RegistryActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\EdrTest\EdrTest.csproj" />
+    <ProjectReference Include="..\RegistryActivity.Protocol\RegistryActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

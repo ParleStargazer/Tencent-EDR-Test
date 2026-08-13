@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.registry.delete",
+  "version": "0.1.0",
+  "display_name_zh": "键/值删除",
+  "display_name_en": "Key/Value Deletion",
+  "description": "Controller 预置本轮唯一 HKCU 键和值，Actor 先删除指定值再删除空键，Controller 独立确认键和值均不存在。",
+  "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
+  "risk_level": "L1",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "RegistryDelete.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "RegistryDelete.Actor.exe" }],
+  "parameters": {
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "registry.delete_succeeded", "registry.occurred_at_utc", "registry.hive", "registry.key_path", "registry.value_name", "registry.view",
+    "registry.actor_pid", "registry.actor_executable", "registry.actor_command_line",
+    "registry.before.key_exists", "registry.before.value_exists", "registry.before.value_kind", "registry.before.value_data", "registry.before.value_data_sha256",
+    "registry.after.key_exists", "registry.after.value_exists",
+    "correlation.nonce"
+  ]
+}

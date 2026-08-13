@@ -1,0 +1,38 @@
+schema_version: "1.0"
+profile_id: generic-registry-activity-v1
+vendor: Generic
+product: Registry Activity Self-Test Fixture
+description: 用于验证三类 Registry Activity BASELINE 与比较器的扁平 JSON 适配；不是任何 EDR 厂商的生产映射。
+
+input:
+  containers: [json-array, jsonl]
+  encoding: utf-8
+  record_selector:
+    all: { table: RegistryActivity }
+  event_id_field: event_id
+  host_id_field: host_id
+  event_time: { field: event_time, format: iso8601 }
+
+routes:
+  - route_id: registry-activity
+    when: { table: RegistryActivity }
+    canonical:
+      "event.type": { constant: registry }
+      "event.action": { source: action }
+      "event.category": { constant: registry }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "process.pid": { source: actor_pid }
+      "process.entity_id": { source: actor_entity_id }
+      "process.name": { source: actor_name }
+      "process.executable": { source: actor_executable, transform: [windows_path] }
+      "process.command_line": { source: actor_command_line }
+      "user.name": { source: user_name }
+      "user.domain": { source: user_domain }
+      "registry.key": { source: registry_key, transform: [windows_path] }
+      "registry.value_name": { source: registry_value_name }
+      "registry.value_data": { source: registry_value_data, on_empty: null }
+
+raw_reference: { id_field: event_id, ordinal_base: 0 }
+unmapped_fields: { policy: count-and-ignore, preserve_in_report: false }

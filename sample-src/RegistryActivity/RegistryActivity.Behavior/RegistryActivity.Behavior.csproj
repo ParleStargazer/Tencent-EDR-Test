@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>RegistryActivity.Behavior</AssemblyName>
+    <RootNamespace>RegistryActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\RegistryActivity.Protocol\RegistryActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

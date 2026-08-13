@@ -13,7 +13,7 @@ samples/win.process.create/
   *.dll                         # EXE 的运行依赖，可选
 ```
 
-`samples/` 已被 `.gitignore` 排除。仓库中的 `examples/capability-package/capability.json` 是可复制的清单模板，不包含可执行样本；官方 Process Activity、File Manipulation、User Account Activity 与 Network Activity 样本的可审计源码分别位于 `sample-src/` 对应目录，构建方式见各能力样本文档，其中网络能力的三程序编排见 [NETWORK-ACTIVITY-SAMPLES.md](NETWORK-ACTIVITY-SAMPLES.md)。
+`samples/` 已被 `.gitignore` 排除。仓库中的 `examples/capability-package/capability.json` 是可复制的清单模板，不包含可执行样本；官方 Process Activity、File Manipulation、User Account Activity、Network Activity 与 Registry Activity 样本的可审计源码分别位于 `sample-src/` 对应目录，构建方式见各能力样本文档，其中网络能力的三程序编排见 [NETWORK-ACTIVITY-SAMPLES.md](NETWORK-ACTIVITY-SAMPLES.md)，注册表安全边界见 [REGISTRY-ACTIVITY-SAMPLES.md](REGISTRY-ACTIVITY-SAMPLES.md)。
 
 Runner 只启动 Controller。Controller 使用 `EdrTest` 程序集提供的 SDK 打开本轮数据库、启动和观察 Behavior、记录事实并执行清理；Actor、Target、Helper 不直接访问数据库。
 

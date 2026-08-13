@@ -436,6 +436,8 @@ EdrTest.exe export --db .\runs\...\<run-id>.db --out .\local-run.json
 
 映射配置必须包含：格式标识、记录选择器、字段映射、枚举映射、时间单位、路径规范化、缺失字段策略和映射版本。
 
+同一 Canonical 字段在厂商不同版本中存在多个原始字段别名时，字段规则可以使用按优先级声明的 `sources`；映射器选择第一项非空字段，并把实际命中的原始字段保存到比较报告的 JSON Pointer。`sources` 不得与 `source` 或 `constant` 同时声明。
+
 Normalizer 不得静默丢弃未知字段；报告记录未映射字段数，但只在证据片段中保存必要的原始字段。
 
 ## 13. JSON 比较引擎
@@ -637,6 +639,8 @@ BASELINE 不包含腾讯字段名；腾讯字段只出现在 Mapping Profile 中
 User Account Activity 五项能力统一使用本轮 nonce 派生的 `edrt…` 临时本地账号。Controller 在执行前确认账号不存在，Actor 使用 NetAPI 或 `LogonUserW` 产生行为，Controller 以账号名、SID、前后状态和令牌 AuthenticationId 形成绝对本地基准，最后仅删除本轮精确账号。密码只存在于工作目录内的短生命周期请求文件，不写入命令行、SQLite、JSON 导出或证据制品。能力清单声明管理员权限；启动与构建入口在非管理员环境给出推荐提权提示，Runner 权限预检负责在任何账号操作前安全跳过。
 
 Network Activity 五项能力采用 Controller、Actor、Helper 三程序编排。TCP、UDP、URL 和下载使用 IPv4 回环受控端点；URL 同轮执行原始 HTTP 与 WinINet 两种方法，DNS 同轮执行受控原始 UDP 查询与由 `DnsQuery_W` 触发、Dnscache `svchost.exe` 承载的系统查询。Controller 以 nonce、实际端点、进程身份和紧邻 API 调用的时间交叉确认本地事实。文件下载使用“TCP NetBind 连接→同进程连续行为关联→文件写入”的三部分 BASELINE：第一部分复用 TCP 云端字段标准；第二部分要求两条所选 EDR 记录的 PID、规范化程序路径一致、顺序正确，且云端间隔与本地间隔的误差不超过 30 ms；第三部分验证文件路径、大小和哈希。五份 BASELINE 使用 15 ms 单事件时间强证据；腾讯 260809 实测只用于校准 TCP/UDP 及下载连接部分可直接证明行为的 NetBind 字段，URL/DNS 缺少直接语义时保留侧面证据并给出 `PARTIAL`。完整约束见 `docs/NETWORK-ACTIVITY-SAMPLES.md`。
+
+Registry Activity 三项能力统一使用 `HKCU\Software\EdrTest\Runs\<nonce>\<operation>` 临时键。Controller 负责预置、独立读取和精确清理，Actor 负责创建键值、修改值或依次删除值和空键；本地事实记录 Actor PID/路径、Hive、键路径、值名/类型、前后数据及 SHA-256 和紧邻 API 的时间。三份 BASELINE 将本地事实作为绝对基准，以键路径、值名、Actor、PID 和 15 ms 时间差关联 EDR `RegEvents`。腾讯官方文档已确认 `RegEvents`、`RegSetValue` 和 `Child.RegValData`；键路径和值名别名暂兼容多版本导出，等待真实注册表导出收敛。完整约束见 `docs/REGISTRY-ACTIVITY-SAMPLES.md`。
 
 ## 19. 测试策略
 

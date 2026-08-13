@@ -24,7 +24,7 @@ flowchart LR
 
 1. 检查 .NET、PowerShell 7、pnpm 与固定端口；
 2. 还原并构建 .NET 解决方案；
-3. 发布 Process Activity 六项、File Manipulation 五项、User Account Activity 五项和 Network Activity 五项能力包到本地 `samples/`；
+3. 发布 Process Activity 六项、File Manipulation 五项、User Account Activity 五项、Network Activity 五项和 Registry Activity 三项能力包到本地 `samples/`；
 4. 安装缺失的前端依赖并构建 Vinext 生产包；
 5. 隐藏启动 API 与前端，等待两个服务通过健康检查；
 6. 写入 `.edr-test/services.json` 并打开浏览器。

@@ -79,6 +79,7 @@ public sealed class MappingRule
 {
     public object? Constant { get; init; }
     public string? Source { get; init; }
+    public List<string> Sources { get; init; } = [];
     public List<string> Transform { get; init; } = [];
     private object? onEmpty;
     private object? onZero;
@@ -1008,6 +1009,9 @@ public static class CompareService
             "parent_process.executable" or "source_process.executable" => "EDR 记录的发起程序路径",
             "file.path" => "EDR 记录的文件路径",
             "file.name" => "EDR 记录的文件名",
+            "registry.key" => "EDR 记录的注册表键路径",
+            "registry.value_name" => "EDR 记录的注册表值名",
+            "registry.value_data" => "EDR 记录的注册表值数据",
             "thread.id" => "EDR 记录的线程 ID",
             _ when field.StartsWith("facts.", StringComparison.Ordinal) => "本地行为证据",
             _ => $"字段 {field}",
@@ -1045,6 +1049,9 @@ public static class CompareService
         ("account", "local_delete") => "本地账号删除",
         ("account", "login") => "账号登录",
         ("account", "logoff") => "账号注销",
+        ("registry", "create") => "注册表键/值创建",
+        ("registry", "modify") => "注册表键/值修改",
+        ("registry", "delete") => "注册表键/值删除",
         _ => action,
     }));
 
@@ -1551,9 +1558,22 @@ public static class CompareService
             foreach (var (field, rule) in route.Canonical)
             {
                 object? value;
+                string? selectedSource = null;
                 try
                 {
-                    value = rule.Source is not null && record.TryGetProperty(rule.Source, out var source) ? Scalar(source) : rule.Constant;
+                    IReadOnlyList<string> candidateSources = rule.Sources.Count > 0
+                        ? rule.Sources
+                        : string.IsNullOrWhiteSpace(rule.Source) ? [] : [rule.Source];
+                    value = rule.Constant;
+                    foreach (var candidateSource in candidateSources)
+                    {
+                        if (!record.TryGetProperty(candidateSource, out var source)) continue;
+                        var candidateValue = Scalar(source);
+                        if (candidateValue is null || candidateValue is string candidateText && string.IsNullOrWhiteSpace(candidateText)) continue;
+                        value = candidateValue;
+                        selectedSource = candidateSource;
+                        break;
+                    }
                     if (rule.HasOnEmpty && value is string text && string.IsNullOrWhiteSpace(text)) value = rule.OnEmpty;
                     if (rule.HasOnZero && TryDecimal(value, out var number) && number == 0) value = rule.OnZero;
                     foreach (var transform in rule.Transform) value = Transform(value, transform);
@@ -1563,7 +1583,7 @@ public static class CompareService
                     value = rule.OnError;
                 }
                 fields[field] = value;
-                sourceFields[field] = rule.Source;
+                sourceFields[field] = selectedSource ?? rule.Source ?? rule.Sources.FirstOrDefault();
             }
             output.Add(new CanonicalEvent(
                 rawRef,
@@ -2271,6 +2291,13 @@ public static class CompareService
             if (string.IsNullOrWhiteSpace(route.RouteId) || route.When.Count == 0 || route.Canonical.Count == 0)
             {
                 throw new InvalidDataException("Mapping route 必须包含 route_id、when 和 canonical。");
+            }
+            if (route.Canonical.Values.Any(rule => rule.Sources.Count > 0
+                && (rule.Source is not null || rule.Constant is not null
+                    || rule.Sources.Any(string.IsNullOrWhiteSpace)
+                    || rule.Sources.Distinct(StringComparer.Ordinal).Count() != rule.Sources.Count)))
+            {
+                throw new InvalidDataException($"Mapping route {route.RouteId} 的 sources 必须非空且唯一，并且不能与 source/constant 同时使用。");
             }
         }
     }

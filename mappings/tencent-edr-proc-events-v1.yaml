@@ -777,6 +777,106 @@ routes:
       "winlog.logon.id": { source: "Child.TargetLogonId" }
       "winlog.logon.type": { source: "Child.LogonType", on_empty: null }
 
+  # 腾讯官方文档确认注册表内核事件位于 RegEvents，设置动作使用 RegSetValue，
+  # 且值数据字段为 Child.RegValData。其余键路径/值名字段在不同 EDR 版本的导出
+  # 中存在命名差异，因此按优先级读取兼容别名；实际使用时应以测试机新导出继续校准。
+  - route_id: registry-create
+    when:
+      "OS": Windows
+      "@table": RegEvents
+      "Action.Name": [RegCreateKey, RegCreateKeyEx, RegCreateKeyExW]
+    canonical:
+      "event.type": { constant: registry }
+      "event.action": { constant: create }
+      "event.category": { constant: registry }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Parent.ProcUserName", on_empty: null }
+      "user.domain": { source: "Parent.ProcDomainName", on_empty: null }
+      "registry.key": { sources: ["Child.RegKeyPath", "Child.RegPath", "Child.RegistryPath", "Child.RegObject"], transform: [windows_path], on_empty: null }
+      "registry.value_name": { sources: ["Child.RegValName", "Child.RegValueName", "Child.RegistryValueName"], on_empty: null }
+      "registry.value_data": { source: "Child.RegValData", on_empty: null }
+
+  - route_id: registry-modify
+    when:
+      "OS": Windows
+      "@table": RegEvents
+      "Action.Name": [RegSetValue, RegSetValueEx, RegSetValueExW]
+    canonical:
+      "event.type": { constant: registry }
+      "event.action": { constant: modify }
+      "event.category": { constant: registry }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Parent.ProcUserName", on_empty: null }
+      "user.domain": { source: "Parent.ProcDomainName", on_empty: null }
+      "registry.key": { sources: ["Child.RegKeyPath", "Child.RegPath", "Child.RegistryPath", "Child.RegObject"], transform: [windows_path], on_empty: null }
+      "registry.value_name": { sources: ["Child.RegValName", "Child.RegValueName", "Child.RegistryValueName"], on_empty: null }
+      "registry.value_data": { source: "Child.RegValData", on_empty: null }
+
+  - route_id: registry-delete
+    when:
+      "OS": Windows
+      "@table": RegEvents
+      "Action.Name": [RegDeleteKey, RegDeleteKeyEx, RegDeleteKeyExW, RegDeleteValue, RegDeleteValueW]
+    canonical:
+      "event.type": { constant: registry }
+      "event.action": { constant: delete }
+      "event.category": { constant: registry }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Parent.ProcUserName", on_empty: null }
+      "user.domain": { source: "Parent.ProcDomainName", on_empty: null }
+      "registry.key": { sources: ["Child.RegKeyPath", "Child.RegPath", "Child.RegistryPath", "Child.RegObject"], transform: [windows_path], on_empty: null }
+      "registry.value_name": { sources: ["Child.RegValName", "Child.RegValueName", "Child.RegistryValueName"], on_empty: null }
+      "registry.value_data": { source: "Child.RegValData", on_empty: null }
+
+  # 未识别的新动作仍进入候选池；它不会绕过本地键路径、值名、Actor 和时间基准，
+  # 仅用于在厂商版本变化时展示可能相关的低置信 JSON 块。
+  - route_id: registry-candidate-discovery
+    when:
+      "OS": Windows
+      "@table": RegEvents
+    canonical:
+      "event.type": { constant: registry }
+      "event.action": { source: "Action.Name", on_empty: unknown }
+      "event.category": { constant: registry }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Parent.ProcUserName", on_empty: null }
+      "user.domain": { source: "Parent.ProcDomainName", on_empty: null }
+      "registry.key": { sources: ["Child.RegKeyPath", "Child.RegPath", "Child.RegistryPath", "Child.RegObject"], transform: [windows_path], on_empty: null }
+      "registry.value_name": { sources: ["Child.RegValName", "Child.RegValueName", "Child.RegistryValueName"], on_empty: null }
+      "registry.value_data": { source: "Child.RegValData", on_empty: null }
+
   # 进程候选发现路由只依赖表结构，不依赖 Action.Name。这样即使用户填写了尚未写入
   # 精确语义路由的厂商 Action，仍可先依据 Child/Parent 进程锚点建立高置信候选。
   - route_id: process-candidate-discovery

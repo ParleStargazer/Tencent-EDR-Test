@@ -37,6 +37,7 @@ public static class Program
         await RunTest("同类多子项使用独立锚点与时间关联", TestExpectationCorrelation, failures);
         await RunTest("文件原始字段仅筛选 EDR 候选", TestFileRawFieldFilters, failures);
         await RunTest("用户账号五项 BASELINE 与通用/腾讯映射闭环", TestUserAccountComparison, failures);
+        await RunTest("注册表三项 BASELINE 与通用/腾讯映射闭环", TestRegistryComparison, failures);
         if (failures.Count == 0)
         {
             Console.WriteLine("全部框架测试通过。");
@@ -623,6 +624,132 @@ public static class Program
                 match?["canonical_field"]?.GetValue<string>() == "user.target.id"
                 && match?["raw_json_pointer"]?.GetValue<string>() is "/Child.TargetSid" or "/Child.TargetUserSid") == true) == true,
             "五项腾讯候选都应把本地 SID 映射回正确的 EDR 原始目标 SID 字段。");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestRegistryComparison()
+    {
+        using var fixture = TestDirectory.Create();
+        var repository = FindRepositoryRoot();
+        var local = new JsonObject
+        {
+            ["schema_version"] = "1.1",
+            ["run"] = new JsonObject
+            {
+                ["run_id"] = Ids.NewUuid7(),
+                ["host"] = new JsonObject { ["hostname"] = "REGISTRY-FIXTURE", ["machine_id"] = "registry-fixture-host" },
+            },
+            ["capabilities"] = new JsonArray(), ["programs"] = new JsonArray(), ["local_events"] = new JsonArray(),
+            ["local_facts"] = new JsonArray(), ["artifacts"] = new JsonArray(), ["cleanup_results"] = new JsonArray(),
+            ["execution_logs"] = new JsonArray(),
+        };
+        var genericCloud = new JsonArray();
+        var tencentCloud = new JsonArray();
+        var baselinePaths = new List<string>();
+        var definitions = new[]
+        {
+            (Capability: "win.registry.create", Action: "create", Baseline: "registry_create.yaml", TencentAction: "RegCreateKeyExW"),
+            (Capability: "win.registry.modify", Action: "modify", Baseline: "registry_modify.yaml", TencentAction: "RegSetValue"),
+            (Capability: "win.registry.delete", Action: "delete", Baseline: "registry_delete.yaml", TencentAction: "RegDeleteValueW"),
+        };
+        var baseTime = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        foreach (var (definition, index) in definitions.Select((value, index) => (value, index)))
+        {
+            var caseRunId = Ids.NewUuid7();
+            var eventId = Ids.NewUuid7();
+            var occurredAt = baseTime.AddSeconds(index * 10);
+            var keyPath = $@"HKCU\Software\EdrTest\Runs\fixture{index}\{definition.Action}";
+            var valueName = "EdrTestValue";
+            var beforeData = definition.Action == "create" ? null : $"EDRTEST|fixture-{index}|REGISTRY_BEFORE";
+            var afterData = definition.Action == "delete" ? null : $"EDRTEST|fixture-{index}|REGISTRY_{definition.Action.ToUpperInvariant()}";
+            var actorPid = 8100 + index;
+            var actorPath = $@"C:\EDR-Test\Registry{definition.Action}.Actor.exe";
+            local["capabilities"]!.AsArray().Add(new JsonObject
+            {
+                ["case_run_id"] = caseRunId, ["capability_id"] = definition.Capability, ["capability_version"] = "0.1.0",
+                ["display_name_zh"] = definition.Action, ["display_name_en"] = definition.Action, ["status"] = "LOCAL_PASS",
+                ["nonce"] = $"registry-fixture-{index}", ["started_at_utc"] = Values.Utc(occurredAt.AddSeconds(-1)),
+                ["ended_at_utc"] = Values.Utc(occurredAt.AddSeconds(1)),
+            });
+            local["programs"]!.AsArray().Add(new JsonObject
+            {
+                ["case_run_id"] = caseRunId, ["program_instance_id"] = Ids.NewUuid7(), ["role"] = "actor",
+                ["pid"] = actorPid, ["executable"] = actorPath, ["command_line"] = $"{actorPath} --operation {definition.Action}",
+            });
+            local["local_events"]!.AsArray().Add(new JsonObject
+            {
+                ["local_event_id"] = eventId, ["case_run_id"] = caseRunId, ["sequence"] = 1,
+                ["event_type"] = "registry", ["event_action"] = definition.Action, ["occurred_at_utc"] = Values.Utc(occurredAt),
+                ["data"] = new JsonObject { ["kind"] = "registry", ["operation"] = definition.Action },
+            });
+            var facts = new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
+            {
+                [$"registry.{definition.Action}_succeeded"] = true,
+                ["registry.occurred_at_utc"] = Values.Utc(occurredAt), ["registry.hive"] = "HKCU",
+                ["registry.key_path"] = keyPath, ["registry.value_name"] = valueName, ["registry.view"] = "default",
+                ["registry.actor_pid"] = actorPid, ["registry.actor_executable"] = actorPath,
+                ["registry.before.key_exists"] = definition.Action != "create", ["registry.before.value_exists"] = definition.Action != "create",
+                ["registry.before.value_kind"] = definition.Action == "create" ? null : "String",
+                ["registry.before.value_data"] = beforeData, ["registry.before.value_data_sha256"] = beforeData is null ? null : new string('a', 64),
+                ["registry.after.key_exists"] = definition.Action != "delete", ["registry.after.value_exists"] = definition.Action != "delete",
+                ["registry.after.value_kind"] = definition.Action == "delete" ? null : "String",
+                ["registry.after.value_data"] = afterData, ["registry.after.value_data_sha256"] = afterData is null ? null : new string('b', 64),
+            };
+            foreach (var (key, value) in facts)
+            {
+                local["local_facts"]!.AsArray().Add(new JsonObject
+                {
+                    ["local_fact_id"] = Ids.NewUuid7(), ["case_run_id"] = caseRunId, ["local_event_id"] = eventId,
+                    ["key"] = key, ["value"] = value?.DeepClone(),
+                });
+            }
+
+            var cloudValue = definition.Action == "delete" ? beforeData : afterData;
+            genericCloud.Add(new JsonObject
+            {
+                ["table"] = "RegistryActivity", ["event_id"] = eventId, ["host_id"] = "registry-fixture-host",
+                ["event_time"] = Values.Utc(occurredAt), ["action"] = definition.Action, ["actor_pid"] = actorPid,
+                ["actor_entity_id"] = Ids.NewUuid7(), ["actor_name"] = Path.GetFileName(actorPath),
+                ["actor_executable"] = actorPath, ["actor_command_line"] = $"{actorPath} --operation {definition.Action}",
+                ["user_name"] = "fixture", ["user_domain"] = "REGISTRY-FIXTURE", ["registry_key"] = keyPath,
+                ["registry_value_name"] = valueName, ["registry_value_data"] = cloudValue,
+            });
+            tencentCloud.Add(new JsonObject
+            {
+                ["OS"] = "Windows", ["@table"] = "RegEvents", ["@timestamp"] = Values.Utc(occurredAt),
+                ["Action.Type"] = "Reg", ["Action.Name"] = definition.TencentAction,
+                ["Common.EventUUId"] = eventId, ["Common.EventTime"] = occurredAt.ToUnixTimeMilliseconds(),
+                ["Common.Mid"] = "registry-fixture-host", ["Environment.HostName"] = "REGISTRY-FIXTURE",
+                ["Parent.ProcPid"] = actorPid, ["Parent.FileName"] = Path.GetFileName(actorPath),
+                ["Parent.FilePath"] = actorPath, ["Parent.ProcCmdline"] = $"{actorPath} --operation {definition.Action}",
+                ["Parent.ProcUserName"] = "fixture", ["Parent.ProcDomainName"] = "REGISTRY-FIXTURE",
+                ["Child.RegistryPath"] = keyPath, ["Child.RegistryValueName"] = valueName, ["Child.RegValData"] = cloudValue,
+            });
+            baselinePaths.Add(Path.Combine(repository, "baselines", "windows", definition.Baseline));
+        }
+
+        var localPath = Path.Combine(fixture.Path, "registry-local.json");
+        var genericPath = Path.Combine(fixture.Path, "registry-generic.json");
+        var tencentPath = Path.Combine(fixture.Path, "registry-tencent.json");
+        File.WriteAllText(localPath, local.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(genericPath, genericCloud.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(tencentPath, tencentCloud.ToJsonString(JsonDefaults.Options));
+        var generic = CompareService.Compare(new CompareRequest(localPath, [genericPath],
+            Path.Combine(repository, "mappings", "generic-registry-activity-v1.yaml"), baselinePaths,
+            Path.Combine(fixture.Path, "registry-generic-validation.json")));
+        var tencent = CompareService.Compare(new CompareRequest(localPath, [tencentPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"), baselinePaths,
+            Path.Combine(fixture.Path, "registry-tencent-validation.json")));
+        Assert(generic["summary"]?["pass"]?.GetValue<int>() == 3,
+            $"通用注册表映射应使三项 BASELINE 全部通过：{generic.ToJsonString(JsonDefaults.Options)}");
+        Assert(tencent["summary"]?["pass"]?.GetValue<int>() == 3,
+            $"腾讯 RegEvents 路由应使三项 BASELINE 全部通过：{tencent.ToJsonString(JsonDefaults.Options)}");
+        Assert(tencent["capabilities"]?.AsArray().All(capability =>
+            capability?["edr_candidates"]?.AsArray()[0]?["baseline_matches"]?.AsArray().Any(match =>
+                match?["canonical_field"]?.GetValue<string>() == "registry.key"
+                && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.RegistryPath"
+                && match?["status"]?.GetValue<string>() == "passed") == true) == true,
+            "腾讯注册表候选应记录实际命中的字段别名，并在 JSON 对照中高亮键路径。");
         return Task.CompletedTask;
     }
 
