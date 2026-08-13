@@ -109,6 +109,7 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   const route = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const testRoute = await readFile(new URL("../app/test/page.tsx", import.meta.url), "utf8");
   const compareRoute = await readFile(new URL("../app/compare/page.tsx", import.meta.url), "utf8");
+  const localApi = await readFile(new URL("../../src/EdrTest/LocalApiService.cs", import.meta.url), "utf8");
 
   assert.doesNotMatch(packageJson, /react-loading-skeleton|drizzle-orm|tailwindcss/);
   assert.match(hosting, /"d1": null/);
@@ -119,7 +120,7 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(compareRoute, /view="compare"/);
   assert.match(livePage, /127\.0\.0\.1:4317\/api/);
   assert.match(livePage, /apiRequest<ApiRun>\("\/runs"/);
-  assert.match(livePage, /apiStreamComparison\(form, setComparisonProgress\)/);
+  assert.match(livePage, /apiRequest<ValidationResult>\("\/compare"/);
   assert.match(livePage, /action_name_standards/);
   assert.match(livePage, /edrtest\.actionNameStandards\.v1/);
   assert.match(livePage, /child_file_create_op_name_standards/);
@@ -131,12 +132,14 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /无关联候选事件时间上限（ms）/);
   assert.match(livePage, /本轮时间参数/);
   assert.match(livePage, /先按候选上限裁剪，再执行锚点评分/);
-  assert.match(livePage, /form\.append\("stream_progress", "true"\)/);
-  assert.match(livePage, /apiStreamComparison\(form, setComparisonProgress\)/);
-  assert.match(livePage, /response\.body\.getReader\(\)/);
-  assert.match(livePage, /pendingEventJson/);
-  assert.match(livePage, /if \(error instanceof SyntaxError\) return/);
-  assert.match(livePage, /离线比较进度事件不完整/);
+  assert.match(livePage, /form\.append\("comparison_id", comparisonId\)/);
+  assert.match(livePage, /pollComparisonProgress\(comparisonId/);
+  assert.match(livePage, /\/comparisons\/\$\{comparisonId\}\/progress/);
+  assert.doesNotMatch(livePage, /response\.body\.getReader\(\)|stream_progress|pendingEventJson/);
+  assert.match(localApi, /MapGet\("\/api\/comparisons\/\{comparisonId\}\/progress"/);
+  assert.match(localApi, /progressState\.Apply/);
+  assert.match(localApi, /return Results\.Json\(result, ApiJson\)/);
+  assert.doesNotMatch(localApi, /application\/x-ndjson|WriteComparisonStreamEventAsync/);
   assert.match(livePage, /已完成能力数 ÷ 参测能力总数 × 100%/);
   assert.match(livePage, /role="progressbar"/);
   assert.match(livePage, /已完成 \$\{progress\.completed_capabilities\} \/ \$\{progress\.total_capabilities\} 项能力/);

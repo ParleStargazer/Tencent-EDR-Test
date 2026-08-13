@@ -100,6 +100,18 @@ public sealed record ApiRunSnapshot(
     bool LocalExportAvailable,
     string? Error);
 
+public sealed record ApiComparisonProgressSnapshot(
+    string ComparisonId,
+    string Status,
+    double Progress,
+    int CompletedCapabilities,
+    int TotalCapabilities,
+    string? CapabilityId,
+    string? DisplayNameZh,
+    string? ValidationStatus,
+    DateTimeOffset UpdatedAtUtc,
+    string? Error);
+
 public static class LocalApiService
 {
     private const long MaximumUploadBytes = 256L * 1024 * 1024;
@@ -125,6 +137,7 @@ public static class LocalApiService
 
         var catalog = new LocalApiCatalog(options);
         var coordinator = new ApiRunCoordinator(options, catalog);
+        var comparisonCoordinator = new ApiComparisonCoordinator();
         var app = builder.Build();
         ConfigureSecurity(app, options);
 
@@ -177,7 +190,12 @@ public static class LocalApiService
                 : Results.File(path, "application/json; charset=utf-8", $"{Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(path)))}-local-run.json");
         });
 
-        app.MapPost("/api/compare", (Func<HttpContext, Task<IResult>>)(context => CompareAsync(context, options, catalog, coordinator)));
+        app.MapPost("/api/compare", (Func<HttpContext, Task<IResult>>)(context => CompareAsync(context, options, catalog, coordinator, comparisonCoordinator)));
+        app.MapGet("/api/comparisons/{comparisonId}/progress", (string comparisonId) =>
+        {
+            var progress = comparisonCoordinator.Get(comparisonId);
+            return progress is null ? ApiError(404, "找不到离线比较进度。") : Results.Json(progress, ApiJson);
+        });
         app.MapGet("/api/reports/{comparisonId}/result", (string comparisonId) =>
             DownloadReport(options, comparisonId, "validation-result.json", "application/json; charset=utf-8", $"validation-{comparisonId}.json"));
         app.MapGet("/api/reports/{comparisonId}/conclusion", (string comparisonId) =>
@@ -250,11 +268,11 @@ public static class LocalApiService
         HttpContext context,
         LocalApiOptions options,
         LocalApiCatalog catalog,
-        ApiRunCoordinator coordinator)
+        ApiRunCoordinator coordinator,
+        ApiComparisonCoordinator comparisonCoordinator)
     {
         if (!context.Request.HasFormContentType) return ApiError(415, "比较接口需要 multipart/form-data。");
         var form = await context.Request.ReadFormAsync(context.RequestAborted);
-        var streamProgress = string.Equals(form["stream_progress"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
         var cloudFile = form.Files.GetFile("cloud_file");
         if (cloudFile is null) return ApiError(400, "必须上传 cloud_file。");
         if (!ValidJsonExtension(cloudFile.FileName)) return ApiError(400, "cloud_file 仅支持 .json 或 .jsonl。");
@@ -315,7 +333,9 @@ public static class LocalApiService
             return ApiError(400, exception.Message);
         }
 
-        var comparisonId = Ids.NewUuid7();
+        var comparisonId = form["comparison_id"].ToString().Trim();
+        if (string.IsNullOrWhiteSpace(comparisonId)) comparisonId = Ids.NewUuid7();
+        else if (!Guid.TryParse(comparisonId, out _)) return ApiError(400, "comparison_id 必须是 UUID。");
         var importRoot = Path.Combine(options.ImportDirectory, comparisonId);
         var reportRoot = Path.Combine(options.ReportsDirectory, comparisonId);
         Directory.CreateDirectory(importRoot);
@@ -364,15 +384,17 @@ public static class LocalApiService
 
         var outputPath = Path.Combine(reportRoot, "validation-result.json");
         var conclusionPath = Path.Combine(reportRoot, "validation-conclusion.md");
+        ApiComparisonProgressState progressState;
         try
         {
-            if (streamProgress)
-            {
-                context.Response.StatusCode = StatusCodes.Status200OK;
-                context.Response.ContentType = "application/x-ndjson; charset=utf-8";
-                context.Response.Headers.CacheControl = "no-store";
-                context.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
-            }
+            progressState = comparisonCoordinator.Start(comparisonId);
+        }
+        catch (ApiRequestException exception)
+        {
+            return ApiError(exception.StatusCode, exception.Message);
+        }
+        try
+        {
             var result = CompareService.Compare(new CompareRequest(
                 localPath,
                 [cloudPath],
@@ -386,51 +408,20 @@ public static class LocalApiService
                 childFileCreateOpNameStandards,
                 strongCorrelationTimeMs,
                 candidateTimeLimitMs,
-                streamProgress
-                    ? update => WriteComparisonStreamEventAsync(context.Response, new JsonObject
-                    {
-                        ["type"] = "progress",
-                        ["completed_capabilities"] = update.CompletedCapabilities,
-                        ["total_capabilities"] = update.TotalCapabilities,
-                        ["progress"] = update.Progress,
-                        ["capability_id"] = update.CapabilityId,
-                        ["display_name_zh"] = update.DisplayNameZh,
-                        ["validation_status"] = update.ValidationStatus,
-                    }, context.RequestAborted).GetAwaiter().GetResult()
-                    : null));
-            if (streamProgress)
-            {
-                await WriteComparisonStreamEventAsync(context.Response, new JsonObject
-                {
-                    ["type"] = "result",
-                    ["result"] = result.DeepClone(),
-                }, context.RequestAborted);
-                return Results.Empty;
-            }
+                progressState.Apply));
+            progressState.Complete();
             return Results.Json(result, ApiJson);
         }
         catch (Exception exception) when (exception is InvalidDataException or JsonException or ArgumentException)
         {
-            if (streamProgress && context.Response.HasStarted)
-            {
-                await WriteComparisonStreamEventAsync(context.Response, new JsonObject
-                {
-                    ["type"] = "error",
-                    ["error"] = exception.Message,
-                }, context.RequestAborted);
-                return Results.Empty;
-            }
+            progressState.Fail(exception.Message);
             return ApiError(400, exception.Message);
         }
-    }
-
-    private static async Task WriteComparisonStreamEventAsync(
-        HttpResponse response,
-        JsonObject payload,
-        CancellationToken cancellationToken)
-    {
-        await response.WriteAsync(payload.ToJsonString(JsonDefaults.CompactOptions) + "\n", cancellationToken);
-        await response.Body.FlushAsync(cancellationToken);
+        catch (Exception exception)
+        {
+            progressState.Fail(exception.Message);
+            throw;
+        }
     }
 
     private static async Task SaveUploadAsync(IFormFile file, string path, CancellationToken cancellationToken)
@@ -1088,6 +1079,100 @@ internal sealed class ApiRunState
     private void AddLog(ApiRunLogEntry entry)
     {
         logs.Add(entry);
+    }
+}
+
+internal sealed class ApiComparisonCoordinator
+{
+    private readonly ConcurrentDictionary<string, ApiComparisonProgressState> states = new(StringComparer.Ordinal);
+
+    public ApiComparisonProgressState Start(string comparisonId)
+    {
+        var state = new ApiComparisonProgressState(comparisonId);
+        if (!states.TryAdd(comparisonId, state))
+        {
+            throw new ApiRequestException(409, "comparison_id 已存在，请重新发起比较。");
+        }
+        return state;
+    }
+
+    public ApiComparisonProgressSnapshot? Get(string comparisonId)
+    {
+        if (!Guid.TryParse(comparisonId, out _) || !states.TryGetValue(comparisonId, out var state)) return null;
+        return state.Snapshot();
+    }
+}
+
+internal sealed class ApiComparisonProgressState
+{
+    private readonly object sync = new();
+    private string status = "running";
+    private double progress;
+    private int completedCapabilities;
+    private int totalCapabilities;
+    private string? capabilityId;
+    private string? displayNameZh;
+    private string? validationStatus;
+    private DateTimeOffset updatedAtUtc = DateTimeOffset.UtcNow;
+    private string? error;
+
+    public ApiComparisonProgressState(string comparisonId)
+    {
+        ComparisonId = comparisonId;
+    }
+
+    public string ComparisonId { get; }
+
+    public void Apply(CompareProgressUpdate update)
+    {
+        lock (sync)
+        {
+            progress = update.Progress;
+            completedCapabilities = update.CompletedCapabilities;
+            totalCapabilities = update.TotalCapabilities;
+            capabilityId = update.CapabilityId;
+            displayNameZh = update.DisplayNameZh;
+            validationStatus = update.ValidationStatus;
+            updatedAtUtc = DateTimeOffset.UtcNow;
+        }
+    }
+
+    public void Complete()
+    {
+        lock (sync)
+        {
+            status = "completed";
+            progress = totalCapabilities == 0 ? 100 : progress;
+            updatedAtUtc = DateTimeOffset.UtcNow;
+        }
+    }
+
+    public void Fail(string message)
+    {
+        lock (sync)
+        {
+            status = "failed";
+            error = message;
+            updatedAtUtc = DateTimeOffset.UtcNow;
+        }
+    }
+
+    public ApiComparisonProgressSnapshot Snapshot()
+    {
+        lock (sync)
+        {
+            return new ApiComparisonProgressSnapshot(
+                ComparisonId,
+                status,
+                progress,
+                completedCapabilities,
+                totalCapabilities,
+                capabilityId,
+                displayNameZh,
+                validationStatus,
+                updatedAtUtc,
+                error);
+        }
     }
 }
 

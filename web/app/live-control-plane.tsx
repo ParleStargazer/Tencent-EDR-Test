@@ -270,18 +270,17 @@ type ValidationResult = {
 };
 
 type ComparisonProgress = {
+  comparison_id: string;
+  status: "preparing" | "running" | "completed" | "failed";
   completed_capabilities: number;
   total_capabilities: number;
   progress: number;
   capability_id?: string;
   display_name_zh?: string;
   validation_status?: ValidationStatus;
+  updated_at_utc?: string;
+  error?: string;
 };
-
-type ComparisonStreamEvent =
-  | ({ type: "progress" } & ComparisonProgress)
-  | { type: "result"; result: ValidationResult }
-  | { type: "error"; error: string };
 
 type FileChoice = { file: File | null; state: "empty" | "ready"; name: string; detail: string };
 
@@ -367,53 +366,17 @@ async function apiDownload(path: string): Promise<Blob> {
   return response.blob();
 }
 
-async function apiStreamComparison(form: FormData, onProgress: (progress: ComparisonProgress) => void): Promise<ValidationResult> {
-  const response = await fetch(`${apiRoot}/compare`, { method: "POST", body: form, headers: apiHeaders() });
-  if (!response.ok) {
-    let message = `本地服务返回 HTTP ${response.status}`;
+async function pollComparisonProgress(comparisonId: string, shouldContinue: () => boolean, onProgress: (progress: ComparisonProgress) => void): Promise<void> {
+  while (shouldContinue()) {
     try {
-      const payload = (await response.json()) as { error?: string };
-      if (payload.error) message = payload.error;
+      const progress = await apiRequest<ComparisonProgress>(`/comparisons/${comparisonId}/progress`);
+      onProgress(progress);
+      if (progress.status !== "running") return;
     } catch {
-      // 非 JSON 错误响应保留状态码。
+      // 比较请求完成输入校验前，进度状态可能尚未创建，下一轮继续查询。
     }
-    throw new Error(message);
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
   }
-  if (!response.body) throw new Error("本地服务没有返回离线比较进度流。");
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let pendingEventJson = "";
-  let result: ValidationResult | null = null;
-  const consumeFragment = (fragment: string) => {
-    if (!fragment.trim() && !pendingEventJson) return;
-    pendingEventJson += `${pendingEventJson ? "\n" : ""}${fragment}`;
-    let event: ComparisonStreamEvent;
-    try {
-      event = JSON.parse(pendingEventJson) as ComparisonStreamEvent;
-    } catch (error) {
-      if (error instanceof SyntaxError) return;
-      throw error;
-    }
-    pendingEventJson = "";
-    if (event.type === "progress") onProgress(event);
-    else if (event.type === "result") result = event.result;
-    else throw new Error(event.error || "离线比较失败。");
-  };
-
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    lines.forEach(consumeFragment);
-    if (done) break;
-  }
-  consumeFragment(buffer);
-  if (pendingEventJson.trim()) throw new Error("本地服务返回的离线比较进度事件不完整。");
-  if (!result) throw new Error("离线比较已结束，但没有返回完整结果。");
-  return result;
 }
 
 function isActive(status: RunStatus): boolean {
@@ -797,17 +760,36 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
     if (manifestFile.file) form.append("cloud_manifest", manifestFile.file);
     if (localFile.file) form.append("local_file", localFile.file);
     else form.append("operation_id", selectedRunId);
-    form.append("stream_progress", "true");
+    const comparisonId = window.crypto.randomUUID();
+    form.append("comparison_id", comparisonId);
     setComparison(null);
-    setComparisonProgress({ completed_capabilities: 0, total_capabilities: 0, progress: 0 });
+    setComparisonProgress({ comparison_id: comparisonId, status: "preparing", completed_capabilities: 0, total_capabilities: 0, progress: 0 });
     setIsComparing(true);
+    let keepPolling = true;
+    const progressPolling = pollComparisonProgress(comparisonId, () => keepPolling, setComparisonProgress);
     try {
-      const result = await apiStreamComparison(form, setComparisonProgress);
+      const result = await apiRequest<ValidationResult>("/compare", { method: "POST", body: form });
+      keepPolling = false;
+      await progressPolling;
+      setComparisonProgress((current) => ({
+        comparison_id: comparisonId,
+        status: "completed",
+        completed_capabilities: result.capabilities.length,
+        total_capabilities: result.capabilities.length,
+        progress: 100,
+        capability_id: current?.capability_id,
+        display_name_zh: current?.display_name_zh,
+        validation_status: current?.validation_status,
+      }));
       setComparison(result);
       setNotice(`比较完成：${result.summary.pass} 项通过，${result.summary.fail} 项失败。`);
     } catch (error) {
+      keepPolling = false;
+      await progressPolling;
+      setComparisonProgress((current) => current ? { ...current, status: "failed", error: error instanceof Error ? error.message : "比较失败。" } : current);
       setNotice(error instanceof Error ? error.message : "比较失败。");
     } finally {
+      keepPolling = false;
       setIsComparing(false);
     }
   }
