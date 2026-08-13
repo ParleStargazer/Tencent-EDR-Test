@@ -702,6 +702,9 @@ public static class Program
             && allMethodResults.All(value => value?["status"]?.GetValue<string>() == "PASS")
             && allMethodResults.Count(value => value?["selected_for_conclusion"]?.GetValue<bool>() == true) == 1,
             "两种加载方法都应独立展示通过状态，且只能选择一种形成能力结论。");
+        Assert(allMethodResults.All(value => value?["passed_requirement_count"]?.GetValue<int>() == 5
+            && value?["requirement_count"]?.GetValue<int>() == 5),
+            "方法统计应包含 2 条本地要求与各方法自身的 3 条 EDR 要求，不能只统计 EDR 要求或候选日志数。");
 
         var secondOnlyCloudPath = Path.Combine(fixture.Path, "second-only-cloud.json");
         File.WriteAllText(secondOnlyCloudPath, new JsonArray(

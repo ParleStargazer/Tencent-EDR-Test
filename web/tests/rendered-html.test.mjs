@@ -196,6 +196,11 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /<RequirementGroup scope="local" requirements=\{localRequirements\} \/><RequirementGroup scope="cloud" requirements=\{methodRequirements\}/);
   assert.match(livePage, /requirement\.scope === "cloud" && requirement\.expectation_id === method\.expectation_id/);
   assert.doesNotMatch(livePage, /<RequirementGroup scope="local" requirements=\{localRequirements\} \/>\{methods\.length > 0/);
+  assert.match(livePage, /const allMethodRequirements = \[\.\.\.localRequirements, \.\.\.methodRequirements\]/);
+  assert.match(livePage, /\{passedMethodRequirements\}\/\{allMethodRequirements\.length\}/);
+  assert.match(livePage, /\{passedStageRequirements\}\/\{stageRequirements\.length\}/);
+  assert.match(livePage, /要求已满足 · 候选日志 \{method\.candidate_count\} 条，其中合格 \{method\.qualified_candidate_count\} 条/);
+  assert.doesNotMatch(livePage, /<strong>\{stage\.qualified_candidate_count\}\/\{stage\.candidate_count\}<\/strong>/);
   assert.match(styles, /\.method-result-body > \.requirement-group \+ \.requirement-group/);
   assert.match(livePage, /应包含的测试标记/);
   assert.match(livePage, /读取到的 PID/);

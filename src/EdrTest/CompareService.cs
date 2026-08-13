@@ -593,6 +593,7 @@ public static class CompareService
                 outputRequirements.Add(TimeDifferenceRequirementJson(expectation, maximumTimeDifferenceMs, null));
                 AddUnevaluatedExpectationRequirements(outputRequirements, expectation, resolver, "时间窗内没有可展示的 EDR 记录，无法检查该项。", includeCardinality: false);
                 methodOutcomes.Add(CreateMethodOutcome(expectation, expectationStatus, requirementStartIndex, outputRequirements,
+                    localEvaluations.Length, localEvaluations.Count(value => value.Evaluation.Status == "passed"),
                     candidates.Length, qualifiedCandidates.Length, null, null, methodWarnings));
                 continue;
             }
@@ -656,6 +657,7 @@ public static class CompareService
                 else if (evaluated.Status == "failed" && assertion.Severity == "recommended") expectationStatus = Worse(expectationStatus, "PARTIAL");
             }
             methodOutcomes.Add(CreateMethodOutcome(expectation, expectationStatus, requirementStartIndex, outputRequirements,
+                localEvaluations.Length, localEvaluations.Count(value => value.Evaluation.Status == "passed"),
                 candidates.Length, qualifiedCandidates.Length, expectationSelectedEvent, expectationSelectedCandidate, methodWarnings));
         }
 
@@ -1708,6 +1710,8 @@ public static class CompareService
         string status,
         int requirementStartIndex,
         JsonArray requirements,
+        int localRequirementCount,
+        int passedLocalRequirementCount,
         int candidateCount,
         int qualifiedCandidateCount,
         JsonObject? selectedEvent,
@@ -1729,8 +1733,8 @@ public static class CompareService
             ["selected_for_conclusion"] = false,
             ["candidate_count"] = candidateCount,
             ["qualified_candidate_count"] = qualifiedCandidateCount,
-            ["passed_requirement_count"] = methodRequirements.Count(value => value["status"]?.GetValue<string>() == "passed"),
-            ["requirement_count"] = methodRequirements.Length,
+            ["passed_requirement_count"] = passedLocalRequirementCount + methodRequirements.Count(value => value["status"]?.GetValue<string>() == "passed"),
+            ["requirement_count"] = localRequirementCount + methodRequirements.Length,
             ["warnings"] = new JsonArray(warnings.Select(value => (JsonNode)value).ToArray()),
         };
         return new MethodOutcome(
