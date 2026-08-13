@@ -384,10 +384,19 @@ async function apiStreamComparison(form: FormData, onProgress: (progress: Compar
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let pendingEventJson = "";
   let result: ValidationResult | null = null;
-  const consumeLine = (line: string) => {
-    if (!line.trim()) return;
-    const event = JSON.parse(line) as ComparisonStreamEvent;
+  const consumeFragment = (fragment: string) => {
+    if (!fragment.trim() && !pendingEventJson) return;
+    pendingEventJson += `${pendingEventJson ? "\n" : ""}${fragment}`;
+    let event: ComparisonStreamEvent;
+    try {
+      event = JSON.parse(pendingEventJson) as ComparisonStreamEvent;
+    } catch (error) {
+      if (error instanceof SyntaxError) return;
+      throw error;
+    }
+    pendingEventJson = "";
     if (event.type === "progress") onProgress(event);
     else if (event.type === "result") result = event.result;
     else throw new Error(event.error || "离线比较失败。");
@@ -398,10 +407,11 @@ async function apiStreamComparison(form: FormData, onProgress: (progress: Compar
     buffer += decoder.decode(value, { stream: !done });
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
-    lines.forEach(consumeLine);
+    lines.forEach(consumeFragment);
     if (done) break;
   }
-  consumeLine(buffer);
+  consumeFragment(buffer);
+  if (pendingEventJson.trim()) throw new Error("本地服务返回的离线比较进度事件不完整。");
   if (!result) throw new Error("离线比较已结束，但没有返回完整结果。");
   return result;
 }

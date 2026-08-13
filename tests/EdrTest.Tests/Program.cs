@@ -163,6 +163,15 @@ public static class Program
         Assert(new CompareProgressUpdate(1, 3, null, null, null).Progress == 33.3
             && new CompareProgressUpdate(2, 3, null, null, null).Progress == 66.7,
             "离线比较进度百分比应保留一位小数并按能力数计算。");
+        var progressStreamLine = new JsonObject
+        {
+            ["type"] = "progress",
+            ["completed_capabilities"] = 1,
+            ["total_capabilities"] = 3,
+        }.ToJsonString(JsonDefaults.CompactOptions);
+        Assert(!progressStreamLine.Contains('\n')
+            && JsonNode.Parse(progressStreamLine)?["completed_capabilities"]?.GetValue<int>() == 1,
+            "NDJSON 进度事件必须是一行一个完整 JSON 对象，不能继承报告的缩进格式。");
         Assert(validation["summary"]?["pass"]?.GetValue<int>() == 1, $"合成云端事件应通过比较：{validation.ToJsonString(JsonDefaults.Options)}");
         Assert(validation["summary"]?["fail"]?.GetValue<int>() == 0, "不应出现 FAIL。");
         Assert(validation["schema_version"]?.GetValue<string>() == "1.1", "验证结果 Schema 应为 1.1。");

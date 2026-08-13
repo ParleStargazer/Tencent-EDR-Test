@@ -23,6 +23,10 @@ public static class JsonDefaults
         WriteIndented = true,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
     };
+    public static readonly JsonSerializerOptions CompactOptions = new(Options)
+    {
+        WriteIndented = false,
+    };
 
     public static JsonNode? ParseNode(string json) => JsonNode.Parse(json);
 

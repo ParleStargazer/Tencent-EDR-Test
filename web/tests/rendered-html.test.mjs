@@ -134,6 +134,9 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /form\.append\("stream_progress", "true"\)/);
   assert.match(livePage, /apiStreamComparison\(form, setComparisonProgress\)/);
   assert.match(livePage, /response\.body\.getReader\(\)/);
+  assert.match(livePage, /pendingEventJson/);
+  assert.match(livePage, /if \(error instanceof SyntaxError\) return/);
+  assert.match(livePage, /离线比较进度事件不完整/);
   assert.match(livePage, /已完成能力数 ÷ 参测能力总数 × 100%/);
   assert.match(livePage, /role="progressbar"/);
   assert.match(livePage, /已完成 \$\{progress\.completed_capabilities\} \/ \$\{progress\.total_capabilities\} 项能力/);

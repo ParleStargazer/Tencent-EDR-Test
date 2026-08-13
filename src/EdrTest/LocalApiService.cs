@@ -429,7 +429,7 @@ public static class LocalApiService
         JsonObject payload,
         CancellationToken cancellationToken)
     {
-        await response.WriteAsync(payload.ToJsonString(ApiJson) + "\n", cancellationToken);
+        await response.WriteAsync(payload.ToJsonString(JsonDefaults.CompactOptions) + "\n", cancellationToken);
         await response.Body.FlushAsync(cancellationToken);
     }
 
