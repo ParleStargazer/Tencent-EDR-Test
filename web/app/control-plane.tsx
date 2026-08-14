@@ -708,7 +708,7 @@ export function ControlPlane() {
           </div>
           <div className="topbar-actions">
             <span className="mode-chip"><span className="status-dot green" />离线模式</span>
-            <button className="secondary-button" type="button" onClick={() => setNotice("当前版本使用默认实验室配置。")}>环境设置</button>
+            <button className="secondary-button" type="button" onClick={() => setNotice("环境设置由本地实验室配置文件提供。")}>环境设置</button>
           </div>
         </header>
 

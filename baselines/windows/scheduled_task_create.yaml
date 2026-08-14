@@ -56,7 +56,7 @@ cloud_expectations:
       - { field: scheduled_task.command, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.after.action_command, severity: recommended, normalizers: [windows_path] }
       - { field: scheduled_task.arguments, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.after.action_arguments, severity: recommended }
   - id: scheduled-task-create-security-event
-    method: { id: schtasks_cli, title: 系统 schtasks.exe + Windows 4698（推荐） }
+    method: { id: schtasks_cli, title: 系统 schtasks.exe + Windows 4698 }
     event_type: scheduled_task
     event_actions: [create]
     cardinality: { min: 1, max: 10 }

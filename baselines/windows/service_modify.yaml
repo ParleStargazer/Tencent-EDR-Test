@@ -58,7 +58,7 @@ cloud_expectations:
       - { field: service.display_name, operator: present, severity: informational }
       - { field: service.old_start_type, operator: present, severity: informational }
   - id: service-modify-system-7040
-    method: { id: system_event_7040, title: Windows System 7040（推荐） }
+    method: { id: system_event_7040, title: Windows System 7040 }
     event_type: service
     event_actions: [modify]
     cardinality: { min: 1, max: 3 }

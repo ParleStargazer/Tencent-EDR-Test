@@ -64,7 +64,7 @@ cloud_expectations:
         normalizers: [windows_path]
       - { field: user.id, operator: present, severity: recommended }
   - id: scheduled-task-delete-cli-security-event
-    method: { id: schtasks_cli, title: 系统 schtasks.exe /Delete + Windows 4699（推荐） }
+    method: { id: schtasks_cli, title: 系统 schtasks.exe /Delete + Windows 4699 }
     event_type: scheduled_task
     event_actions: [delete]
     cardinality: { min: 1, max: 10 }

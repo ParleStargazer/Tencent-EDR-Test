@@ -10,7 +10,7 @@
 | 服务修改 | `ChangeServiceConfigW` | 同一服务由手动启动改为禁用，同时修改显示名和 Binary Path 标记；服务保持停止 | SCM API Hook；Windows System 7040 |
 | 服务删除 | `DeleteService` | 删除前完整存在；删除后 SCM 查询为不存在 | SCM API Hook |
 
-创建和修改采用 `method_selection: best`：API Hook 与 System Event Log 是 EDR 可能采用的两条采集路径，比较器分别显示两种方法，并以通过情况最好的方法作为能力结论。删除没有与 7045/7040 对等且稳定的 System 删除事件，因此首版只把 `DeleteService` API Hook 作为直接能力证据。
+三项能力均采用 `method_selection: best` 并输出独立方法结果。创建和修改分别比较 API Hook 与 System Event Log 两条采集路径；删除没有与 7045/7040 对等且稳定的 System 删除事件，因此只比较 `DeleteService` API Hook。比较器以通过情况最好的方法作为能力结论。
 
 ## 2. 安全边界
 
@@ -33,9 +33,9 @@
 
 本地 SCM 查询是绝对基准。System 日志诊断用于解释 EDR 的采集路径，即使本机日志未开启、读取受限或事件尚未落盘，也不会覆盖已经成功的 SCM 本地结论。
 
-## 4. 腾讯 EDR 首版映射
+## 4. 腾讯 EDR 映射
 
-现有 `reference/` 导出中发现 8 条 `ServiceEvents / StartService / InjectHook` 记录，证明产品存在服务 API Hook 表，已确认的相关原始字段包括 `Child.ServiceName`、`Child.StartType`、`Child.FilePath` 及完整 Parent 调用链；但当前参考资料没有 `CreateService`、`ChangeServiceConfig`、`DeleteService`、7045 或 7040 目标事件。
+`reference/260814202100run` 中的 `ServiceEvents / CreateService / InjectHook` 记录确认了服务创建的 API Hook 路径，稳定字段包括 `Child.ServiceName`、`Child.FilePath`、`Child.StartType` 和 Parent 调用链。相同轮次没有出现 `ChangeServiceConfig`、`DeleteService`、7045 或 7040 目标事件，因此修改与删除仍要求各自的直接事件，不能由测试准备阶段的 `CreateService` 代替。
 
 因此 `tencent-edr-proc-events-v1` 当前同时提供：
 
@@ -43,7 +43,7 @@
 2. 7045/7040 的 System Event Log 路由；
 3. `ServiceEvents` 候选发现路由，便于在目标动作名未知时仍展示时间和服务名接近的低置信 JSON 块。
 
-服务名称、显示名、Binary Path、启动类型、账号和服务类型配置了常见 Child 字段别名。这些目标动作与别名属于待实测校准项；拿到新一轮完整导出后，应优先根据真实 `Action.Name` 和实际字段收敛路由及 BASELINE，而不能把首版假设当成产品结论。
+服务名称、显示名、Binary Path、启动类型、账号和服务类型配置了常见 Child 字段别名。创建路径已按参考轮次校准；修改与删除保留兼容路由，后续取得对应直接事件时再按实际 `Action.Name` 和字段更新 BASELINE。
 
 前端“可选消歧”预置以下 Action.Name，可由用户编辑并保存：
 

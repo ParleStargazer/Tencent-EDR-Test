@@ -2,7 +2,7 @@ schema_version: "1.1"
 baseline_id: win.service.create
 version: "0.1.0"
 title: Windows 服务创建遥测
-description: 本地以 SCM 独立查询确认唯一禁用服务确实创建；腾讯 EDR 实测直接证据为 ServiceEvents/CreateService，Common.EventTime 应与调用开始时间关联，System 7045 作为未观测到的兼容路径保留。
+description: 本地以 SCM 独立查询确认唯一禁用服务确实创建；云端 API Hook 直接证据为 ServiceEvents/CreateService，Common.EventTime 应与调用开始时间关联，同时保留 System 7045 兼容路径。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -36,7 +36,7 @@ correlation:
 method_selection: { strategy: best }
 cloud_expectations:
   - id: service-create-api-hook
-    method: { id: scm_api_hook, title: SCM CreateService API Hook（腾讯实测） }
+    method: { id: scm_api_hook, title: SCM CreateService API Hook }
     event_type: service_api
     event_actions: [create]
     cardinality: { min: 1, max: 3 }
@@ -57,7 +57,7 @@ cloud_expectations:
       - { field: service.account, operator: present, severity: informational }
       - { field: service.service_type, operator: present, severity: informational }
   - id: service-create-system-7045
-    method: { id: system_event_7045, title: Windows System 7045（本轮未观测到） }
+    method: { id: system_event_7045, title: Windows System 7045 }
     event_type: service
     event_actions: [create]
     cardinality: { min: 1, max: 3 }

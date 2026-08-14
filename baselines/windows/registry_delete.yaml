@@ -52,7 +52,7 @@ cloud_expectations:
       - { field: process.executable, operator: equals, expected_from_local: facts.registry.isolated_key.actor_executable, severity: required, normalizers: [windows_path] }
       - { field: registry.value_data, operator: equals, expected_from_local: facts.registry.isolated_key.before.value_data, severity: recommended }
   - id: registry-delete-run-key-event
-    method: { id: run_key_native, title: 启动项（Win32 API，推荐） }
+    method: { id: run_key_native, title: 启动项（Win32 API） }
     event_type: registry
     event_actions: [delete]
     cardinality: { min: 1, max: 10 }

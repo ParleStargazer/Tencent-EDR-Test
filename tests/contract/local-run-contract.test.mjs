@@ -432,12 +432,12 @@ test("Service Activity 三项安全样本、SCM 本地基准、映射和 BASSLIN
   const startScript = await readFile(new URL("scripts/Start-EdrTest.ps1", root), "utf8");
   const liveControlPlane = await readFile(new URL("web/app/live-control-plane.tsx", root), "utf8");
   const definitions = [
-    ["create", "CreateServiceW", 7045],
-    ["modify", "ChangeServiceConfigW", 7040],
-    ["delete", "DeleteService", null],
+    ["create", "CreateServiceW", 7045, 2],
+    ["modify", "ChangeServiceConfigW", 7040, 2],
+    ["delete", "DeleteService", null, 1],
   ];
 
-  for (const [operation, nativeApi, eventId] of definitions) {
+  for (const [operation, nativeApi, eventId, methodCount] of definitions) {
     const manifest = await readJson(`sample-src/ServiceActivity/manifests/win.service.${operation}/capability.json`);
     const baseline = await readFile(new URL(`baselines/windows/service_${operation}.yaml`, root), "utf8");
     assert.equal(manifest.capability_id, `win.service.${operation}`);
@@ -454,13 +454,12 @@ test("Service Activity 三项安全样本、SCM 本地基准、映射和 BASSLIN
     assert.match(baseline, /max_time_difference_ms: 25/);
     assert.match(baseline, new RegExp(`expected: ${nativeApi}`));
     assert.match(baseline, /cloud_field: service\.name/);
+    assert.match(baseline, /method_selection: \{ strategy: best \}/);
+    assert.equal((baseline.match(/^\s+method: /gm) ?? []).length, methodCount);
     if (eventId === null) {
-      assert.doesNotMatch(baseline, /method_selection:/);
-      assert.match(baseline, /service-delete-api-hook/);
+      assert.match(baseline, /method: \{ id: scm_api_hook, title: SCM DeleteService API Hook \}/);
     } else {
-      assert.match(baseline, /method_selection: \{ strategy: best \}/);
       assert.match(baseline, new RegExp(`expected: ${eventId}`));
-      assert.equal((baseline.match(/^\s+method: /gm) ?? []).length, 2);
     }
   }
 

@@ -845,7 +845,9 @@ public static class CompareService
                     ["selected_method_id"] = selectedMethod.Expectation.Method?.Id ?? selectedMethod.Expectation.Id,
                     ["selected_method_title"] = selectedTitle,
                     ["selected_method_status"] = selectedMethod.Status,
-                    ["notice"] = $"该能力包含 {methodOutcomes.Count} 种测试方法，EDR 结论默认采用结果最好的“{selectedTitle}”（{ValidationStatusLabel(selectedMethod.Status)}）；其他方法仍完整展示，不会拉低所选方法的结论。",
+                    ["notice"] = methodOutcomes.Count == 1
+                        ? $"该能力采用“{selectedTitle}”单一测试方法形成 EDR 结论（{ValidationStatusLabel(selectedMethod.Status)}）。"
+                        : $"该能力包含 {methodOutcomes.Count} 种测试方法，EDR 结论默认采用结果最好的“{selectedTitle}”（{ValidationStatusLabel(selectedMethod.Status)}）；其他方法仍完整展示，不会拉低所选方法的结论。",
                 };
             }
             else
@@ -2327,11 +2329,10 @@ public static class CompareService
         {
             if (selection.Strategy is not ("all" or "best")) throw new InvalidDataException($"BASELINE {baseline.BaselineId} 的 method_selection.strategy 无效。");
             if (selection.Strategy == "best"
-                && (baseline.CloudExpectations.Count < 2
-                    || baseline.CloudExpectations.Any(expectation => expectation.Method is null)
+                && (baseline.CloudExpectations.Any(expectation => expectation.Method is null)
                     || baseline.CloudExpectations.Select(expectation => expectation.Method!.Id).Distinct(StringComparer.Ordinal).Count() != baseline.CloudExpectations.Count))
             {
-                throw new InvalidDataException($"BASELINE {baseline.BaselineId} 使用 best 方法选择时必须声明至少两个 method.id 唯一的 cloud_expectations。");
+                throw new InvalidDataException($"BASELINE {baseline.BaselineId} 使用 best 方法选择时必须为每个 cloud_expectation 声明唯一的 method.id。");
             }
         }
         foreach (var expectation in baseline.CloudExpectations)

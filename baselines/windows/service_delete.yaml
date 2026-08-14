@@ -31,8 +31,10 @@ correlation:
     - { local_field: facts.service.name, cloud_field: service.name, strength: strong, normalizers: [lowercase, trim] }
     - { local_field: facts.service.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
     - { local_field: facts.service.actor_pid, cloud_field: process.pid, strength: medium }
+method_selection: { strategy: best }
 cloud_expectations:
   - id: service-delete-api-hook
+    method: { id: scm_api_hook, title: SCM DeleteService API Hook }
     event_type: service_api
     event_actions: [delete]
     cardinality: { min: 1, max: 3 }

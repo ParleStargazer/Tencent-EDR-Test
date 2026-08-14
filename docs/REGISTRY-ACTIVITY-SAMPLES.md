@@ -22,7 +22,7 @@
 | 方法 ID | 中文名称 | 路径与调用方式 |
 | --- | --- | --- |
 | `isolated_key` | 隔离 HKCU 键（.NET API） | `HKCU\Software\EdrTest\Runs\<nonce>\<operation>`，保留原有低干扰测试 |
-| `run_key_native` | 启动项（Win32 API，推荐） | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，直接调用 `RegSetValueExW` / `RegDeleteValueW` |
+| `run_key_native` | 启动项（Win32 API） | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，直接调用 `RegSetValueExW` / `RegDeleteValueW` |
 
 `run_key_native` 不覆盖已有启动项：值名为本轮唯一的 `EdrTest_<nonce-tag>_<operation>`，Controller 在执行前确认不存在，结束后只删除这个精确值。若当前用户原本没有 `Run` 键，则清理仅在该键仍为空时恢复为“不存在”；若原本已有该键则绝不删除。测试不会触发登录或重启，故该值不会实际启动程序。隔离方法则只删除本轮唯一子树。
 

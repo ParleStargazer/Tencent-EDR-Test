@@ -1160,6 +1160,15 @@ public static class Program
                 && capability["method_results"]?.AsArray().All(value => value?["status"]?.GetValue<string>() == "PASS") == true,
                 $"服务 {operation} 必须分别输出 API Hook 与 System Event 两个通过的方法结果：{capability["method_results"]?.ToJsonString(JsonDefaults.Options)}");
         }
+        var delete = tencentResult["capabilities"]?.AsArray().Single(value =>
+            value?["capability_id"]?.GetValue<string>() == "win.service.delete")?.AsObject()
+            ?? throw new InvalidOperationException("腾讯比较结果缺少服务删除能力。");
+        Assert(delete["method_results"]?.AsArray().Count == 1
+            && delete["method_results"]?[0]?["method_id"]?.GetValue<string>() == "scm_api_hook"
+            && delete["method_results"]?[0]?["status"]?.GetValue<string>() == "PASS"
+            && delete["method_results"]?[0]?["selected_for_conclusion"]?.GetValue<bool>() == true
+            && delete["method_selection"]?["notice"]?.GetValue<string>().Contains("单一测试方法", StringComparison.Ordinal) == true,
+            $"服务删除必须输出并采用 DeleteService API Hook 方法结果：{delete["method_results"]?.ToJsonString(JsonDefaults.Options)}");
         var create = tencentResult["capabilities"]?.AsArray().Single(value =>
             value?["capability_id"]?.GetValue<string>() == "win.service.create")?.AsObject()
             ?? throw new InvalidOperationException("腾讯比较结果缺少服务创建能力。");

@@ -136,8 +136,8 @@ $tencentResultPath = Join-Path $OutputRoot "validation-result.tencent-mapping.js
 $tencentExit = $LASTEXITCODE
 $genericResult = Get-Content $genericResultPath -Raw | ConvertFrom-Json -Depth 100
 $tencentResult = Get-Content $tencentResultPath -Raw | ConvertFrom-Json -Depth 100
-$genericDualMethods = @($genericResult.capabilities | Where-Object { $_.capability_id -in @("win.service.create", "win.service.modify") } | ForEach-Object method_results)
-$tencentDualMethods = @($tencentResult.capabilities | Where-Object { $_.capability_id -in @("win.service.create", "win.service.modify") } | ForEach-Object method_results)
+$genericMethods = @($genericResult.capabilities | ForEach-Object method_results)
+$tencentMethods = @($tencentResult.capabilities | ForEach-Object method_results)
 
 $servicesRemoved = $true
 foreach ($serviceName in @($localRun.local_facts | Where-Object key -eq "service.name" | ForEach-Object value)) {
@@ -161,10 +161,10 @@ $assertions = [ordered]@{
     all_exact_test_services_removed = $servicesRemoved
     generic_compare_exit_code_is_0 = $genericExit -eq 0
     generic_compare_pass_count_is_3 = $genericResult.summary.pass -eq 3
-    generic_all_four_alternative_methods_pass = $genericDualMethods.Count -eq 4 -and @($genericDualMethods | Where-Object status -ne "PASS").Count -eq 0
+    generic_all_five_method_results_pass = $genericMethods.Count -eq 5 -and @($genericMethods | Where-Object status -ne "PASS").Count -eq 0
     tencent_compare_exit_code_is_0 = $tencentExit -eq 0
     tencent_compare_pass_count_is_3 = $tencentResult.summary.pass -eq 3
-    tencent_all_four_alternative_methods_pass = $tencentDualMethods.Count -eq 4 -and @($tencentDualMethods | Where-Object status -ne "PASS").Count -eq 0
+    tencent_all_five_method_results_pass = $tencentMethods.Count -eq 5 -and @($tencentMethods | Where-Object status -ne "PASS").Count -eq 0
 }
 $failedAssertions = @($assertions.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object Key)
 $summary = [ordered]@{

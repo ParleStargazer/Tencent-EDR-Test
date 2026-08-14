@@ -53,7 +53,7 @@ cloud_expectations:
       - { field: registry.old_value_type, operator: equals, expected: 0, severity: recommended }
       - { field: registry.value_type, operator: present, severity: recommended }
   - id: registry-create-run-key-event
-    method: { id: run_key_native, title: 启动项（Win32 API，推荐） }
+    method: { id: run_key_native, title: 启动项（Win32 API） }
     event_type: registry
     event_actions: [set_value]
     cardinality: { min: 1, max: 10 }
