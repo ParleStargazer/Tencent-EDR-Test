@@ -642,6 +642,8 @@ Network Activity 五项能力采用 Controller、Actor、Helper 三程序编排�
 
 Registry Activity 三项能力统一使用 `HKCU\Software\EdrTest\Runs\<nonce>\<operation>` 临时键。Controller 负责预置、独立读取和精确清理，Actor 负责创建键值、修改值或依次删除值和空键；本地事实记录 Actor PID/路径、Hive、键路径、值名/类型、前后数据及 SHA-256 和紧邻 API 的时间。三份 BASELINE 将本地事实作为绝对基准，以键路径、值名、Actor、PID 和 15 ms 时间差关联 EDR `RegEvents`。腾讯官方文档已确认 `RegEvents`、`RegSetValue` 和 `Child.RegValData`；键路径和值名别名暂兼容多版本导出，等待真实注册表导出收敛。完整约束见 `docs/REGISTRY-ACTIVITY-SAMPLES.md`。
 
+Scheduled Task Activity 三项能力使用 Task Scheduler 2.0 COM API 操作本轮唯一的 `\EdrTest_<nonce>_<operation>` 当前用户任务。任务无触发器、默认禁用、禁止按需启动且从不执行，因此此受控实现按 L1 运行；任何未来启用任务、添加自动触发器或使用高权限主体的方法仍属于 L2。Controller 负责预置、独立查询和精确清理，Actor 负责 `TASK_CREATE`、`TASK_UPDATE` 或删除。BASSLINE 以任务路径、XML 中 nonce 与 15 ms 时间差为主证据，并以 Windows 安全事件 4698、4702、4699 确认创建、修改、删除语义。真实导出中创建 XML 位于 `Child.TaskContent`，修改 XML 位于 `Child.TaskContentNew`；删除 `SchedTaskDelete` 等待测试机实测。完整约束见 `docs/SCHEDULED-TASK-ACTIVITY-SAMPLES.md`。
+
 ## 19. 测试策略
 
 ### 19.1 Runner 与 SQLite

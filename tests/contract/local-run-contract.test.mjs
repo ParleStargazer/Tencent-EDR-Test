@@ -343,6 +343,59 @@ test("Registry Activity 双方法样本、真实 RegEvents 字段和 BASSLINE �
   assert.match(compareService, /hkey_users\\\\s-1-5-21/);
 });
 
+test("Scheduled Task Activity 三项样本、真实字段清单、映射和 BASSLINE 完整", async () => {
+  const normalizedSchema = await readJson("schemas/normalized-event.schema.json");
+  const profile = await readJson("docs/reference/tencent-edr-scheduled-task-events-field-profile.json");
+  const mapping = await readFile(new URL("mappings/tencent-edr-proc-events-v1.yaml", root), "utf8");
+  const protocol = await readFile(new URL("sample-src/ScheduledTaskActivity/ScheduledTaskActivity.Protocol/Protocol.cs", root), "utf8");
+  const controller = await readFile(new URL("sample-src/ScheduledTaskActivity/ScheduledTaskActivity.Controller/Program.cs", root), "utf8");
+  const startScript = await readFile(new URL("scripts/Start-EdrTest.ps1", root), "utf8");
+  const liveControlPlane = await readFile(new URL("web/app/live-control-plane.tsx", root), "utf8");
+  const definitions = [
+    ["create", 4698, "SchedTaskCreate"],
+    ["modify", 4702, "SchedTaskUpdate"],
+    ["delete", 4699, "SchedTaskDelete"],
+  ];
+
+  for (const [operation, eventId] of definitions) {
+    const manifest = await readJson(`sample-src/ScheduledTaskActivity/manifests/win.scheduled_task.${operation}/capability.json`);
+    const baseline = await readFile(new URL(`baselines/windows/scheduled_task_${operation}.yaml`, root), "utf8");
+    assert.equal(manifest.version, "0.1.0");
+    assert.equal(manifest.risk_level, "L1");
+    assert.equal(manifest.required_privilege, "standard_user");
+    assert.ok(manifest.expected_fact_keys.includes(`scheduled_task.${operation}_succeeded`));
+    assert.ok(manifest.expected_fact_keys.includes("scheduled_task.task_path"));
+    assert.ok(manifest.expected_fact_keys.includes("scheduled_task.actor_pid"));
+    assert.match(baseline, /max_time_difference_ms: 15/);
+    assert.match(baseline, new RegExp(`expected: ${eventId}`));
+    assert.match(baseline, /cloud_field: scheduled_task\.name/);
+  }
+
+  assert.ok("scheduled_task" in normalizedSchema.properties);
+  assert.deepEqual(Object.keys(normalizedSchema.properties.scheduled_task.properties), ["name", "content"]);
+  assert.equal(profile.sources.length, 2);
+  assert.equal(profile.sources[0].action_name, "SchedTaskCreate");
+  assert.equal(profile.sources[1].action_name, "SchedTaskUpdate");
+  assert.equal(profile.sources.every((source) => source.field_count === 106), true);
+  assert.equal(profile.union_field_count, 107);
+  assert.equal(profile.all_exported_fields.length, 107);
+  assert.match(mapping, /route_id: scheduled-task-create/);
+  assert.match(mapping, /route_id: scheduled-task-modify/);
+  assert.match(mapping, /route_id: scheduled-task-delete/);
+  assert.match(mapping, /route_id: scheduled-task-candidate-discovery/);
+  assert.match(mapping, /source: "Child\.TaskContent"/);
+  assert.match(mapping, /sources: \["Child\.TaskContentNew", "Child\.TaskContent"\]/);
+  assert.match(protocol, /TaskLogonInteractiveToken/);
+  assert.match(protocol, /new XElement\(TaskNamespace \+ "Enabled", false\)/);
+  assert.match(protocol, /AllowStartOnDemand", false/);
+  assert.match(controller, /delete_exact_disabled_test_task/);
+  assert.match(controller, /task_was_never_started/);
+  assert.match(startScript, /Build-ScheduledTaskActivitySamples\.ps1/);
+  assert.match(liveControlPlane, /"win\.scheduled_task\.create": "SchedTaskCreate"/);
+  assert.match(liveControlPlane, /"win\.scheduled_task\.modify": "SchedTaskUpdate"/);
+  assert.match(liveControlPlane, /"win\.scheduled_task\.delete": "SchedTaskDelete"/);
+});
+
 test("Network Activity 五项清单、BASELINE、回环编排和腾讯路由完整", async () => {
   const normalizedSchema = await readJson("schemas/normalized-event.schema.json");
   const localEventDataSchema = await readJson("schemas/local-event-data.schema.json");

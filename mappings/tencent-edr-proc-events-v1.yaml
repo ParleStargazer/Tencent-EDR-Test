@@ -777,6 +777,105 @@ routes:
       "winlog.logon.id": { source: "Child.TargetLogonId" }
       "winlog.logon.type": { source: "Child.LogonType", on_empty: null }
 
+  # 计划任务语义优先由稳定的 Windows 安全事件 ID 确定；Action.Name 仅作为前端可选消歧。
+  # 真实导出中创建 XML 位于 Child.TaskContent，修改后的 XML 位于 Child.TaskContentNew。
+  - route_id: scheduled-task-create
+    when:
+      "@table": ScheduleTaskEvents
+      "Action.EventLogId": 4698
+    canonical:
+      "event.type": { constant: scheduled_task }
+      "event.action": { constant: create }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Child.SubjectUserName", on_empty: null }
+      "user.domain": { source: "Child.SubjectDomainName", on_empty: null }
+      "user.id": { source: "Child.SubjectUserSid", on_empty: null }
+      "winlog.event_id": { source: "Action.EventLogId" }
+      "scheduled_task.name": { sources: ["Child.TaskName", "Child.NodeName"] }
+      "scheduled_task.content": { source: "Child.TaskContent", on_empty: null }
+
+  - route_id: scheduled-task-modify
+    when:
+      "@table": ScheduleTaskEvents
+      "Action.EventLogId": 4702
+    canonical:
+      "event.type": { constant: scheduled_task }
+      "event.action": { constant: modify }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Child.SubjectUserName", on_empty: null }
+      "user.domain": { source: "Child.SubjectDomainName", on_empty: null }
+      "user.id": { source: "Child.SubjectUserSid", on_empty: null }
+      "winlog.event_id": { source: "Action.EventLogId" }
+      "scheduled_task.name": { sources: ["Child.TaskName", "Child.NodeName"] }
+      "scheduled_task.content": { sources: ["Child.TaskContentNew", "Child.TaskContent"], on_empty: null }
+
+  - route_id: scheduled-task-delete
+    when:
+      "@table": ScheduleTaskEvents
+      "Action.EventLogId": 4699
+    canonical:
+      "event.type": { constant: scheduled_task }
+      "event.action": { constant: delete }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Child.SubjectUserName", on_empty: null }
+      "user.domain": { source: "Child.SubjectDomainName", on_empty: null }
+      "user.id": { source: "Child.SubjectUserSid", on_empty: null }
+      "winlog.event_id": { source: "Action.EventLogId" }
+      "scheduled_task.name": { sources: ["Child.TaskName", "Child.NodeName"] }
+      "scheduled_task.content": { sources: ["Child.TaskContent", "Child.TaskContentNew"], on_empty: null }
+
+  # 未识别的计划任务动作仍进入候选池，供时间与任务路径关联后的低置信排查；
+  # 它不会绕过本地绝对基准、事件语义和用户配置的 Action.Name 消歧规则。
+  - route_id: scheduled-task-candidate-discovery
+    when:
+      "@table": ScheduleTaskEvents
+    canonical:
+      "event.type": { constant: scheduled_task }
+      "event.action": { source: "Action.Name", on_empty: unknown }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Child.SubjectUserName", on_empty: null }
+      "user.domain": { source: "Child.SubjectDomainName", on_empty: null }
+      "user.id": { source: "Child.SubjectUserSid", on_empty: null }
+      "winlog.event_id": { source: "Action.EventLogId", on_empty: null }
+      "scheduled_task.name": { sources: ["Child.TaskName", "Child.NodeName"], on_empty: null }
+      "scheduled_task.content": { sources: ["Child.TaskContentNew", "Child.TaskContent"], on_empty: null }
+
   # reference/reg/edr_reg_relate.json 的 2168 条真实导出均来自 RegEvents，动作均为
   # RegSetValue。产品只输出已归入 Child.RegGroupName 的重点注册表区域；新旧值与
   # 新旧类型的实际字段如下。兼容别名保留在真实字段之后，用于旧版导出。

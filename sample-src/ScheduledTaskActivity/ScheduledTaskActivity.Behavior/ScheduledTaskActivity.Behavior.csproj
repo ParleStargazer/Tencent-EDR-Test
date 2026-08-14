@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>ScheduledTaskActivity.Behavior</AssemblyName>
+    <RootNamespace>ScheduledTaskActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ScheduledTaskActivity.Protocol\ScheduledTaskActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

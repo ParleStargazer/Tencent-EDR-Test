@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "sources": [
+    {
+      "path": "reference/scheduled_task/edr_create.json",
+      "sha256": "89fbe5d98f18095cc0579c90a50444efecf507a6747c9b41604de326d91018db",
+      "event_count": 1,
+      "field_count": 106,
+      "action_name": "SchedTaskCreate",
+      "event_log_id": 4698
+    },
+    {
+      "path": "reference/scheduled_task/edr_update.json",
+      "sha256": "ebf005529df77cc10a1a518e6d9f35ce764d40b6230ccae277c9cee4470206da",
+      "event_count": 1,
+      "field_count": 106,
+      "action_name": "SchedTaskUpdate",
+      "event_log_id": 4702
+    }
+  ],
+  "analyzed_at": "2026-08-14",
+  "union_field_count": 107,
+  "event_identity": {
+    "table": "ScheduleTaskEvents",
+    "action_type": "WinEventLog",
+    "known_actions": ["SchedTaskCreate", "SchedTaskUpdate"],
+    "assumed_action": "SchedTaskDelete",
+    "windows_security_event_ids": { "create": 4698, "modify": 4702, "delete": 4699 }
+  },
+  "baseline_fields": [
+    { "field": "Common.EventTime", "canonical": "event.created", "present": 2, "example": 1786677832726, "meaning": "Unix 毫秒事件时间" },
+    { "field": "Action.EventLogId", "canonical": "winlog.event_id", "present": 2, "examples": [4698, 4702], "meaning": "Windows 安全日志事件 ID，是计划任务行为语义主证据" },
+    { "field": "Child.TaskName", "canonical": "scheduled_task.name", "present": 2, "example": "\\Example\\UniqueTask", "meaning": "完整计划任务路径" },
+    { "field": "Child.NodeName", "canonical": "scheduled_task.name", "present": 2, "example": "\\Example\\UniqueTask", "meaning": "与 TaskName 相同的兼容字段" },
+    { "field": "Child.TaskContent", "canonical": "scheduled_task.content", "present": 1, "applies_to": "create", "example": "<?xml version=\"1.0\" encoding=\"UTF-16\"?><Task ...>", "meaning": "创建后的完整任务 XML" },
+    { "field": "Child.TaskContentNew", "canonical": "scheduled_task.content", "present": 1, "applies_to": "modify", "example": "<?xml version=\"1.0\" encoding=\"UTF-16\"?><Task ...>", "meaning": "修改后的完整任务 XML" },
+    { "field": "Child.SubjectUserSid", "canonical": "user.id", "present": 2, "example": "S-1-5-21-EXAMPLE", "meaning": "发起任务变更的安全主体 SID" },
+    { "field": "Child.SubjectUserName", "canonical": "user.name", "present": 2, "example": "tester" },
+    { "field": "Child.SubjectDomainName", "canonical": "user.domain", "present": 2, "example": "HOST" },
+    { "field": "Parent.ProcPid", "canonical": "process.pid", "present": 2, "example": 24652 },
+    { "field": "Parent.FilePath", "canonical": "process.executable", "present": 2, "examples": ["C:\\Example\\TaskActor.exe", "C:\\Windows\\System32\\svchost.exe"], "meaning": "可能是直接客户端，也可能只保留 Task Scheduler 服务侧调用进程" },
+    { "field": "Parent.ProcCmdline", "canonical": "process.command_line", "present": 2, "example": "C:\\Windows\\System32\\svchost.exe -k netsvcs" }
+  ],
+  "all_exported_fields": [
+    "@collection", "@table", "@timestamp", "Action.EventLogId", "Action.EventMode", "Action.Name", "Action.Type",
+    "Child.ClientProcessStartKey", "Child.FQDN", "Child.NodeName", "Child.ParentProcessId", "Child.RpcCallClientLocality",
+    "Child.SubjectDomainName", "Child.SubjectLogonId", "Child.SubjectUserName", "Child.SubjectUserSid", "Child.TaskContent",
+    "Child.TaskContentNew", "Child.TaskName", "Child.Type", "Cmd", "Common.AgentMode", "Common.AuthId", "Common.ClientVer",
+    "Common.DeviceGroup", "Common.EdrSdkVer", "Common.EventId", "Common.EventTime", "Common.EventUUId", "Common.Guid",
+    "Common.LoginStatus", "Common.Mid", "Common.MonitorName", "Common.ReportId", "Common.SessionId", "Common.Source", "Common.Uid",
+    "Common.UserName", "DomainId", "Environment.DomainName", "Environment.ExportIp", "Environment.HostName", "Environment.MacAddr",
+    "Environment.OsBit", "Environment.OsBuild", "Environment.OsProduectDesc", "Environment.OsType", "Environment.OsUserName",
+    "Environment.OsVersion", "Environment.SysStartTimes", "OS", "Parent.CloudAttr", "Parent.FileAccessTime", "Parent.FileCompany",
+    "Parent.FileCopyright", "Parent.FileCreateTime", "Parent.FileDesc", "Parent.FileDriverType", "Parent.FileFormat", "Parent.FileIssuer",
+    "Parent.FileLegalMark", "Parent.FileMd5", "Parent.FileMd5Type", "Parent.FileModifyTime", "Parent.FileName", "Parent.FileOriginalName",
+    "Parent.FilePath", "Parent.FileProductName", "Parent.FileProductVer", "Parent.FileSign", "Parent.FileSignStatus",
+    "Parent.FileSignWhite", "Parent.FileSize", "Parent.FileSourceUrl", "Parent.FileVersion", "Parent.NodeName", "Parent.ProcArch",
+    "Parent.ProcChainGuid", "Parent.ProcChainInfo", "Parent.ProcChainTrust", "Parent.ProcCmdline", "Parent.ProcCreateTime",
+    "Parent.ProcDomainName", "Parent.ProcElevationType", "Parent.ProcExited", "Parent.ProcGuid", "Parent.ProcIntegrity",
+    "Parent.ProcPid", "Parent.ProcTrust", "Parent.ProcUserName", "Parent.ThreadId", "Parent.Type", "PParent.CloudAttr",
+    "PParent.FileMd5", "PParent.FileMd5Type", "PParent.FilePath", "PParent.FileSign", "PParent.FileSignStatus",
+    "PParent.FileSignWhite", "PParent.FileSourceUrl", "PParent.FileTags", "PParent.ProcCmdline", "PParent.ProcGuid",
+    "PParent.ProcPid", "TenantId", "Uuid", "Version"
+  ],
+  "design_decisions": {
+    "semantic_routing": "以 4698、4702、4699 建立 create、modify、delete 语义，不依赖 Action.Name 预先过拟合。",
+    "action_name_filter": "前端默认提供 SchedTaskCreate、SchedTaskUpdate、SchedTaskDelete，仍是只作用于 EDR JSON 的可选消歧条件。",
+    "primary_anchors": ["本轮唯一任务路径", "任务 XML 中 nonce 标记", "相对本地行为时间（强关联默认 15 ms）"],
+    "process_chain": "直接 Actor 与 svchost.exe 服务侧调用链均可作为推荐项通过；服务侧命中时给出调用链优化提示。",
+    "delete_status": "4699 为 Windows 标准删除事件；SchedTaskDelete 暂无真实导出样本，按用户假定纳入测试，等待实测校准。"
+  }
+}

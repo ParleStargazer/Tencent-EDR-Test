@@ -38,6 +38,7 @@ public static class Program
         await RunTest("文件原始字段仅筛选 EDR 候选", TestFileRawFieldFilters, failures);
         await RunTest("用户账号五项 BASELINE 与通用/腾讯映射闭环", TestUserAccountComparison, failures);
         await RunTest("注册表三项 BASELINE 与通用/腾讯映射闭环", TestRegistryComparison, failures);
+        await RunTest("计划任务三项 BASELINE 与通用/腾讯映射闭环", TestScheduledTaskComparison, failures);
         if (failures.Count == 0)
         {
             Console.WriteLine("全部框架测试通过。");
@@ -770,6 +771,153 @@ public static class Program
                 && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.RegistryPath"
                 && match?["status"]?.GetValue<string>() == "passed") == true) == true,
             "腾讯注册表候选应记录实际命中的字段别名，并在 JSON 对照中高亮键路径。");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestScheduledTaskComparison()
+    {
+        using var fixture = TestDirectory.Create();
+        var repository = FindRepositoryRoot();
+        var local = new JsonObject
+        {
+            ["schema_version"] = "1.1",
+            ["run"] = new JsonObject
+            {
+                ["run_id"] = Ids.NewUuid7(),
+                ["host"] = new JsonObject { ["hostname"] = "TASK-FIXTURE", ["machine_id"] = "task-fixture-host" },
+            },
+            ["capabilities"] = new JsonArray(), ["programs"] = new JsonArray(), ["local_events"] = new JsonArray(),
+            ["local_facts"] = new JsonArray(), ["artifacts"] = new JsonArray(), ["cleanup_results"] = new JsonArray(),
+            ["execution_logs"] = new JsonArray(),
+        };
+        var genericCloud = new JsonArray();
+        var tencentCloud = new JsonArray();
+        var baselinePaths = new List<string>();
+        var definitions = new[]
+        {
+            (Operation: "create", EventId: 4698, ActionName: "SchedTaskCreate"),
+            (Operation: "modify", EventId: 4702, ActionName: "SchedTaskUpdate"),
+            (Operation: "delete", EventId: 4699, ActionName: "SchedTaskDelete"),
+        };
+        var baseTime = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        foreach (var (definition, index) in definitions.Select((value, index) => (value, index)))
+        {
+            var caseRunId = Ids.NewUuid7();
+            var eventId = Ids.NewUuid7();
+            var occurredAt = baseTime.AddSeconds(index * 10);
+            var taskPath = $@"\EdrTest_fixture{index}_{definition.Operation}";
+            var marker = $"EDRTEST|scheduled-task-fixture-{index}|SCHEDULED_TASK|{definition.Operation.ToUpperInvariant()}";
+            var actorPid = 9300 + index;
+            var actorPath = $@"C:\EDR-Test\ScheduledTask{definition.Operation}.Actor.exe";
+            var beforeExists = definition.Operation != "create";
+            var afterExists = definition.Operation != "delete";
+            var taskContent = $"<Task><RegistrationInfo><Description>{marker}</Description></RegistrationInfo></Task>";
+            local["capabilities"]!.AsArray().Add(new JsonObject
+            {
+                ["case_run_id"] = caseRunId, ["capability_id"] = $"win.scheduled_task.{definition.Operation}",
+                ["capability_version"] = "0.1.0", ["display_name_zh"] = definition.Operation,
+                ["display_name_en"] = definition.Operation, ["status"] = "LOCAL_PASS",
+                ["nonce"] = $"scheduled-task-fixture-{index}", ["started_at_utc"] = Values.Utc(occurredAt.AddSeconds(-1)),
+                ["ended_at_utc"] = Values.Utc(occurredAt.AddSeconds(1)),
+            });
+            local["local_events"]!.AsArray().Add(new JsonObject
+            {
+                ["local_event_id"] = eventId, ["case_run_id"] = caseRunId, ["sequence"] = 1,
+                ["event_type"] = "scheduled_task", ["event_action"] = definition.Operation,
+                ["occurred_at_utc"] = Values.Utc(occurredAt),
+                ["data"] = new JsonObject { ["kind"] = "scheduled_task", ["operation"] = definition.Operation },
+            });
+            var facts = new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
+            {
+                [$"scheduled_task.{definition.Operation}_succeeded"] = true,
+                ["scheduled_task.occurred_at_utc"] = Values.Utc(occurredAt),
+                ["scheduled_task.task_path"] = taskPath, ["scheduled_task.marker"] = marker,
+                ["scheduled_task.actor_pid"] = actorPid, ["scheduled_task.actor_executable"] = actorPath,
+                ["scheduled_task.actor_command_line"] = $"{actorPath} --operation {definition.Operation}",
+                ["scheduled_task.before.exists"] = beforeExists,
+                ["scheduled_task.before.xml_sha256"] = beforeExists ? new string('a', 64) : null,
+                ["scheduled_task.before.principal"] = beforeExists ? "S-1-5-21-111-222-333-1001" : null,
+                ["scheduled_task.before.enabled"] = beforeExists ? false : null,
+                ["scheduled_task.before.marker"] = beforeExists ? $"EDRTEST|scheduled-task-fixture-{index}|SCHEDULED_TASK|BEFORE" : null,
+                ["scheduled_task.before.action_command"] = beforeExists ? @"C:\Windows\System32\cmd.exe" : null,
+                ["scheduled_task.before.action_arguments"] = beforeExists ? "/d /c exit 0" : null,
+                ["scheduled_task.after.exists"] = afterExists,
+                ["scheduled_task.after.xml_sha256"] = afterExists ? new string('b', 64) : null,
+                ["scheduled_task.after.principal"] = afterExists ? "S-1-5-21-111-222-333-1001" : null,
+                ["scheduled_task.after.enabled"] = afterExists ? false : null,
+                ["scheduled_task.after.marker"] = afterExists ? marker : null,
+                ["scheduled_task.after.action_command"] = afterExists ? @"C:\Windows\System32\cmd.exe" : null,
+                ["scheduled_task.after.action_arguments"] = afterExists ? $"/d /c rem EDRTEST_fixture{index}" : null,
+            };
+            foreach (var (key, value) in facts)
+            {
+                local["local_facts"]!.AsArray().Add(new JsonObject
+                {
+                    ["local_fact_id"] = Ids.NewUuid7(), ["case_run_id"] = caseRunId,
+                    ["local_event_id"] = eventId, ["key"] = key, ["value"] = value?.DeepClone(),
+                });
+            }
+
+            genericCloud.Add(new JsonObject
+            {
+                ["table"] = "ScheduledTaskActivity", ["event_id"] = eventId, ["host_id"] = "task-fixture-host",
+                ["host_name"] = "TASK-FIXTURE", ["event_time"] = Values.Utc(occurredAt), ["action"] = definition.Operation,
+                ["actor_pid"] = actorPid, ["actor_name"] = Path.GetFileName(actorPath), ["actor_executable"] = actorPath,
+                ["actor_command_line"] = $"{actorPath} --operation {definition.Operation}", ["subject_user_name"] = "fixture",
+                ["subject_domain_name"] = "TASK-FIXTURE", ["subject_user_sid"] = "S-1-5-21-111-222-333-1001",
+                ["event_log_id"] = definition.EventId, ["task_name"] = taskPath, ["task_content"] = taskContent,
+            });
+            var tencentProcess = definition.Operation == "modify" ? @"C:\Windows\System32\svchost.exe" : actorPath;
+            var tencent = new JsonObject
+            {
+                ["OS"] = "Windows", ["@table"] = "ScheduleTaskEvents", ["@timestamp"] = Values.Utc(occurredAt),
+                ["Action.Type"] = "WinEventLog", ["Action.Name"] = definition.ActionName,
+                ["Action.EventLogId"] = definition.EventId, ["Common.EventUUId"] = eventId,
+                ["Common.EventTime"] = occurredAt.ToUnixTimeMilliseconds(), ["Common.Mid"] = "task-fixture-host",
+                ["Environment.HostName"] = "TASK-FIXTURE", ["Parent.ProcPid"] = definition.Operation == "modify" ? 64204 : actorPid,
+                ["Parent.FileName"] = Path.GetFileName(tencentProcess), ["Parent.FilePath"] = tencentProcess,
+                ["Parent.ProcCmdline"] = tencentProcess, ["Child.SubjectUserName"] = "fixture",
+                ["Child.SubjectDomainName"] = "TASK-FIXTURE", ["Child.SubjectUserSid"] = "S-1-5-21-111-222-333-1001",
+                ["Child.TaskName"] = taskPath, ["Child.NodeName"] = taskPath,
+            };
+            if (definition.Operation == "create") tencent["Child.TaskContent"] = taskContent;
+            if (definition.Operation == "modify") tencent["Child.TaskContentNew"] = taskContent;
+            tencentCloud.Add(tencent);
+            baselinePaths.Add(Path.Combine(repository, "baselines", "windows", $"scheduled_task_{definition.Operation}.yaml"));
+        }
+
+        var localPath = Path.Combine(fixture.Path, "scheduled-task-local.json");
+        var genericPath = Path.Combine(fixture.Path, "scheduled-task-generic.json");
+        var tencentPath = Path.Combine(fixture.Path, "scheduled-task-tencent.json");
+        File.WriteAllText(localPath, local.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(genericPath, genericCloud.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(tencentPath, tencentCloud.ToJsonString(JsonDefaults.Options));
+        var generic = CompareService.Compare(new CompareRequest(localPath, [genericPath],
+            Path.Combine(repository, "mappings", "generic-scheduled-task-activity-v1.yaml"), baselinePaths,
+            Path.Combine(fixture.Path, "scheduled-task-generic-validation.json")));
+        var tencentResult = CompareService.Compare(new CompareRequest(localPath, [tencentPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"), baselinePaths,
+            Path.Combine(fixture.Path, "scheduled-task-tencent-validation.json")));
+        Assert(generic["summary"]?["pass"]?.GetValue<int>() == 3,
+            $"通用计划任务映射应使三项 BASELINE 全部通过：{generic.ToJsonString(JsonDefaults.Options)}");
+        Assert(tencentResult["summary"]?["pass"]?.GetValue<int>() == 3,
+            $"腾讯 ScheduleTaskEvents 路由应使三项 BASELINE 全部通过：{tencentResult.ToJsonString(JsonDefaults.Options)}");
+        var modify = tencentResult["capabilities"]?.AsArray().Single(value =>
+            value?["capability_id"]?.GetValue<string>() == "win.scheduled_task.modify")?.AsObject()
+            ?? throw new InvalidOperationException("腾讯比较结果缺少计划任务修改能力。");
+        var processRequirement = modify["baseline_requirements"]?.AsArray().Single(value =>
+            value?["field"]?.GetValue<string>() == "process.executable")
+            ?? throw new InvalidOperationException("计划任务修改结果缺少 process.executable BASELINE 项。");
+        Assert(processRequirement["status"]?.GetValue<string>() == "passed"
+            && processRequirement["message"]?.GetValue<string>()?.Contains("服务侧调用链", StringComparison.Ordinal) == true,
+            "修改日志仅保留 svchost.exe 时应通过推荐项并提示补充 Task Scheduler 客户端调用链。");
+        Assert(tencentResult["capabilities"]?.AsArray().Where(value =>
+            value?["capability_id"]?.GetValue<string>() != "win.scheduled_task.delete").All(value =>
+            value?["edr_candidates"]?.AsArray()[0]?["baseline_matches"]?.AsArray().Any(match =>
+                match?["canonical_field"]?.GetValue<string>() == "scheduled_task.content"
+                && match?["status"]?.GetValue<string>() == "passed"
+                && match?["raw_json_pointer"]?.GetValue<string>() is "/Child.TaskContent" or "/Child.TaskContentNew") == true) == true,
+            "创建与修改候选必须把真实任务 XML 字段映射回 JSON 对照高亮。");
         return Task.CompletedTask;
     }
 

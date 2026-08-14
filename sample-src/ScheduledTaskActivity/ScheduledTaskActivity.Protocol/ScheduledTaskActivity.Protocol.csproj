@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>ScheduledTaskActivity.Protocol</AssemblyName>
+    <RootNamespace>ScheduledTaskActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Common\ReliableProtocolFile.cs" Link="ReliableProtocolFile.cs" />
+  </ItemGroup>
+</Project>

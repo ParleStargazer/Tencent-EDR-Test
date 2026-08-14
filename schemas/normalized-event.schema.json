@@ -126,6 +126,14 @@
       },
       "additionalProperties": false
     },
+    "scheduled_task": {
+      "type": ["object", "null"],
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "content": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
     "network": {
       "type": ["object", "null"],
       "properties": {

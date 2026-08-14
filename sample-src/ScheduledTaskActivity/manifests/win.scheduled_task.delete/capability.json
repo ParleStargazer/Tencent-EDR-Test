@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.scheduled_task.delete",
+  "version": "0.1.0",
+  "display_name_zh": "计划任务删除",
+  "display_name_en": "Scheduled Task Deletion",
+  "description": "Controller 先创建本轮唯一、默认禁用的当前用户计划任务，Actor 再通过 Task Scheduler 2.0 COM API 删除；删除后必须独立确认任务不存在。",
+  "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
+  "risk_level": "L1",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "ScheduledTaskDelete.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "ScheduledTaskDelete.Actor.exe" }],
+  "parameters": {
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "scheduled_task.delete_succeeded", "scheduled_task.occurred_at_utc", "scheduled_task.task_path", "scheduled_task.marker",
+    "scheduled_task.actor_pid", "scheduled_task.actor_executable", "scheduled_task.before.exists", "scheduled_task.before.xml_sha256",
+    "scheduled_task.before.principal", "scheduled_task.before.enabled", "scheduled_task.before.marker",
+    "scheduled_task.before.action_command", "scheduled_task.after.exists", "correlation.nonce"
+  ]
+}

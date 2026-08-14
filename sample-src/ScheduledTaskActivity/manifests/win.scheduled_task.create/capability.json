@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.scheduled_task.create",
+  "version": "0.1.0",
+  "display_name_zh": "计划任务创建",
+  "display_name_en": "Scheduled Task Creation",
+  "description": "通过 Task Scheduler 2.0 COM API 创建本轮唯一、默认禁用且不会执行的当前用户计划任务；Controller 独立确认任务定义并按精确路径清理。",
+  "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
+  "risk_level": "L1",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "ScheduledTaskCreate.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "ScheduledTaskCreate.Actor.exe" }],
+  "parameters": {
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "scheduled_task.create_succeeded", "scheduled_task.occurred_at_utc", "scheduled_task.task_path", "scheduled_task.marker",
+    "scheduled_task.actor_pid", "scheduled_task.actor_executable", "scheduled_task.before.exists", "scheduled_task.after.exists",
+    "scheduled_task.after.xml_sha256", "scheduled_task.after.principal", "scheduled_task.after.enabled",
+    "scheduled_task.after.marker", "scheduled_task.after.action_command", "scheduled_task.after.action_arguments", "correlation.nonce"
+  ]
+}

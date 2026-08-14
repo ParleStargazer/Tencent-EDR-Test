@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>ScheduledTaskActivity.Controller</AssemblyName>
+    <RootNamespace>ScheduledTaskActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\EdrTest\EdrTest.csproj" />
+    <ProjectReference Include="..\ScheduledTaskActivity.Protocol\ScheduledTaskActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>
