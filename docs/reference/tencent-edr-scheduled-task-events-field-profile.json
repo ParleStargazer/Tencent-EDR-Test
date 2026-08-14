@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "sources": [
     {
       "path": "reference/scheduled_task/edr_create.json",
@@ -16,6 +16,27 @@
       "field_count": 106,
       "action_name": "SchedTaskUpdate",
       "event_log_id": 4702
+    },
+    {
+      "path": "reference/260814140000run/edr.json",
+      "sha256": "2872becb9b52ada1b4029b1709208c74f3447c4f7729c19151ac68ddc454abbc",
+      "event_count": 1143,
+      "filtered_event_count": 5,
+      "field_count": 130,
+      "table": "ServiceEvents",
+      "action_type": "InjectHook",
+      "action_name": "RpcSchedTaskCreate"
+    },
+    {
+      "path": "reference/260814140000run/edr_sched_realte.json",
+      "sha256": "eabe277bb654b406116f9dc480e29b41313775c1683e0da786430dbc5b8e4e6b",
+      "event_count": 560,
+      "field_count": 107,
+      "table": "ScheduleTaskEvents",
+      "action_type": "WinEventLog",
+      "actions": { "SchedTaskCreate": 5, "SchedTaskUpdate": 555 },
+      "host_count": 13,
+      "contains_current_test_host": false
     }
   ],
   "analyzed_at": "2026-08-14",
@@ -26,6 +47,19 @@
     "known_actions": ["SchedTaskCreate", "SchedTaskUpdate"],
     "assumed_action": "SchedTaskDelete",
     "windows_security_event_ids": { "create": 4698, "modify": 4702, "delete": 4699 }
+  },
+  "rpc_hook_identity": {
+    "table": "ServiceEvents",
+    "action_type": "InjectHook",
+    "action_name": "RpcSchedTaskCreate",
+    "meaning": "Task Scheduler 注册 RPC Hook；创建与更新均可能命中，不能仅靠动作名区分语义",
+    "current_run_match": {
+      "local_completed_at_utc": "2026-08-14T06:03:08.0239106Z",
+      "edr_event_time": 1786687388050,
+      "time_difference_ms": 27,
+      "parent_pid": 1832,
+      "task_name": "\\EdrTest_af04ed586a8032c6_create"
+    }
   },
   "baseline_fields": [
     { "field": "Common.EventTime", "canonical": "event.created", "present": 2, "example": 1786677832726, "meaning": "Unix 毫秒事件时间" },
@@ -62,11 +96,47 @@
     "PParent.FileSignWhite", "PParent.FileSourceUrl", "PParent.FileTags", "PParent.ProcCmdline", "PParent.ProcGuid",
     "PParent.ProcPid", "TenantId", "Uuid", "Version"
   ],
+  "rpc_hook_baseline_fields": [
+    { "field": "Common.EventTime", "canonical": "event.created", "present": 5, "meaning": "Unix 毫秒 Hook 时间" },
+    { "field": "Parent.ProcPid", "canonical": "process.pid", "present": 5, "example": 1832, "meaning": "发起注册 RPC 的客户端 PID" },
+    { "field": "Parent.FilePath", "canonical": "process.executable", "present": 5, "example": "C:\\Tencent-EDR-Test\\samples\\win.scheduled_task.create\\ScheduledTaskCreate.Actor.exe" },
+    { "field": "Parent.ProcCmdline", "canonical": "process.command_line", "present": 5 },
+    { "field": "Child.TaskName", "canonical": "scheduled_task.name", "present": 5, "example": "\\EdrTest_af04ed586a8032c6_create", "meaning": "注册的完整任务路径" },
+    { "field": "Child.NodeName", "canonical": "scheduled_task.command", "present": 5, "example": "C:\\Windows\\system32\\cmd.exe" },
+    { "field": "Child.FilePath", "canonical": "scheduled_task.command", "present": 5, "example": "C:\\Windows\\system32\\cmd.exe" },
+    { "field": "Child.TaskArg", "canonical": "scheduled_task.arguments", "present": 5, "example": "/d /c rem EDRTEST_af04ed586a8032c6_CREATE" }
+  ],
+  "rpc_hook_all_exported_fields": [
+    "@collection", "@table", "@timestamp", "Action.EventMode", "Action.Name", "Action.Type", "Alert.EngineName",
+    "Child.CloudAttr", "Child.DstIp", "Child.FileAccessTime", "Child.FileCompany", "Child.FileCopyright", "Child.FileCreateTime",
+    "Child.FileDesc", "Child.FileDriverType", "Child.FileEncrypted", "Child.FileFormat", "Child.FileIssuer", "Child.FileLegalMark",
+    "Child.FileMd5", "Child.FileMd5Type", "Child.FileModifyTime", "Child.FileName", "Child.FileOriginalName", "Child.FilePath",
+    "Child.FileProductName", "Child.FileProductVer", "Child.FileSha", "Child.FileShaType", "Child.FileSign", "Child.FileSignStatus",
+    "Child.FileSignWhite", "Child.FileSize", "Child.FileSourceUrl", "Child.FileVersion", "Child.NodeName", "Child.ProcCmdline",
+    "Child.TaskArg", "Child.TaskName", "Child.Type", "Cmd", "Common.AgentMode", "Common.AuthId", "Common.ClientVer",
+    "Common.DeviceGroup", "Common.EdrSdkVer", "Common.EventId", "Common.EventTime", "Common.EventUUId", "Common.Guid",
+    "Common.LoginStatus", "Common.Mid", "Common.MonitorGroupId", "Common.MonitorId", "Common.ReportId", "Common.SessionId",
+    "Common.Source", "Common.Uid", "Common.UserName", "DomainId", "Environment.DomainName", "Environment.ExportIp",
+    "Environment.HostName", "Environment.MacAddr", "Environment.OsBit", "Environment.OsBuild", "Environment.OsProduectDesc",
+    "Environment.OsType", "Environment.OsUserName", "Environment.OsVersion", "Environment.SysStartTimes", "OS",
+    "Parent.CloudAttr", "Parent.FileAccessTime", "Parent.FileCompany", "Parent.FileCopyright", "Parent.FileCreateTime",
+    "Parent.FileDesc", "Parent.FileDriverType", "Parent.FileFormat", "Parent.FileIssuer", "Parent.FileLegalMark", "Parent.FileMd5",
+    "Parent.FileMd5Type", "Parent.FileModifyTime", "Parent.FileName", "Parent.FileOriginalName", "Parent.FilePath",
+    "Parent.FileProductName", "Parent.FileProductVer", "Parent.FileSha", "Parent.FileShaType", "Parent.FileSign",
+    "Parent.FileSignStatus", "Parent.FileSignWhite", "Parent.FileSize", "Parent.FileSourceUrl", "Parent.FileTags", "Parent.FileVersion",
+    "Parent.NodeName", "Parent.ProcArch", "Parent.ProcChainGuid", "Parent.ProcChainInfo", "Parent.ProcChainTrust",
+    "Parent.ProcCmdline", "Parent.ProcCreateTime", "Parent.ProcDomainName", "Parent.ProcElevationType", "Parent.ProcExited",
+    "Parent.ProcGuid", "Parent.ProcIntegrity", "Parent.ProcPid", "Parent.ProcTrust", "Parent.ProcUserName", "Parent.Type",
+    "PParent.CloudAttr", "PParent.FileMd5", "PParent.FileMd5Type", "PParent.FilePath", "PParent.FileSign",
+    "PParent.FileSignStatus", "PParent.FileSignWhite", "PParent.FileSourceUrl", "PParent.FileTags", "PParent.ProcCmdline",
+    "PParent.ProcGuid", "PParent.ProcPid", "TenantId", "Uuid", "Version"
+  ],
   "design_decisions": {
-    "semantic_routing": "以 4698、4702、4699 建立 create、modify、delete 语义，不依赖 Action.Name 预先过拟合。",
-    "action_name_filter": "前端默认提供 SchedTaskCreate、SchedTaskUpdate、SchedTaskDelete，仍是只作用于 EDR JSON 的可选消歧条件。",
+    "semantic_routing": "4698、4702、4699 建立安全事件语义；RpcSchedTaskCreate 建立独立的 RPC Hook 方法，不能互相冒充。",
+    "action_name_filter": "创建默认提供 SchedTaskCreate 与 RpcSchedTaskCreate，修改为 SchedTaskUpdate，删除为 SchedTaskDelete；仍只作用于 EDR JSON。",
     "primary_anchors": ["本轮唯一任务路径", "任务 XML 中 nonce 标记", "相对本地行为时间（强关联默认 15 ms）"],
     "process_chain": "直接 Actor 与 svchost.exe 服务侧调用链均可作为推荐项通过；服务侧命中时给出调用链优化提示。",
+    "audit_diagnostic": "方法 2 只读保存 auditpol 与本机 4698 查询；本机无 4698 指向环境前置条件，本机有 4698 而云端无事件则指向 EDR 接入/导出。",
     "delete_status": "4699 为 Windows 标准删除事件；SchedTaskDelete 暂无真实导出样本，按用户假定纳入测试，等待实测校准。"
   }
 }

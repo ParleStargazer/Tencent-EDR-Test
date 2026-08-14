@@ -17,7 +17,7 @@ routes:
   - route_id: scheduled-task-activity
     when: { table: ScheduledTaskActivity }
     canonical:
-      "event.type": { constant: scheduled_task }
+      "event.type": { source: event_type }
       "event.action": { source: action }
       "event.category": { constant: configuration }
       "event.id": { source: event_id }
@@ -34,6 +34,8 @@ routes:
       "winlog.event_id": { source: event_log_id }
       "scheduled_task.name": { source: task_name }
       "scheduled_task.content": { source: task_content, on_empty: null }
+      "scheduled_task.command": { source: task_command, on_empty: null }
+      "scheduled_task.arguments": { source: task_arguments, on_empty: null }
 
 raw_reference: { id_field: event_id, ordinal_base: 0 }
 unmapped_fields: { policy: count-and-ignore, preserve_in_report: false }

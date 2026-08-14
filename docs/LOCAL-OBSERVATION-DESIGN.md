@@ -264,7 +264,7 @@ correlation.nonce
 
 | 能力 | `event_type/action` | 必须收集 |
 | --- | --- | --- |
-| 计划任务创建（Scheduled Task Creation） | `scheduled_task/create` | Actor；Task Path；XML SHA-256；Principal、Actions、Triggers、Enabled；前后状态 |
+| 计划任务创建（Scheduled Task Creation） | `scheduled_task/create` | COM 与 schtasks.exe 两个方法；Actor/系统客户端；Task Path；XML SHA-256；Principal、Actions、Triggers、Enabled；前后状态；auditpol 与本机 4698 诊断 |
 | 计划任务修改（Scheduled Task Modification） | `scheduled_task/modify` | 同上；旧/新定义 hash 和变更字段 |
 | 计划任务删除（Scheduled Task Deletion） | `scheduled_task/delete` | Task Path；删除前定义；删除后不存在；结果 |
 

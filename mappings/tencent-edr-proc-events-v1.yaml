@@ -777,6 +777,32 @@ routes:
       "winlog.logon.id": { source: "Child.TargetLogonId" }
       "winlog.logon.type": { source: "Child.LogonType", on_empty: null }
 
+  # Task Scheduler 2.0 COM 注册首先可能被 HIPS 注入 Hook 直接捕获。260814140000run
+  # 中该事件与本地任务路径、Actor PID 完全一致，完成时间差 +27 ms。此路由保留
+  # RpcSchedTaskCreate 的直接客户端调用链；它不等同于 Windows Security 4698。
+  - route_id: scheduled-task-rpc-create
+    when:
+      "OS": Windows
+      "@table": ServiceEvents
+      "Action.Type": InjectHook
+      "Action.Name": RpcSchedTaskCreate
+    canonical:
+      "event.type": { constant: scheduled_task_rpc }
+      "event.action": { constant: create }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "scheduled_task.name": { sources: ["Child.TaskName", "Child.NodeName"] }
+      "scheduled_task.command": { sources: ["Child.FilePath", "Child.NodeName"], transform: [windows_path], on_empty: null }
+      "scheduled_task.arguments": { source: "Child.TaskArg", on_empty: null }
+
   # 计划任务语义优先由稳定的 Windows 安全事件 ID 确定；Action.Name 仅作为前端可选消歧。
   # 真实导出中创建 XML 位于 Child.TaskContent，修改后的 XML 位于 Child.TaskContentNew。
   - route_id: scheduled-task-create

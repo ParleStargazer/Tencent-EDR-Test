@@ -130,7 +130,9 @@
       "type": ["object", "null"],
       "properties": {
         "name": { "type": ["string", "null"] },
-        "content": { "type": ["string", "null"] }
+        "content": { "type": ["string", "null"] },
+        "command": { "type": ["string", "null"] },
+        "arguments": { "type": ["string", "null"] }
       },
       "additionalProperties": false
     },

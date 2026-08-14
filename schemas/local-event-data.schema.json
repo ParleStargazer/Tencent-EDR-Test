@@ -531,6 +531,7 @@
       "properties": {
         "kind": { "const": "scheduled_task" },
         "operation": { "enum": ["create", "modify", "delete"] },
+        "method": { "enum": ["task_scheduler_com", "schtasks_cli"] },
         "actor": { "$ref": "#/$defs/process_ref" },
         "task_path": { "type": "string", "minLength": 1 },
         "before": { "$ref": "#/$defs/task_definition" },

@@ -803,86 +803,136 @@ public static class Program
         foreach (var (definition, index) in definitions.Select((value, index) => (value, index)))
         {
             var caseRunId = Ids.NewUuid7();
-            var eventId = Ids.NewUuid7();
-            var occurredAt = baseTime.AddSeconds(index * 10);
-            var taskPath = $@"\EdrTest_fixture{index}_{definition.Operation}";
-            var marker = $"EDRTEST|scheduled-task-fixture-{index}|SCHEDULED_TASK|{definition.Operation.ToUpperInvariant()}";
-            var actorPid = 9300 + index;
-            var actorPath = $@"C:\EDR-Test\ScheduledTask{definition.Operation}.Actor.exe";
-            var beforeExists = definition.Operation != "create";
-            var afterExists = definition.Operation != "delete";
-            var taskContent = $"<Task><RegistrationInfo><Description>{marker}</Description></RegistrationInfo></Task>";
+            var capabilityTime = baseTime.AddSeconds(index * 10);
             local["capabilities"]!.AsArray().Add(new JsonObject
             {
                 ["case_run_id"] = caseRunId, ["capability_id"] = $"win.scheduled_task.{definition.Operation}",
-                ["capability_version"] = "0.1.0", ["display_name_zh"] = definition.Operation,
+                ["capability_version"] = definition.Operation == "create" ? "0.2.0" : "0.1.0", ["display_name_zh"] = definition.Operation,
                 ["display_name_en"] = definition.Operation, ["status"] = "LOCAL_PASS",
-                ["nonce"] = $"scheduled-task-fixture-{index}", ["started_at_utc"] = Values.Utc(occurredAt.AddSeconds(-1)),
-                ["ended_at_utc"] = Values.Utc(occurredAt.AddSeconds(1)),
+                ["nonce"] = $"scheduled-task-fixture-{index}", ["started_at_utc"] = Values.Utc(capabilityTime.AddSeconds(-1)),
+                ["ended_at_utc"] = Values.Utc(capabilityTime.AddSeconds(3)),
             });
-            local["local_events"]!.AsArray().Add(new JsonObject
+            var methods = definition.Operation == "create"
+                ? new[] { "task_scheduler_com", "schtasks_cli" }
+                : new[] { "task_scheduler_com" };
+            foreach (var (method, methodIndex) in methods.Select((value, index) => (value, index)))
             {
-                ["local_event_id"] = eventId, ["case_run_id"] = caseRunId, ["sequence"] = 1,
-                ["event_type"] = "scheduled_task", ["event_action"] = definition.Operation,
-                ["occurred_at_utc"] = Values.Utc(occurredAt),
-                ["data"] = new JsonObject { ["kind"] = "scheduled_task", ["operation"] = definition.Operation },
-            });
-            var facts = new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
-            {
-                [$"scheduled_task.{definition.Operation}_succeeded"] = true,
-                ["scheduled_task.occurred_at_utc"] = Values.Utc(occurredAt),
-                ["scheduled_task.task_path"] = taskPath, ["scheduled_task.marker"] = marker,
-                ["scheduled_task.actor_pid"] = actorPid, ["scheduled_task.actor_executable"] = actorPath,
-                ["scheduled_task.actor_command_line"] = $"{actorPath} --operation {definition.Operation}",
-                ["scheduled_task.before.exists"] = beforeExists,
-                ["scheduled_task.before.xml_sha256"] = beforeExists ? new string('a', 64) : null,
-                ["scheduled_task.before.principal"] = beforeExists ? "S-1-5-21-111-222-333-1001" : null,
-                ["scheduled_task.before.enabled"] = beforeExists ? false : null,
-                ["scheduled_task.before.marker"] = beforeExists ? $"EDRTEST|scheduled-task-fixture-{index}|SCHEDULED_TASK|BEFORE" : null,
-                ["scheduled_task.before.action_command"] = beforeExists ? @"C:\Windows\System32\cmd.exe" : null,
-                ["scheduled_task.before.action_arguments"] = beforeExists ? "/d /c exit 0" : null,
-                ["scheduled_task.after.exists"] = afterExists,
-                ["scheduled_task.after.xml_sha256"] = afterExists ? new string('b', 64) : null,
-                ["scheduled_task.after.principal"] = afterExists ? "S-1-5-21-111-222-333-1001" : null,
-                ["scheduled_task.after.enabled"] = afterExists ? false : null,
-                ["scheduled_task.after.marker"] = afterExists ? marker : null,
-                ["scheduled_task.after.action_command"] = afterExists ? @"C:\Windows\System32\cmd.exe" : null,
-                ["scheduled_task.after.action_arguments"] = afterExists ? $"/d /c rem EDRTEST_fixture{index}" : null,
-            };
-            foreach (var (key, value) in facts)
+                var eventId = Ids.NewUuid7();
+                var occurredAt = capabilityTime.AddSeconds(methodIndex);
+                var methodSuffix = method == "schtasks_cli" ? "cli" : "com";
+                var taskPath = definition.Operation == "create"
+                    ? $@"\EdrTest_fixture{index}_create_{methodSuffix}"
+                    : $@"\EdrTest_fixture{index}_{definition.Operation}";
+                var marker = $"EDRTEST|scheduled-task-fixture-{index}|SCHEDULED_TASK|{method}|{definition.Operation.ToUpperInvariant()}";
+                var actorPid = 9300 + index * 10 + methodIndex;
+                var actorPath = method == "schtasks_cli"
+                    ? @"C:\Windows\System32\schtasks.exe"
+                    : $@"C:\EDR-Test\ScheduledTask{definition.Operation}.Actor.exe";
+                var beforeExists = definition.Operation != "create";
+                var afterExists = definition.Operation != "delete";
+                var afterEnabled = definition.Operation == "create" && method == "schtasks_cli";
+                var prefix = definition.Operation == "create" ? $"scheduled_task.{method}" : "scheduled_task";
+                var afterArguments = $"/d /c rem EDRTEST_fixture{index}_{methodSuffix}";
+                var taskContent = $"<Task><RegistrationInfo><Description>{marker}</Description></RegistrationInfo>"
+                    + $"<Actions><Exec><Arguments>{afterArguments}</Arguments></Exec></Actions></Task>";
+                local["local_events"]!.AsArray().Add(new JsonObject
+                {
+                    ["local_event_id"] = eventId, ["case_run_id"] = caseRunId, ["sequence"] = methodIndex + 1,
+                    ["event_type"] = "scheduled_task", ["event_action"] = definition.Operation,
+                    ["occurred_at_utc"] = Values.Utc(occurredAt),
+                    ["data"] = new JsonObject { ["kind"] = "scheduled_task", ["operation"] = definition.Operation, ["method"] = method },
+                });
+                var facts = new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
+                {
+                    [$"{prefix}.{definition.Operation}_succeeded"] = true,
+                    [$"{prefix}.occurred_at_utc"] = Values.Utc(occurredAt.AddMilliseconds(-1)),
+                    [$"{prefix}.completed_at_utc"] = Values.Utc(occurredAt),
+                    [$"{prefix}.task_path"] = taskPath, [$"{prefix}.marker"] = marker,
+                    [$"{prefix}.actor_pid"] = actorPid, [$"{prefix}.actor_executable"] = actorPath,
+                    [$"{prefix}.actor_command_line"] = $"{actorPath} --operation {definition.Operation}",
+                    [$"{prefix}.before.exists"] = beforeExists,
+                    [$"{prefix}.before.xml_sha256"] = beforeExists ? new string('a', 64) : null,
+                    [$"{prefix}.before.principal"] = beforeExists ? "S-1-5-21-111-222-333-1001" : null,
+                    [$"{prefix}.before.enabled"] = beforeExists ? false : null,
+                    [$"{prefix}.before.marker"] = beforeExists ? $"EDRTEST|scheduled-task-fixture-{index}|SCHEDULED_TASK|BEFORE" : null,
+                    [$"{prefix}.before.action_command"] = beforeExists ? @"C:\Windows\System32\cmd.exe" : null,
+                    [$"{prefix}.before.action_arguments"] = beforeExists ? "/d /c exit 0" : null,
+                    [$"{prefix}.after.exists"] = afterExists,
+                    [$"{prefix}.after.xml_sha256"] = afterExists ? new string('b', 64) : null,
+                    [$"{prefix}.after.principal"] = afterExists ? "S-1-5-21-111-222-333-1001" : null,
+                    [$"{prefix}.after.enabled"] = afterExists ? afterEnabled : null,
+                    [$"{prefix}.after.marker"] = afterExists ? marker : null,
+                    [$"{prefix}.after.action_command"] = afterExists ? @"C:\Windows\System32\cmd.exe" : null,
+                    [$"{prefix}.after.action_arguments"] = afterExists ? afterArguments : null,
+                };
+                if (definition.Operation == "create" && method == "schtasks_cli")
+                {
+                    facts[$"{prefix}.after.triggers"] = new JsonArray("TimeTrigger");
+                    facts[$"{prefix}.security_event_4698_found"] = false;
+                }
+                foreach (var (key, value) in facts)
+                {
+                    local["local_facts"]!.AsArray().Add(new JsonObject
+                    {
+                        ["local_fact_id"] = Ids.NewUuid7(), ["case_run_id"] = caseRunId,
+                        ["local_event_id"] = eventId, ["key"] = key, ["value"] = value?.DeepClone(),
+                    });
+                }
+                genericCloud.Add(new JsonObject
+                {
+                    ["table"] = "ScheduledTaskActivity", ["event_id"] = eventId, ["host_id"] = "task-fixture-host",
+                    ["host_name"] = "TASK-FIXTURE", ["event_time"] = Values.Utc(occurredAt),
+                    ["event_type"] = definition.Operation == "create" && method == "task_scheduler_com" ? "scheduled_task_rpc" : "scheduled_task",
+                    ["action"] = definition.Operation, ["actor_pid"] = actorPid, ["actor_name"] = Path.GetFileName(actorPath),
+                    ["actor_executable"] = actorPath, ["actor_command_line"] = $"{actorPath} --operation {definition.Operation}",
+                    ["subject_user_name"] = "fixture", ["subject_domain_name"] = "TASK-FIXTURE",
+                    ["subject_user_sid"] = "S-1-5-21-111-222-333-1001", ["event_log_id"] = definition.EventId,
+                    ["task_name"] = taskPath, ["task_content"] = taskContent,
+                    ["task_command"] = afterExists ? @"C:\Windows\System32\cmd.exe" : null,
+                    ["task_arguments"] = afterExists ? afterArguments : null,
+                });
+                if (definition.Operation == "create" && method == "task_scheduler_com")
+                {
+                    tencentCloud.Add(new JsonObject
+                    {
+                        ["OS"] = "Windows", ["@table"] = "ServiceEvents", ["@timestamp"] = Values.Utc(occurredAt),
+                        ["Action.Type"] = "InjectHook", ["Action.Name"] = "RpcSchedTaskCreate", ["Common.EventUUId"] = eventId,
+                        ["Common.EventTime"] = occurredAt.ToUnixTimeMilliseconds(), ["Common.Mid"] = "task-fixture-host",
+                        ["Environment.HostName"] = "TASK-FIXTURE", ["Parent.ProcPid"] = actorPid,
+                        ["Parent.FileName"] = Path.GetFileName(actorPath), ["Parent.FilePath"] = actorPath,
+                        ["Parent.ProcCmdline"] = actorPath, ["Child.TaskName"] = taskPath,
+                        ["Child.NodeName"] = @"C:\Windows\System32\cmd.exe", ["Child.FilePath"] = @"C:\Windows\System32\cmd.exe",
+                        ["Child.TaskArg"] = afterArguments,
+                    });
+                }
+                else
+                {
+                    var tencentProcess = definition.Operation == "modify" ? @"C:\Windows\System32\svchost.exe" : actorPath;
+                    var tencent = new JsonObject
+                    {
+                        ["OS"] = "Windows", ["@table"] = "ScheduleTaskEvents", ["@timestamp"] = Values.Utc(occurredAt),
+                        ["Action.Type"] = "WinEventLog", ["Action.Name"] = definition.ActionName,
+                        ["Action.EventLogId"] = definition.EventId, ["Common.EventUUId"] = eventId,
+                        ["Common.EventTime"] = occurredAt.ToUnixTimeMilliseconds(), ["Common.Mid"] = "task-fixture-host",
+                        ["Environment.HostName"] = "TASK-FIXTURE", ["Parent.ProcPid"] = definition.Operation == "modify" ? 64204 : actorPid,
+                        ["Parent.FileName"] = Path.GetFileName(tencentProcess), ["Parent.FilePath"] = tencentProcess,
+                        ["Parent.ProcCmdline"] = tencentProcess, ["Child.SubjectUserName"] = "fixture",
+                        ["Child.SubjectDomainName"] = "TASK-FIXTURE", ["Child.SubjectUserSid"] = "S-1-5-21-111-222-333-1001",
+                        ["Child.TaskName"] = taskPath, ["Child.NodeName"] = taskPath,
+                    };
+                    if (definition.Operation == "create") tencent["Child.TaskContent"] = taskContent;
+                    if (definition.Operation == "modify") tencent["Child.TaskContentNew"] = taskContent;
+                    tencentCloud.Add(tencent);
+                }
+            }
+            if (definition.Operation == "create")
             {
                 local["local_facts"]!.AsArray().Add(new JsonObject
                 {
                     ["local_fact_id"] = Ids.NewUuid7(), ["case_run_id"] = caseRunId,
-                    ["local_event_id"] = eventId, ["key"] = key, ["value"] = value?.DeepClone(),
+                    ["key"] = "scheduled_task.create_succeeded", ["value"] = true,
                 });
             }
-
-            genericCloud.Add(new JsonObject
-            {
-                ["table"] = "ScheduledTaskActivity", ["event_id"] = eventId, ["host_id"] = "task-fixture-host",
-                ["host_name"] = "TASK-FIXTURE", ["event_time"] = Values.Utc(occurredAt), ["action"] = definition.Operation,
-                ["actor_pid"] = actorPid, ["actor_name"] = Path.GetFileName(actorPath), ["actor_executable"] = actorPath,
-                ["actor_command_line"] = $"{actorPath} --operation {definition.Operation}", ["subject_user_name"] = "fixture",
-                ["subject_domain_name"] = "TASK-FIXTURE", ["subject_user_sid"] = "S-1-5-21-111-222-333-1001",
-                ["event_log_id"] = definition.EventId, ["task_name"] = taskPath, ["task_content"] = taskContent,
-            });
-            var tencentProcess = definition.Operation == "modify" ? @"C:\Windows\System32\svchost.exe" : actorPath;
-            var tencent = new JsonObject
-            {
-                ["OS"] = "Windows", ["@table"] = "ScheduleTaskEvents", ["@timestamp"] = Values.Utc(occurredAt),
-                ["Action.Type"] = "WinEventLog", ["Action.Name"] = definition.ActionName,
-                ["Action.EventLogId"] = definition.EventId, ["Common.EventUUId"] = eventId,
-                ["Common.EventTime"] = occurredAt.ToUnixTimeMilliseconds(), ["Common.Mid"] = "task-fixture-host",
-                ["Environment.HostName"] = "TASK-FIXTURE", ["Parent.ProcPid"] = definition.Operation == "modify" ? 64204 : actorPid,
-                ["Parent.FileName"] = Path.GetFileName(tencentProcess), ["Parent.FilePath"] = tencentProcess,
-                ["Parent.ProcCmdline"] = tencentProcess, ["Child.SubjectUserName"] = "fixture",
-                ["Child.SubjectDomainName"] = "TASK-FIXTURE", ["Child.SubjectUserSid"] = "S-1-5-21-111-222-333-1001",
-                ["Child.TaskName"] = taskPath, ["Child.NodeName"] = taskPath,
-            };
-            if (definition.Operation == "create") tencent["Child.TaskContent"] = taskContent;
-            if (definition.Operation == "modify") tencent["Child.TaskContentNew"] = taskContent;
-            tencentCloud.Add(tencent);
             baselinePaths.Add(Path.Combine(repository, "baselines", "windows", $"scheduled_task_{definition.Operation}.yaml"));
         }
 
@@ -911,13 +961,19 @@ public static class Program
         Assert(processRequirement["status"]?.GetValue<string>() == "passed"
             && processRequirement["message"]?.GetValue<string>()?.Contains("服务侧调用链", StringComparison.Ordinal) == true,
             "修改日志仅保留 svchost.exe 时应通过推荐项并提示补充 Task Scheduler 客户端调用链。");
-        Assert(tencentResult["capabilities"]?.AsArray().Where(value =>
-            value?["capability_id"]?.GetValue<string>() != "win.scheduled_task.delete").All(value =>
-            value?["edr_candidates"]?.AsArray()[0]?["baseline_matches"]?.AsArray().Any(match =>
+        var create = tencentResult["capabilities"]?.AsArray().Single(value =>
+            value?["capability_id"]?.GetValue<string>() == "win.scheduled_task.create")?.AsObject()
+            ?? throw new InvalidOperationException("腾讯比较结果缺少计划任务创建能力。");
+        Assert(create["method_results"]?.AsArray().Count == 2
+            && create["method_results"]?.AsArray().Any(value => value?["method_id"]?.GetValue<string>() == "task_scheduler_com") == true
+            && create["method_results"]?.AsArray().Any(value => value?["method_id"]?.GetValue<string>() == "schtasks_cli") == true
+            && create["method_results"]?.AsArray().All(value => value?["status"]?.GetValue<string>() == "PASS") == true,
+            "计划任务创建必须分别输出 RPC Hook 与 Windows 4698 两个通过的方法结果。");
+        Assert(create["edr_candidates"]?.AsArray().Any(candidate =>
+            candidate?["baseline_matches"]?.AsArray().Any(match =>
                 match?["canonical_field"]?.GetValue<string>() == "scheduled_task.content"
-                && match?["status"]?.GetValue<string>() == "passed"
-                && match?["raw_json_pointer"]?.GetValue<string>() is "/Child.TaskContent" or "/Child.TaskContentNew") == true) == true,
-            "创建与修改候选必须把真实任务 XML 字段映射回 JSON 对照高亮。");
+                && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.TaskContent") == true) == true,
+            "4698 方法必须把 Child.TaskContent 映射回 JSON 对照高亮。");
         return Task.CompletedTask;
     }
 

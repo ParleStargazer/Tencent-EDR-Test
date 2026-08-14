@@ -37,13 +37,27 @@ public sealed class TaskSnapshot
 
 public sealed class BehaviorResult
 {
+    public required string Method { get; init; }
     public required string Operation { get; init; }
     public required bool Succeeded { get; init; }
     public required DateTimeOffset OccurredAtUtc { get; init; }
+    public required DateTimeOffset CompletedAtUtc { get; init; }
     public required string TaskPath { get; init; }
     public required string ExpectedMarker { get; init; }
     public required TaskSnapshot Before { get; init; }
     public required TaskSnapshot After { get; init; }
+    public int? ClientProcessId { get; init; }
+    public string? ClientExecutable { get; init; }
+    public string? ClientCommandLine { get; init; }
+    public DateTimeOffset? ClientStartedAtUtc { get; init; }
+    public DateTimeOffset? ClientEndedAtUtc { get; init; }
+    public int? ClientExitCode { get; init; }
+    public string? ClientStandardOutput { get; init; }
+    public string? ClientStandardError { get; init; }
+    public bool? SecurityEvent4698Found { get; init; }
+    public string? AuditPolicyOutput { get; init; }
+    public string? SecurityEventQueryOutput { get; init; }
+    public string? DiagnosticError { get; init; }
     public int? HResult { get; init; }
     public string? Error { get; init; }
 }
@@ -55,9 +69,17 @@ public static class ScheduledTaskClient
     private const int TaskLogonInteractiveToken = 3;
     private static readonly XNamespace TaskNamespace = "http://schemas.microsoft.com/windows/2004/02/mit/task";
 
-    public static string CreateDefinition(string taskPath, string principalSid, string marker, string actionArguments)
+    public static string CreateDefinition(string taskPath, string principalSid, string marker, string actionArguments,
+        bool enabled = false, DateTimeOffset? futureStartUtc = null)
     {
         ValidateTaskPath(taskPath);
+        var triggers = new XElement(TaskNamespace + "Triggers");
+        if (futureStartUtc is not null)
+        {
+            triggers.Add(new XElement(TaskNamespace + "TimeTrigger",
+                new XElement(TaskNamespace + "StartBoundary", futureStartUtc.Value.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture)),
+                new XElement(TaskNamespace + "Enabled", true)));
+        }
         var task = new XDocument(
             new XDeclaration("1.0", "UTF-16", null),
             new XElement(TaskNamespace + "Task", new XAttribute("version", "1.4"),
@@ -65,7 +87,7 @@ public static class ScheduledTaskClient
                     new XElement(TaskNamespace + "Author", "EDR 自动化验证平台"),
                     new XElement(TaskNamespace + "Description", marker),
                     new XElement(TaskNamespace + "URI", taskPath)),
-                new XElement(TaskNamespace + "Triggers"),
+                triggers,
                 new XElement(TaskNamespace + "Principals",
                     new XElement(TaskNamespace + "Principal", new XAttribute("id", "Author"),
                         new XElement(TaskNamespace + "UserId", principalSid),
@@ -82,7 +104,7 @@ public static class ScheduledTaskClient
                         new XElement(TaskNamespace + "StopOnIdleEnd", true),
                         new XElement(TaskNamespace + "RestartOnIdle", false)),
                     new XElement(TaskNamespace + "AllowStartOnDemand", false),
-                    new XElement(TaskNamespace + "Enabled", false),
+                    new XElement(TaskNamespace + "Enabled", enabled),
                     new XElement(TaskNamespace + "Hidden", false),
                     new XElement(TaskNamespace + "RunOnlyIfIdle", false),
                     new XElement(TaskNamespace + "WakeToRun", false),

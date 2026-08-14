@@ -48,39 +48,61 @@ $tencentCloud = @()
 foreach ($capability in $localRun.capabilities) {
     $facts = @{}
     $localRun.local_facts | Where-Object case_run_id -eq $capability.case_run_id | ForEach-Object { $facts[$_.key] = $_.value }
-    $event = $localRun.local_events | Where-Object case_run_id -eq $capability.case_run_id | Select-Object -First 1
-    $actor = $localRun.programs | Where-Object program_instance_id -eq $event.actor_program_id | Select-Object -First 1
-    $operation = $event.event_action
-    $eventLogId = switch ($operation) { "create" { 4698 } "modify" { 4702 } "delete" { 4699 } }
-    $actionName = switch ($operation) { "create" { "SchedTaskCreate" } "modify" { "SchedTaskUpdate" } "delete" { "SchedTaskDelete" } }
-    $taskContent = if ($operation -eq "delete") {
-        "<Task><Description>$($facts['scheduled_task.before.marker'])</Description></Task>"
-    } else {
-        "<Task><Description>$($facts['scheduled_task.marker'])</Description></Task>"
+    $events = @($localRun.local_events | Where-Object case_run_id -eq $capability.case_run_id | Sort-Object sequence)
+    foreach ($event in $events) {
+        $actor = $localRun.programs | Where-Object program_instance_id -eq $event.actor_program_id | Select-Object -First 1
+        $operation = $event.event_action
+        $method = if ($event.data.method) { [string]$event.data.method } else { "task_scheduler_com" }
+        $prefix = if ($operation -eq "create") { "scheduled_task.$method" } else { "scheduled_task" }
+        $eventType = if ($operation -eq "create" -and $method -eq "task_scheduler_com") { "scheduled_task_rpc" } else { "scheduled_task" }
+        $eventLogId = switch ($operation) { "create" { 4698 } "modify" { 4702 } "delete" { 4699 } }
+        $actionName = switch ($operation) {
+            "create" { if ($method -eq "task_scheduler_com") { "RpcSchedTaskCreate" } else { "SchedTaskCreate" } }
+            "modify" { "SchedTaskUpdate" }
+            "delete" { "SchedTaskDelete" }
+        }
+        $taskPath = $facts["$prefix.task_path"]
+        $marker = if ($operation -eq "delete") { $facts["$prefix.before.marker"] } else { $facts["$prefix.marker"] }
+        $actionArguments = $facts["$prefix.after.action_arguments"]
+        $taskContent = "<Task><RegistrationInfo><Description>$marker</Description></RegistrationInfo><Actions><Exec><Arguments>$actionArguments</Arguments></Exec></Actions></Task>"
+        $subjectSid = if ($operation -eq "delete") { $facts["$prefix.before.principal"] } else { $facts["$prefix.after.principal"] }
+        $genericCloud += [ordered]@{
+            table = "ScheduledTaskActivity"; event_id = $event.local_event_id; host_id = $localRun.run.host.machine_id
+            host_name = $localRun.run.host.hostname; event_time = $event.occurred_at_utc; event_type = $eventType; action = $operation
+            actor_pid = $actor.pid; actor_name = $actor.file_name; actor_executable = $actor.executable
+            actor_command_line = $actor.command_line; subject_user_name = $env:USERNAME; subject_domain_name = $env:USERDOMAIN
+            subject_user_sid = $subjectSid; event_log_id = if ($eventType -eq "scheduled_task") { $eventLogId } else { $null }
+            task_name = $taskPath; task_content = if ($eventType -eq "scheduled_task") { $taskContent } else { $null }
+            task_command = $facts["$prefix.after.action_command"]; task_arguments = $actionArguments
+        }
+        if ($eventType -eq "scheduled_task_rpc") {
+            $record = [ordered]@{
+                OS = "Windows"; '@table' = "ServiceEvents"; '@timestamp' = $event.observed_at_utc
+                'Action.Type' = "InjectHook"; 'Action.Name' = $actionName; 'Common.EventUUId' = $event.local_event_id
+                'Common.EventTime' = [DateTimeOffset]::Parse($event.occurred_at_utc).ToUnixTimeMilliseconds()
+                'Common.Mid' = $localRun.run.host.machine_id; 'Environment.HostName' = $localRun.run.host.hostname
+                'Parent.ProcPid' = $actor.pid; 'Parent.FileName' = $actor.file_name; 'Parent.FilePath' = $actor.executable
+                'Parent.ProcCmdline' = $actor.command_line; 'Child.TaskName' = $taskPath
+                'Child.NodeName' = $facts["$prefix.after.action_command"]; 'Child.FilePath' = $facts["$prefix.after.action_command"]
+                'Child.TaskArg' = $actionArguments
+            }
+        } else {
+            $record = [ordered]@{
+                OS = "Windows"; '@table' = "ScheduleTaskEvents"; '@timestamp' = $event.observed_at_utc
+                'Action.Type' = "WinEventLog"; 'Action.Name' = $actionName; 'Action.EventLogId' = $eventLogId
+                'Common.EventUUId' = $event.local_event_id
+                'Common.EventTime' = [DateTimeOffset]::Parse($event.occurred_at_utc).ToUnixTimeMilliseconds()
+                'Common.Mid' = $localRun.run.host.machine_id; 'Environment.HostName' = $localRun.run.host.hostname
+                'Parent.ProcPid' = $actor.pid; 'Parent.FileName' = $actor.file_name; 'Parent.FilePath' = $actor.executable
+                'Parent.ProcCmdline' = $actor.command_line; 'Child.SubjectUserName' = $env:USERNAME
+                'Child.SubjectDomainName' = $env:USERDOMAIN; 'Child.SubjectUserSid' = $subjectSid
+                'Child.TaskName' = $taskPath; 'Child.NodeName' = $taskPath
+            }
+            if ($operation -eq "modify") { $record['Child.TaskContentNew'] = $taskContent }
+            elseif ($operation -eq "create") { $record['Child.TaskContent'] = $taskContent }
+        }
+        $tencentCloud += $record
     }
-    $genericCloud += [ordered]@{
-        table = "ScheduledTaskActivity"; event_id = $event.local_event_id; host_id = $localRun.run.host.machine_id
-        host_name = $localRun.run.host.hostname; event_time = $event.occurred_at_utc; action = $operation
-        actor_pid = $actor.pid; actor_name = $actor.file_name; actor_executable = $actor.executable
-        actor_command_line = $actor.command_line; subject_user_name = $env:USERNAME; subject_domain_name = $env:USERDOMAIN
-        subject_user_sid = if ($operation -eq "delete") { $facts["scheduled_task.before.principal"] } else { $facts["scheduled_task.after.principal"] }
-        event_log_id = $eventLogId; task_name = $facts["scheduled_task.task_path"]; task_content = $taskContent
-    }
-    $record = [ordered]@{
-        OS = "Windows"; '@table' = "ScheduleTaskEvents"; '@timestamp' = $event.observed_at_utc
-        'Action.Type' = "WinEventLog"; 'Action.Name' = $actionName; 'Action.EventLogId' = $eventLogId
-        'Common.EventUUId' = $event.local_event_id
-        'Common.EventTime' = [DateTimeOffset]::Parse($event.occurred_at_utc).ToUnixTimeMilliseconds()
-        'Common.Mid' = $localRun.run.host.machine_id; 'Environment.HostName' = $localRun.run.host.hostname
-        'Parent.ProcPid' = $actor.pid; 'Parent.FileName' = $actor.file_name; 'Parent.FilePath' = $actor.executable
-        'Parent.ProcCmdline' = $actor.command_line; 'Child.SubjectUserName' = $env:USERNAME
-        'Child.SubjectDomainName' = $env:USERDOMAIN
-        'Child.SubjectUserSid' = if ($operation -eq "delete") { $facts["scheduled_task.before.principal"] } else { $facts["scheduled_task.after.principal"] }
-        'Child.TaskName' = $facts["scheduled_task.task_path"]; 'Child.NodeName' = $facts["scheduled_task.task_path"]
-    }
-    if ($operation -eq "modify") { $record['Child.TaskContentNew'] = $taskContent }
-    elseif ($operation -eq "create") { $record['Child.TaskContent'] = $taskContent }
-    $tencentCloud += $record
 }
 
 $genericPath = Join-Path $OutputRoot "synthetic-cloud.scheduled-task.json"
@@ -101,12 +123,11 @@ $tencentResultPath = Join-Path $OutputRoot "validation-result.tencent-mapping.js
 $tencentExit = $LASTEXITCODE
 $genericResult = Get-Content $genericResultPath -Raw | ConvertFrom-Json -Depth 100
 $tencentResult = Get-Content $tencentResultPath -Raw | ConvertFrom-Json -Depth 100
+$genericCreateMethods = @(($genericResult.capabilities | Where-Object capability_id -eq "win.scheduled_task.create").method_results)
+$tencentCreateMethods = @(($tencentResult.capabilities | Where-Object capability_id -eq "win.scheduled_task.create").method_results)
 
 $tasksRemoved = $true
-foreach ($capability in $localRun.capabilities) {
-    $taskPath = $localRun.local_facts |
-        Where-Object { $_.case_run_id -eq $capability.case_run_id -and $_.key -eq "scheduled_task.task_path" } |
-        Select-Object -First 1 -ExpandProperty value
+foreach ($taskPath in @($localRun.local_events | Where-Object event_type -eq "scheduled_task" | ForEach-Object { $_.data.task_path })) {
     if ([string]::IsNullOrWhiteSpace($taskPath) -or -not $taskPath.StartsWith("\EdrTest_", [System.StringComparison]::Ordinal)) {
         $tasksRemoved = $false
         continue
@@ -119,17 +140,19 @@ $assertions = [ordered]@{
     run_completed = $localRun.run.status -eq "COMPLETED"
     capability_count_is_3 = @($localRun.capabilities).Count -eq 3
     all_capabilities_local_pass = $failedCapabilities.Count -eq 0
-    program_count_is_6 = @($localRun.programs).Count -eq 6
-    event_count_is_3 = @($localRun.local_events).Count -eq 3
-    artifact_count_is_3 = @($localRun.artifacts).Count -eq 3
-    cleanup_count_is_3 = @($localRun.cleanup_results).Count -eq 3
+    program_count_is_8 = @($localRun.programs).Count -eq 8
+    event_count_is_4 = @($localRun.local_events).Count -eq 4
+    artifact_count_is_4 = @($localRun.artifacts).Count -eq 4
+    cleanup_count_is_4 = @($localRun.cleanup_results).Count -eq 4
     all_cleanup_succeeded = $failedCleanup.Count -eq 0
     all_manifest_expected_facts_present = $missingFacts.Count -eq 0
     all_exact_test_tasks_removed = $tasksRemoved
     generic_compare_exit_code_is_0 = $genericExit -eq 0
     generic_compare_pass_count_is_3 = $genericResult.summary.pass -eq 3
+    generic_create_both_methods_pass = $genericCreateMethods.Count -eq 2 -and @($genericCreateMethods | Where-Object status -ne "PASS").Count -eq 0
     tencent_compare_exit_code_is_0 = $tencentExit -eq 0
     tencent_compare_pass_count_is_3 = $tencentResult.summary.pass -eq 3
+    tencent_create_both_methods_pass = $tencentCreateMethods.Count -eq 2 -and @($tencentCreateMethods | Where-Object status -ne "PASS").Count -eq 0
 }
 $failedAssertions = @($assertions.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object Key)
 $summary = [ordered]@{

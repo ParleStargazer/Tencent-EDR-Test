@@ -300,7 +300,7 @@ const defaultActionNameInputs: Record<string, string> = {
   "win.account.login": "LoginSuccess, LoginFailed, LoginExplicitCredentials",
   "win.registry.create": "RegSetValue",
   "win.registry.modify": "RegSetValue",
-  "win.scheduled_task.create": "SchedTaskCreate",
+  "win.scheduled_task.create": "SchedTaskCreate, RpcSchedTaskCreate",
   "win.scheduled_task.modify": "SchedTaskUpdate",
   "win.scheduled_task.delete": "SchedTaskDelete",
   "win.file.create": "FileWriteClose",

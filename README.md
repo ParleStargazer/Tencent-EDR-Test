@@ -94,7 +94,7 @@ dotnet run --project src/EdrTest -- compare `
   --conclusion-out .\validation-conclusion.md
 ```
 
-Process Activity、File Manipulation、User Account Activity、Network Activity、Registry Activity 和 Scheduled Task Activity 构建会直接清理并覆盖 `samples/` 下的同名旧能力包。注册表三项只操作 `HKCU\Software\EdrTest\Runs` 下的本轮临时键，无需管理员权限。计划任务三项只操作本轮唯一 `\EdrTest_<nonce>_<operation>` 任务，任务默认禁用、没有触发器且从不启动。网络五项只使用本机回环端点，由 Controller 同时编排 Actor 与 Helper；`win.process.image_load@0.3.0` 包含三个原生 DLL 加载子项和一个由真实 `dotnet.exe` Helper 执行的托管程序集加载子项。比较器仅使用与本地能力版本完全匹配的 BASELINE。
+Process Activity、File Manipulation、User Account Activity、Network Activity、Registry Activity 和 Scheduled Task Activity 构建会直接清理并覆盖 `samples/` 下的同名旧能力包。注册表三项只操作 `HKCU\Software\EdrTest\Runs` 下的本轮临时键，无需管理员权限。计划任务三项只操作本轮唯一 `\EdrTest_<nonce>_<operation>_<method>` 任务：COM 方法默认禁用且无触发器；新增 `schtasks.exe` 创建方法只配置一年后的单次触发器，并在采证后立即精确清理，两个方法都不会启动任务。网络五项只使用本机回环端点，由 Controller 同时编排 Actor 与 Helper；`win.process.image_load@0.3.0` 包含三个原生 DLL 加载子项和一个由真实 `dotnet.exe` Helper 执行的托管程序集加载子项。比较器仅使用与本地能力版本完全匹配的 BASELINE。
 
 比较命令会同时生成结构化 `validation-result.json` 和中文 `validation-conclusion.md`；未指定 `--conclusion-out` 时，Markdown 结论自动写入 JSON 同目录。同一个 `EdrTest.exe` 还提供 `export` 和 `inspect` 子命令。运行 `dotnet run --project src/EdrTest -- help` 可查看完整参数。
 
