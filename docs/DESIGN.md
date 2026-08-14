@@ -642,7 +642,7 @@ Network Activity 五项能力采用 Controller、Actor、Helper 三程序编排�
 
 Registry Activity 三项能力统一使用 `HKCU\Software\EdrTest\Runs\<nonce>\<operation>` 临时键。Controller 负责预置、独立读取和精确清理，Actor 负责创建键值、修改值或依次删除值和空键；本地事实记录 Actor PID/路径、Hive、键路径、值名/类型、前后数据及 SHA-256 和紧邻 API 的时间。三份 BASELINE 将本地事实作为绝对基准，以键路径、值名、Actor、PID 和 15 ms 时间差关联 EDR `RegEvents`。腾讯官方文档已确认 `RegEvents`、`RegSetValue` 和 `Child.RegValData`；键路径和值名别名暂兼容多版本导出，等待真实注册表导出收敛。完整约束见 `docs/REGISTRY-ACTIVITY-SAMPLES.md`。
 
-Scheduled Task Activity 三项能力操作本轮唯一的 `\EdrTest_<nonce>_<operation>_<method>` 当前用户任务。创建能力运行两个独立方法：Task Scheduler 2.0 COM 方法验证 `ServiceEvents / InjectHook / RpcSchedTaskCreate` 直接调用链；系统 `schtasks.exe /Create /SC ONCE` 方法验证 `ScheduleTaskEvents / WinEventLog / 4698` 链，并只读保存 auditpol 与本机 Security 4698 诊断。第二方法的任务虽然启用，但仅有一年后的单次触发器、动作无害且立即精确清理，测试过程从不启动任务；超出这些约束或使用高权限主体的方法仍属于 L2。BASSLINE 以本地任务状态为绝对基准，两个方法分别比较并采用最佳结论；任务路径、Actor 和相对完成时间是关联主证据。修改继续使用 4702，删除使用 4699，`SchedTaskDelete` 等待测试机实测。完整约束见 `docs/SCHEDULED-TASK-ACTIVITY-SAMPLES.md`。
+Scheduled Task Activity 三项能力操作本轮唯一的 `\EdrTest_<nonce>_<operation>_<method>` 当前用户任务，创建、修改、删除都运行 Task Scheduler 2.0 COM 与系统 `schtasks.exe` 两个独立方法。COM 创建/更新用于验证 `ServiceEvents / InjectHook / RpcSchedTaskCreate` 注册调用链，该动作规范化为 `register`，不能单独区分创建和修改；CLI 分别用 `/Create`、无凭据交互的 `/Change /ENABLE`、`/Delete` 验证 `ScheduleTaskEvents / WinEventLog / 4698、4702、4699`，并只读保存 auditpol 与对应本机 Security 事件诊断。创建任务虽启用但只有一年后的单次触发器；修改预置任务无触发器，即使启用也不会执行。所有动作无害且立即精确清理，测试过程从不启动任务；超出这些约束或使用高权限主体的方法仍属于 L2。BASSLINE 以本地任务状态为绝对基准，两种方法分别比较并采用最佳结论；任务路径、Actor 和相对完成时间是关联主证据。`SchedTaskDelete` 等待测试机实测。完整约束见 `docs/SCHEDULED-TASK-ACTIVITY-SAMPLES.md`。
 
 ## 19. 测试策略
 

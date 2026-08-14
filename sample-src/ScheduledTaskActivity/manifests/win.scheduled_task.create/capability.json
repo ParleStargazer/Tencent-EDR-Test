@@ -42,6 +42,8 @@
     "scheduled_task.schtasks_cli.after.triggers",
     "scheduled_task.schtasks_cli.after.action_command",
     "scheduled_task.schtasks_cli.after.action_arguments",
+    "scheduled_task.schtasks_cli.security_event_id",
+    "scheduled_task.schtasks_cli.security_event_found",
     "scheduled_task.schtasks_cli.security_event_4698_found",
     "scheduled_task.schtasks_cli.audit_policy_output",
     "scheduled_task.schtasks_cli.security_event_query_output",

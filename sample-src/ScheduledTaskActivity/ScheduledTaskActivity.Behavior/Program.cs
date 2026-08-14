@@ -30,8 +30,9 @@ internal static class Program
             var client = Execute(method, operation, taskPath, definitionPath, actionArguments);
             var completedAtUtc = DateTimeOffset.UtcNow;
             var after = ScheduledTaskClient.Snapshot(taskPath);
+            var securityEventId = SecurityEventId(operation);
             var diagnostic = method == "schtasks_cli"
-                ? CollectEventLogDiagnostic(taskPath)
+                ? CollectEventLogDiagnostic(taskPath, securityEventId)
                 : new DiagnosticResult(null, null, null, null);
             var succeeded = Verify(method, operation, marker, actionArguments, before, after);
             ProtocolJson.WriteAtomic(resultPath, new BehaviorResult
@@ -43,7 +44,9 @@ internal static class Program
                 ClientCommandLine = client?.CommandLine, ClientStartedAtUtc = client?.StartedAtUtc,
                 ClientEndedAtUtc = client?.EndedAtUtc, ClientExitCode = client?.ExitCode,
                 ClientStandardOutput = client?.StandardOutput, ClientStandardError = client?.StandardError,
-                SecurityEvent4698Found = diagnostic.SecurityEvent4698Found,
+                SecurityEventId = method == "schtasks_cli" ? securityEventId : null,
+                SecurityEventFound = diagnostic.SecurityEventFound,
+                SecurityEvent4698Found = operation == "create" ? diagnostic.SecurityEventFound : null,
                 AuditPolicyOutput = diagnostic.AuditPolicyOutput,
                 SecurityEventQueryOutput = diagnostic.SecurityEventQueryOutput,
                 DiagnosticError = diagnostic.Error,
@@ -75,28 +78,21 @@ internal static class Program
     {
         if (method == "schtasks_cli")
         {
-            if (operation != "create") throw new ArgumentException("schtasks_cli 子测试当前只用于计划任务创建。");
-            var future = DateTime.Now.AddYears(1).AddMinutes(1);
             var command = Path.Combine(Environment.SystemDirectory, "cmd.exe");
-            var culture = System.Globalization.CultureInfo.CurrentCulture;
-            var dateCandidates = new[]
+            switch (operation)
             {
-                future.ToString(culture.DateTimeFormat.ShortDatePattern, culture),
-                future.ToString("yyyy/MM/dd", System.Globalization.CultureInfo.InvariantCulture),
-                future.ToString("MM/dd/yyyy", System.Globalization.CultureInfo.InvariantCulture),
-                future.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture),
-            }.Distinct(StringComparer.Ordinal).ToArray();
-            CommandResult? last = null;
-            foreach (var startDate in dateCandidates)
-            {
-                last = RunCommand(Path.Combine(Environment.SystemDirectory, "schtasks.exe"),
-                    ["/Create", "/TN", taskPath, "/SC", "ONCE", "/SD", startDate,
-                        "/ST", future.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture),
-                        "/TR", $"{command} {actionArguments}", "/RL", "LIMITED", "/F"],
-                    15_000, requireSuccess: false);
-                if (last.ExitCode == 0) return last;
+                case "create":
+                    return RunSchtasksCreate(taskPath, command, actionArguments);
+                case "modify":
+                    return RunCommand(Path.Combine(Environment.SystemDirectory, "schtasks.exe"),
+                        ["/Change", "/TN", taskPath, "/ENABLE"],
+                        15_000, requireSuccess: true);
+                case "delete":
+                    return RunCommand(Path.Combine(Environment.SystemDirectory, "schtasks.exe"),
+                        ["/Delete", "/TN", taskPath, "/F"], 15_000, requireSuccess: true);
+                default:
+                    throw new ArgumentException($"schtasks_cli 不支持的计划任务操作：{operation}");
             }
-            throw new InvalidOperationException($"schtasks.exe 无法使用本机或兼容日期格式创建任务：{JoinOutput(last!)}");
         }
         if (method != "task_scheduler_com") throw new ArgumentException($"不支持的计划任务测试方法：{method}");
         switch (operation)
@@ -124,12 +120,47 @@ internal static class Program
                 : after.Marker == marker)
             && (method != "schtasks_cli" || after.Triggers?.Contains("TimeTrigger", StringComparer.Ordinal) == true),
         "modify" => before.Exists && after.Exists && before.XmlSha256 != after.XmlSha256
-            && before.Marker != after.Marker && after.Marker == marker && after.Enabled == false,
+            && (method == "schtasks_cli"
+                ? before.Enabled == false && after.Enabled == true
+                    && string.Equals(after.ActionArguments, before.ActionArguments, StringComparison.OrdinalIgnoreCase)
+                : before.Marker != after.Marker && after.Marker == marker),
         "delete" => before.Exists && !after.Exists,
         _ => false,
     };
 
-    private static DiagnosticResult CollectEventLogDiagnostic(string taskPath)
+    private static CommandResult RunSchtasksCreate(string taskPath, string command, string actionArguments)
+    {
+        var future = DateTime.Now.AddYears(1).AddMinutes(1);
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        var dateCandidates = new[]
+        {
+            future.ToString(culture.DateTimeFormat.ShortDatePattern, culture),
+            future.ToString("yyyy/MM/dd", System.Globalization.CultureInfo.InvariantCulture),
+            future.ToString("MM/dd/yyyy", System.Globalization.CultureInfo.InvariantCulture),
+            future.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture),
+        }.Distinct(StringComparer.Ordinal).ToArray();
+        CommandResult? last = null;
+        foreach (var startDate in dateCandidates)
+        {
+            last = RunCommand(Path.Combine(Environment.SystemDirectory, "schtasks.exe"),
+                ["/Create", "/TN", taskPath, "/SC", "ONCE", "/SD", startDate,
+                    "/ST", future.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture),
+                    "/TR", $"{command} {actionArguments}", "/RL", "LIMITED", "/F"],
+                15_000, requireSuccess: false);
+            if (last.ExitCode == 0) return last;
+        }
+        throw new InvalidOperationException($"schtasks.exe 无法使用本机或兼容日期格式创建任务：{JoinOutput(last!)}");
+    }
+
+    private static int SecurityEventId(string operation) => operation switch
+    {
+        "create" => 4698,
+        "modify" => 4702,
+        "delete" => 4699,
+        _ => throw new ArgumentException($"没有为计划任务操作 {operation} 定义安全事件 ID。"),
+    };
+
+    private static DiagnosticResult CollectEventLogDiagnostic(string taskPath, int securityEventId)
     {
         var errors = new List<string>();
         string? auditOutput = null;
@@ -147,7 +178,7 @@ internal static class Program
         try
         {
             Thread.Sleep(250);
-            var query = "*[System[(EventID=4698) and TimeCreated[timediff(@SystemTime) <= 15000]]]";
+            var query = $"*[System[(EventID={securityEventId}) and TimeCreated[timediff(@SystemTime) <= 15000]]]";
             var security = RunCommand(Path.Combine(Environment.SystemDirectory, "wevtutil.exe"),
                 ["qe", "Security", $"/q:{query}", "/f:xml", "/c:30", "/rd:true"], 10_000, requireSuccess: false);
             securityOutput = JoinOutput(security);
@@ -210,6 +241,6 @@ internal static class Program
     private sealed record CommandResult(int ProcessId, string Executable, string CommandLine,
         DateTimeOffset StartedAtUtc, DateTimeOffset EndedAtUtc, int ExitCode, string StandardOutput, string StandardError);
 
-    private sealed record DiagnosticResult(bool? SecurityEvent4698Found, string? AuditPolicyOutput,
+    private sealed record DiagnosticResult(bool? SecurityEventFound, string? AuditPolicyOutput,
         string? SecurityEventQueryOutput, string? Error);
 }

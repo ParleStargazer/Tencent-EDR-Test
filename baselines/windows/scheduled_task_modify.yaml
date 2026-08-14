@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.scheduled_task.modify
-version: "0.1.0"
+version: "0.2.0"
 title: Windows 计划任务修改遥测
-description: 以本轮唯一任务路径、修改后 XML 内的 nonce 标记和精确行为时间关联 Windows 安全事件 4702；要求本地定义哈希确实变化。
+description: 同轮执行 Task Scheduler COM 更新与 schtasks.exe /Change /ENABLE 两种修改方法；本地定义变化是绝对基准，云端分别验证 RpcSchedTaskCreate 注册 RPC 与 Windows 4702/SchedTaskUpdate，并采用最佳方法形成能力结论。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,45 +10,74 @@ platform:
 risk_level: L1
 capability:
   id: win.scheduled_task.modify
-  version: "0.1.0"
+  version: "0.2.0"
   parameters: { post_operation_hold_ms: 1500 }
 local_requirements:
   - { field: facts.scheduled_task.modify_succeeded, operator: equals, expected: true }
-  - { field: facts.scheduled_task.task_path, operator: present }
-  - { field: facts.scheduled_task.marker, operator: present }
-  - { field: facts.scheduled_task.before.exists, operator: equals, expected: true }
-  - { field: facts.scheduled_task.before.xml_sha256, operator: present }
-  - { field: facts.scheduled_task.after.exists, operator: equals, expected: true }
-  - { field: facts.scheduled_task.after.xml_sha256, operator: present }
-  - { field: facts.scheduled_task.after.enabled, operator: equals, expected: false }
-  - { field: facts.scheduled_task.after.action_arguments, operator: present }
-  - { field: facts.scheduled_task.actor_pid, operator: present }
+  - { field: facts.scheduled_task.task_scheduler_com.modify_succeeded, operator: equals, expected: true }
+  - { field: facts.scheduled_task.task_scheduler_com.task_path, operator: present }
+  - { field: facts.scheduled_task.task_scheduler_com.before.exists, operator: equals, expected: true }
+  - { field: facts.scheduled_task.task_scheduler_com.before.xml_sha256, operator: present }
+  - { field: facts.scheduled_task.task_scheduler_com.after.exists, operator: equals, expected: true }
+  - { field: facts.scheduled_task.task_scheduler_com.after.xml_sha256, operator: present }
+  - { field: facts.scheduled_task.task_scheduler_com.after.enabled, operator: equals, expected: false }
+  - { field: facts.scheduled_task.task_scheduler_com.after.marker, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.marker }
+  - { field: facts.scheduled_task.task_scheduler_com.actor_pid, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.modify_succeeded, operator: equals, expected: true }
+  - { field: facts.scheduled_task.schtasks_cli.task_path, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.before.exists, operator: equals, expected: true }
+  - { field: facts.scheduled_task.schtasks_cli.before.xml_sha256, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.after.exists, operator: equals, expected: true }
+  - { field: facts.scheduled_task.schtasks_cli.after.xml_sha256, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.after.enabled, operator: equals, expected: true }
+  - { field: facts.scheduled_task.schtasks_cli.after.action_arguments, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.actor_pid, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.security_event_id, operator: equals, expected: 4702 }
 correlation:
   time_before_seconds: 60
   time_after_seconds: 300
   max_time_difference_ms: 15
   anchors:
-    - { local_field: facts.scheduled_task.task_path, cloud_field: scheduled_task.name, strength: strong, normalizers: [lowercase, trim] }
-    - { local_field: facts.scheduled_task.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
-    - { local_field: facts.scheduled_task.actor_pid, cloud_field: process.pid, strength: medium }
+    - { local_field: facts.scheduled_task.schtasks_cli.task_path, cloud_field: scheduled_task.name, strength: strong, normalizers: [lowercase, trim] }
+    - { local_field: facts.scheduled_task.schtasks_cli.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+    - { local_field: facts.scheduled_task.schtasks_cli.actor_pid, cloud_field: process.pid, strength: medium }
+method_selection: { strategy: best }
 cloud_expectations:
-  - id: scheduled-task-update-event
+  - id: scheduled-task-modify-register-rpc-hook-event
+    method: { id: task_scheduler_com, title: Task Scheduler COM 更新（RPC Hook） }
+    event_type: scheduled_task_rpc
+    event_actions: [register]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.scheduled_task.task_scheduler_com.completed_at_utc
+      anchors:
+        - { local_field: facts.scheduled_task.task_scheduler_com.task_path, cloud_field: scheduled_task.name, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.scheduled_task.task_scheduler_com.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.scheduled_task.task_scheduler_com.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: scheduled_task.name, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.task_path, severity: required, normalizers: [lowercase, trim] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: scheduled_task.command, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.after.action_command, severity: recommended, normalizers: [windows_path] }
+      - { field: scheduled_task.arguments, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.after.action_arguments, severity: recommended }
+  - id: scheduled-task-modify-security-event
+    method: { id: schtasks_cli, title: 系统 schtasks.exe /Change /ENABLE + Windows 4702（推荐） }
     event_type: scheduled_task
     event_actions: [modify]
-    cardinality: { min: 1, max: 5 }
+    cardinality: { min: 1, max: 10 }
     correlation:
-      time_from_local: facts.scheduled_task.occurred_at_utc
+      time_from_local: facts.scheduled_task.schtasks_cli.completed_at_utc
       anchors:
-        - { local_field: facts.scheduled_task.task_path, cloud_field: scheduled_task.name, strength: strong, normalizers: [lowercase, trim] }
-        - { local_field: facts.scheduled_task.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
-        - { local_field: facts.scheduled_task.actor_pid, cloud_field: process.pid, strength: medium }
+        - { local_field: facts.scheduled_task.schtasks_cli.task_path, cloud_field: scheduled_task.name, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.scheduled_task.schtasks_cli.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+        - { local_field: facts.scheduled_task.schtasks_cli.actor_pid, cloud_field: process.pid, strength: medium }
     assertions:
-      - { field: scheduled_task.name, operator: equals, expected_from_local: facts.scheduled_task.task_path, severity: required, normalizers: [lowercase, trim] }
-      - { field: scheduled_task.content, operator: contains, expected_from_local: facts.scheduled_task.marker, severity: required }
+      - { field: scheduled_task.name, operator: equals, expected_from_local: facts.scheduled_task.schtasks_cli.task_path, severity: required, normalizers: [lowercase, trim] }
+      - { field: scheduled_task.content, operator: contains, expected_from_local: facts.scheduled_task.schtasks_cli.before.marker, severity: required }
       - { field: winlog.event_id, operator: equals, expected: 4702, severity: required }
       - field: process.executable
         operator: equals
-        expected_from_local: facts.scheduled_task.actor_executable
+        expected_from_local: facts.scheduled_task.schtasks_cli.actor_executable
         accepted_values:
           - { value: 'C:\Windows\System32\svchost.exe', message: EDR 仅保留 Task Scheduler 服务侧调用链，需要补充客户端调用链 }
         severity: recommended
@@ -58,5 +87,5 @@ scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: 按真实 ScheduleTaskEvents 修改样本校准 TaskContentNew、4702，并允许 svchost.exe 服务侧调用链以同分通过推荐项。
-  references: [reference/scheduled_task/edr_update.json, Windows Security Event 4702, Tencent EDR ScheduleTaskEvents / SchedTaskUpdate]
+  change_reason: 把修改扩展为 COM 更新与无凭据交互的 schtasks.exe /Change /ENABLE 两种独立方法；RpcSchedTaskCreate 仅表达通用注册 RPC，4702/SchedTaskUpdate 才直接表达修改语义。
+  references: [reference/260814140000run, reference/scheduled_task/edr_update.json, reference/EDR能力细节.txt, Windows Security Event 4702, Tencent EDR RpcSchedTaskCreate / SchedTaskUpdate]

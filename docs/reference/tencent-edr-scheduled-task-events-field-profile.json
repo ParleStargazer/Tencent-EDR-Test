@@ -132,11 +132,11 @@
     "PParent.ProcGuid", "PParent.ProcPid", "TenantId", "Uuid", "Version"
   ],
   "design_decisions": {
-    "semantic_routing": "4698、4702、4699 建立安全事件语义；RpcSchedTaskCreate 建立独立的 RPC Hook 方法，不能互相冒充。",
-    "action_name_filter": "创建默认提供 SchedTaskCreate 与 RpcSchedTaskCreate，修改为 SchedTaskUpdate，删除为 SchedTaskDelete；仍只作用于 EDR JSON。",
+    "semantic_routing": "4698、4702、4699 建立创建、修改、删除语义；RpcSchedTaskCreate 规范化为 register 并建立 COM 创建/更新共用的 RPC Hook 方法，不能冒充具体行为语义。",
+    "action_name_filter": "创建默认提供 SchedTaskCreate 与 RpcSchedTaskCreate，修改为 SchedTaskUpdate 与 RpcSchedTaskCreate，删除为 SchedTaskDelete；仍只作用于 EDR JSON。",
     "primary_anchors": ["本轮唯一任务路径", "任务 XML 中 nonce 标记", "相对本地行为时间（强关联默认 15 ms）"],
     "process_chain": "直接 Actor 与 svchost.exe 服务侧调用链均可作为推荐项通过；服务侧命中时给出调用链优化提示。",
-    "audit_diagnostic": "方法 2 只读保存 auditpol 与本机 4698 查询；本机无 4698 指向环境前置条件，本机有 4698 而云端无事件则指向 EDR 接入/导出。",
+    "audit_diagnostic": "CLI 方法只读保存 auditpol 与本机 4698/4702/4699 查询；本机无对应事件指向环境前置条件，本机有事件而云端无直接语义事件则指向 EDR 接入/导出。",
     "delete_status": "4699 为 Windows 标准删除事件；SchedTaskDelete 暂无真实导出样本，按用户假定纳入测试，等待实测校准。"
   }
 }

@@ -777,10 +777,10 @@ routes:
       "winlog.logon.id": { source: "Child.TargetLogonId" }
       "winlog.logon.type": { source: "Child.LogonType", on_empty: null }
 
-  # Task Scheduler 2.0 COM 注册首先可能被 HIPS 注入 Hook 直接捕获。260814140000run
-  # 中该事件与本地任务路径、Actor PID 完全一致，完成时间差 +27 ms。此路由保留
-  # RpcSchedTaskCreate 的直接客户端调用链；它不等同于 Windows Security 4698。
-  - route_id: scheduled-task-rpc-create
+  # Task Scheduler 2.0 COM 的 RegisterTaskDefinition RPC 可能被 HIPS 注入 Hook 直接捕获。
+  # 260814140000run 证明该事件与本地创建任务路径、Actor PID 完全一致；同一 RPC 也承载
+  # TASK_CREATE_OR_UPDATE 修改调用，因此规范化为 register，不能仅凭 RpcSchedTaskCreate 判为创建。
+  - route_id: scheduled-task-rpc-register
     when:
       "OS": Windows
       "@table": ServiceEvents
@@ -788,7 +788,7 @@ routes:
       "Action.Name": RpcSchedTaskCreate
     canonical:
       "event.type": { constant: scheduled_task_rpc }
-      "event.action": { constant: create }
+      "event.action": { constant: register }
       "event.category": { constant: configuration }
       "event.id": { source: "Common.EventUUId" }
       "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }

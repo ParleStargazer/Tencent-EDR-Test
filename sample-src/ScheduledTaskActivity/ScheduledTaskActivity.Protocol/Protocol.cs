@@ -54,6 +54,8 @@ public sealed class BehaviorResult
     public int? ClientExitCode { get; init; }
     public string? ClientStandardOutput { get; init; }
     public string? ClientStandardError { get; init; }
+    public int? SecurityEventId { get; init; }
+    public bool? SecurityEventFound { get; init; }
     public bool? SecurityEvent4698Found { get; init; }
     public string? AuditPolicyOutput { get; init; }
     public string? SecurityEventQueryOutput { get; init; }

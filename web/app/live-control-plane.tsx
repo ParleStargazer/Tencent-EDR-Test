@@ -301,7 +301,7 @@ const defaultActionNameInputs: Record<string, string> = {
   "win.registry.create": "RegSetValue",
   "win.registry.modify": "RegSetValue",
   "win.scheduled_task.create": "SchedTaskCreate, RpcSchedTaskCreate",
-  "win.scheduled_task.modify": "SchedTaskUpdate",
+  "win.scheduled_task.modify": "SchedTaskUpdate, RpcSchedTaskCreate",
   "win.scheduled_task.delete": "SchedTaskDelete",
   "win.file.create": "FileWriteClose",
   "win.file.modify": "FileWriteClose",

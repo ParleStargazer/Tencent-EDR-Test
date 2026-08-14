@@ -361,13 +361,18 @@ test("Scheduled Task Activity 三项样本、真实字段清单、映射和 BASS
   for (const [operation, eventId] of definitions) {
     const manifest = await readJson(`sample-src/ScheduledTaskActivity/manifests/win.scheduled_task.${operation}/capability.json`);
     const baseline = await readFile(new URL(`baselines/windows/scheduled_task_${operation}.yaml`, root), "utf8");
-    assert.equal(manifest.version, operation === "create" ? "0.2.0" : "0.1.0");
+    assert.equal(manifest.version, "0.2.0");
     assert.equal(manifest.risk_level, "L1");
     assert.equal(manifest.required_privilege, "standard_user");
     assert.ok(manifest.expected_fact_keys.includes(`scheduled_task.${operation}_succeeded`));
-    const factPrefix = operation === "create" ? "scheduled_task.schtasks_cli" : "scheduled_task";
-    assert.ok(manifest.expected_fact_keys.includes(`${factPrefix}.task_path`));
-    assert.ok(manifest.expected_fact_keys.includes(`${factPrefix}.actor_pid`));
+    for (const method of ["task_scheduler_com", "schtasks_cli"]) {
+      const factPrefix = `scheduled_task.${method}`;
+      assert.ok(manifest.expected_fact_keys.includes(`${factPrefix}.${operation}_succeeded`));
+      assert.ok(manifest.expected_fact_keys.includes(`${factPrefix}.task_path`));
+      assert.ok(manifest.expected_fact_keys.includes(`${factPrefix}.actor_pid`));
+      assert.match(baseline, new RegExp(`method: \\{ id: ${method},`));
+    }
+    assert.match(baseline, /method_selection: \{ strategy: best \}/);
     assert.match(baseline, /max_time_difference_ms: 15/);
     assert.match(baseline, new RegExp(`expected: ${eventId}`));
     assert.match(baseline, /cloud_field: scheduled_task\.name/);
@@ -385,7 +390,8 @@ test("Scheduled Task Activity 三项样本、真实字段清单、映射和 BASS
   assert.equal(profile.all_exported_fields.length, 107);
   assert.equal(profile.rpc_hook_all_exported_fields.length, 130);
   assert.equal(profile.rpc_hook_baseline_fields.length, 8);
-  assert.match(mapping, /route_id: scheduled-task-rpc-create/);
+  assert.match(mapping, /route_id: scheduled-task-rpc-register/);
+  assert.match(mapping, /"event\.action": \{ constant: register \}/);
   assert.match(mapping, /route_id: scheduled-task-create/);
   assert.match(mapping, /route_id: scheduled-task-modify/);
   assert.match(mapping, /route_id: scheduled-task-delete/);
@@ -400,13 +406,17 @@ test("Scheduled Task Activity 三项样本、真实字段清单、映射和 BASS
   assert.match(behavior, /schtasks\.exe/);
   assert.match(behavior, /0CCE9227-69AE-11D9-BED3-505054503030/);
   assert.match(behavior, /dateCandidates/);
+  assert.match(behavior, /"\/Change"/);
+  assert.match(behavior, /"\/Delete"/);
+  assert.match(behavior, /"modify" => 4702/);
+  assert.match(behavior, /"delete" => 4699/);
   assert.match(controller, /task_scheduler_com/);
   assert.match(controller, /schtasks_cli/);
   assert.match(controller, /delete_exact_test_task_/);
   assert.match(controller, /task_was_never_started/);
   assert.match(startScript, /Build-ScheduledTaskActivitySamples\.ps1/);
   assert.match(liveControlPlane, /"win\.scheduled_task\.create": "SchedTaskCreate, RpcSchedTaskCreate"/);
-  assert.match(liveControlPlane, /"win\.scheduled_task\.modify": "SchedTaskUpdate"/);
+  assert.match(liveControlPlane, /"win\.scheduled_task\.modify": "SchedTaskUpdate, RpcSchedTaskCreate"/);
   assert.match(liveControlPlane, /"win\.scheduled_task\.delete": "SchedTaskDelete"/);
 });
 

@@ -40,19 +40,17 @@ internal static class Program
             var actorDefinition = package.Manifest.Participants.Single(participant => participant.Role == "actor");
             var actorPath = package.ResolveProgram(actorDefinition.Executable);
             var holdMs = parameters["post_operation_hold_ms"]?.GetValue<int>() ?? 1_500;
-            var methods = operation == "create"
-                ? new[] { "task_scheduler_com", "schtasks_cli" }
-                : new[] { "task_scheduler_com" };
+            var methods = new[] { "task_scheduler_com", "schtasks_cli" };
             var allSucceeded = true;
             string? firstError = null;
             foreach (var (method, index) in methods.Select((value, index) => (value, index)))
             {
                 var methodTag = method == "schtasks_cli" ? "cli" : "com";
-                taskPath = operation == "create" ? $"\\EdrTest_{tag}_create_{methodTag}" : $"\\EdrTest_{tag}_{operation}";
+                taskPath = $"\\EdrTest_{tag}_{operation}_{methodTag}";
                 var beforeMarker = $"EDRTEST|{invocation.Nonce}|SCHEDULED_TASK|{method}|BEFORE";
                 var expectedMarker = $"EDRTEST|{invocation.Nonce}|SCHEDULED_TASK|{method}|{operation.ToUpperInvariant()}";
                 var beforeXml = ScheduledTaskClient.CreateDefinition(taskPath, principalSid, beforeMarker, "/d /c exit 0");
-                var enabledFutureTask = method == "schtasks_cli";
+                var enabledFutureTask = operation == "create" && method == "schtasks_cli";
                 var afterArguments = $"/d /c rem EDRTEST_{tag}_{methodTag}_{operation.ToUpperInvariant()}";
                 var afterXml = ScheduledTaskClient.CreateDefinition(taskPath, principalSid, expectedMarker, afterArguments,
                     enabled: enabledFutureTask, futureStartUtc: enabledFutureTask ? DateTimeOffset.UtcNow.AddYears(1) : null);
@@ -89,7 +87,8 @@ internal static class Program
                 var succeeded = result.Succeeded && Verify(method, operation, expectedMarker, afterArguments, result, independentlyObserved);
                 allSucceeded &= succeeded;
                 firstError ??= succeeded ? null : result.Error ?? $"{method} 子测试未确认预期计划任务状态。";
-                var artifact = CreateEvidenceArtifact(invocation, resultPath, operation, method, taskPath, enabledFutureTask);
+                var artifact = CreateEvidenceArtifact(invocation, resultPath, operation, method, taskPath,
+                    result.After.Enabled == true);
                 database.AddArtifact(artifact);
                 var localEvent = CreateEvent(invocation, operation, method, index, stopwatch, result, effectiveActor, artifact.ArtifactId);
                 database.AddEvent(localEvent);
@@ -110,10 +109,7 @@ internal static class Program
                 }
             }
 
-            // 创建能力有两个方法级结论，额外保留能力级汇总结论；修改、删除的单一方法
-            // 已直接写入同名事实，避免重复键使导出和比较产生歧义。
-            if (operation == "create")
-                AddGlobalFact(database, invocation, "scheduled_task.create_succeeded", JsonValue.Create(allSucceeded));
+            AddGlobalFact(database, invocation, $"scheduled_task.{operation}_succeeded", JsonValue.Create(allSucceeded));
             AddGlobalFact(database, invocation, "correlation.nonce", JsonValue.Create(invocation.Nonce));
             var status = allSucceeded ? "LOCAL_PASS" : "SAMPLE_ERROR";
             var error = allSucceeded ? null : firstError;
@@ -172,8 +168,12 @@ internal static class Program
             && independentlyObserved.Exists
             && (method != "schtasks_cli" || independentlyObserved.Triggers?.Contains("TimeTrigger", StringComparer.Ordinal) == true),
         "modify" => result.Before.Exists && result.After.Exists && result.Before.XmlSha256 != result.After.XmlSha256
-            && result.After.Enabled == false && result.After.Marker == marker
-            && independentlyObserved.Exists && independentlyObserved.Marker == marker,
+            && independentlyObserved.Exists
+            && (method == "schtasks_cli"
+                ? result.Before.Enabled == false && result.After.Enabled == true && independentlyObserved.Enabled == true
+                    && string.Equals(result.After.ActionArguments, result.Before.ActionArguments, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(independentlyObserved.ActionArguments, result.Before.ActionArguments, StringComparison.OrdinalIgnoreCase)
+                : result.After.Marker == marker && independentlyObserved.Marker == marker),
         "delete" => result.Before.Exists && !result.After.Exists && !independentlyObserved.Exists,
         _ => false,
     };
@@ -248,7 +248,7 @@ internal static class Program
     private static void AddFacts(RunDatabase database, ControllerInvocation invocation, string operation, string method,
         BehaviorResult result, ProgramObservation actor, string eventId, bool succeeded)
     {
-        var prefix = operation == "create" ? $"scheduled_task.{method}" : "scheduled_task";
+        var prefix = $"scheduled_task.{method}";
         var values = new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
         {
             [$"{prefix}.{operation}_succeeded"] = JsonValue.Create(succeeded),
@@ -266,11 +266,14 @@ internal static class Program
             [$"{prefix}.after.marker"] = JsonValue.Create(result.After.Marker), [$"{prefix}.after.action_command"] = JsonValue.Create(result.After.ActionCommand),
             [$"{prefix}.after.action_arguments"] = JsonValue.Create(result.After.ActionArguments),
             [$"{prefix}.after.triggers"] = StringArray(result.After.Triggers),
-            [$"{prefix}.security_event_4698_found"] = JsonValue.Create(result.SecurityEvent4698Found),
+            [$"{prefix}.security_event_id"] = JsonValue.Create(result.SecurityEventId),
+            [$"{prefix}.security_event_found"] = JsonValue.Create(result.SecurityEventFound),
             [$"{prefix}.audit_policy_output"] = JsonValue.Create(result.AuditPolicyOutput),
             [$"{prefix}.security_event_query_output"] = JsonValue.Create(result.SecurityEventQueryOutput),
             [$"{prefix}.diagnostic_error"] = JsonValue.Create(result.DiagnosticError),
         };
+        if (operation == "create")
+            values[$"{prefix}.security_event_4698_found"] = JsonValue.Create(result.SecurityEvent4698Found);
         foreach (var (key, value) in values)
         {
             database.AddFact(new LocalFactObservation
