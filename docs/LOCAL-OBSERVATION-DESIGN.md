@@ -272,9 +272,11 @@ correlation.nonce
 
 | 能力 | `event_type/action` | 必须收集 |
 | --- | --- | --- |
-| 服务创建（Service Creation） | `service/create` | Actor；Service Name/Display Name；Binary Path、Start Type、Account、Service Type；前后状态 |
-| 服务修改（Service Modification） | `service/modify` | 同上；修改前后配置 |
-| 服务删除（Service Deletion） | `service/delete` | 服务名；删除前配置；删除后不存在；结果 |
+| 服务创建（Service Creation） | `service/create` | `CreateServiceW` Actor/PID/命令行；唯一 Service Name/Display Name；受控 Binary Path、Start Type、Account、Service Type、State；创建前不存在、创建后存在；本机 System 7045 诊断 |
+| 服务修改（Service Modification） | `service/modify` | `ChangeServiceConfigW` Actor；同一服务修改前后的 Display Name、Binary Path、Start Type 和 State；本机 System 7040 诊断 |
+| 服务删除（Service Deletion） | `service/delete` | `DeleteService` Actor；服务名和删除前完整配置；删除后 SCM 独立查询确认不存在；无稳定 System 删除事件时保留 API 直接证据 |
+
+三项服务活动均要求管理员权限，只允许 `EdrTestSvc_` 前缀和 `EDRTEST|` 显示名。测试服务的二进制路径固定为系统 `cmd.exe` 的无害 `exit 0`/`rem EDRTEST_...` 命令，启动类型仅允许手动或禁用，整个测试从不启动服务；清理器只删除本轮精确服务名并再次查询 SCM 确认消失。
 
 ### 5.9 驱动/模块活动（Driver/Module Activity）
 

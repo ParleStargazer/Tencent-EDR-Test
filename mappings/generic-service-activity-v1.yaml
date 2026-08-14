@@ -1,0 +1,44 @@
+schema_version: "1.0"
+profile_id: generic-service-activity-v1
+vendor: Generic
+product: Service Activity Self-Test Fixture
+description: 用于验证三类 Service Activity BASELINE 与比较器的扁平 JSON 适配；不是任何 EDR 厂商的生产映射。
+
+input:
+  containers: [json-array, jsonl]
+  encoding: utf-8
+  record_selector:
+    all: { table: ServiceActivity }
+  event_id_field: event_id
+  host_id_field: host_id
+  event_time: { field: event_time, format: iso8601 }
+
+routes:
+  - route_id: service-activity
+    when: { table: ServiceActivity }
+    canonical:
+      "event.type": { source: event_type }
+      "event.action": { source: action }
+      "event.category": { constant: configuration }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "host.hostname": { source: host_name }
+      "process.pid": { source: actor_pid, on_zero: null }
+      "process.name": { source: actor_name, on_empty: null }
+      "process.executable": { source: actor_executable, transform: [windows_path], on_empty: null }
+      "process.command_line": { source: actor_command_line, on_empty: null }
+      "user.name": { source: user_name, on_empty: null }
+      "user.domain": { source: user_domain, on_empty: null }
+      "winlog.event_id": { source: event_log_id, on_zero: null }
+      "service.name": { source: service_name }
+      "service.display_name": { source: service_display_name, on_empty: null }
+      "service.binary_path": { source: service_binary_path, on_empty: null }
+      "service.start_type": { source: service_start_type, on_empty: null }
+      "service.old_start_type": { source: service_old_start_type, on_empty: null }
+      "service.account": { source: service_account, on_empty: null }
+      "service.service_type": { source: service_type, on_empty: null }
+      "service.state": { source: service_state, on_empty: null }
+
+raw_reference: { id_field: event_id, ordinal_base: 0 }
+unmapped_fields: { policy: count-and-ignore, preserve_in_report: false }

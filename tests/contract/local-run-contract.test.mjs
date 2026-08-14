@@ -420,6 +420,85 @@ test("Scheduled Task Activity 三项样本、真实字段清单、映射和 BASS
   assert.match(liveControlPlane, /"win\.scheduled_task\.delete": "SchedTaskDelete"/);
 });
 
+test("Service Activity 三项安全样本、SCM 本地基准、映射和 BASSLINE 完整", async () => {
+  const normalizedSchema = await readJson("schemas/normalized-event.schema.json");
+  const profile = await readJson("docs/reference/tencent-edr-service-events-field-profile.json");
+  const mapping = await readFile(new URL("mappings/tencent-edr-proc-events-v1.yaml", root), "utf8");
+  const genericMapping = await readFile(new URL("mappings/generic-service-activity-v1.yaml", root), "utf8");
+  const protocol = await readFile(new URL("sample-src/ServiceActivity/ServiceActivity.Protocol/Protocol.cs", root), "utf8");
+  const behavior = await readFile(new URL("sample-src/ServiceActivity/ServiceActivity.Behavior/Program.cs", root), "utf8");
+  const controller = await readFile(new URL("sample-src/ServiceActivity/ServiceActivity.Controller/Program.cs", root), "utf8");
+  const buildScript = await readFile(new URL("scripts/Build-ServiceActivitySamples.ps1", root), "utf8");
+  const startScript = await readFile(new URL("scripts/Start-EdrTest.ps1", root), "utf8");
+  const liveControlPlane = await readFile(new URL("web/app/live-control-plane.tsx", root), "utf8");
+  const definitions = [
+    ["create", "CreateServiceW", 7045],
+    ["modify", "ChangeServiceConfigW", 7040],
+    ["delete", "DeleteService", null],
+  ];
+
+  for (const [operation, nativeApi, eventId] of definitions) {
+    const manifest = await readJson(`sample-src/ServiceActivity/manifests/win.service.${operation}/capability.json`);
+    const baseline = await readFile(new URL(`baselines/windows/service_${operation}.yaml`, root), "utf8");
+    assert.equal(manifest.capability_id, `win.service.${operation}`);
+    assert.equal(manifest.version, "0.1.0");
+    assert.equal(manifest.risk_level, "L1");
+    assert.equal(manifest.required_privilege, "administrator");
+    assert.deepEqual(manifest.participants.map((item) => item.role), ["actor"]);
+    assert.ok(manifest.expected_fact_keys.includes(`service.${operation}_succeeded`));
+    assert.ok(manifest.expected_fact_keys.includes("service.name"));
+    assert.ok(manifest.expected_fact_keys.includes("service.native_api"));
+    assert.ok(manifest.expected_fact_keys.includes("service.actor_pid"));
+    assert.ok(manifest.expected_fact_keys.includes("service.before.exists"));
+    assert.ok(manifest.expected_fact_keys.includes("service.after.exists"));
+    assert.match(baseline, /max_time_difference_ms: 15/);
+    assert.match(baseline, new RegExp(`expected: ${nativeApi}`));
+    assert.match(baseline, /cloud_field: service\.name/);
+    if (eventId === null) {
+      assert.doesNotMatch(baseline, /method_selection:/);
+      assert.match(baseline, /service-delete-api-hook/);
+    } else {
+      assert.match(baseline, /method_selection: \{ strategy: best \}/);
+      assert.match(baseline, new RegExp(`expected: ${eventId}`));
+      assert.equal((baseline.match(/^\s+method: /gm) ?? []).length, 2);
+    }
+  }
+
+  assert.ok("service" in normalizedSchema.properties);
+  assert.deepEqual(Object.keys(normalizedSchema.properties.service.properties), [
+    "name", "display_name", "binary_path", "start_type", "old_start_type", "account", "service_type", "state",
+  ]);
+  assert.equal(profile.source.confirmed_action_name, "StartService");
+  assert.equal(profile.source.confirmed_event_count, 8);
+  assert.equal(profile.source.union_field_count, 129);
+  assert.equal(profile.target_activity_coverage.CreateService, 0);
+  assert.match(genericMapping, /"event\.type": \{ source: event_type \}/);
+  assert.match(mapping, /route_id: service-create-hook/);
+  assert.match(mapping, /route_id: service-create-system-event/);
+  assert.match(mapping, /route_id: service-modify-hook/);
+  assert.match(mapping, /route_id: service-modify-system-event/);
+  assert.match(mapping, /route_id: service-delete-hook/);
+  assert.match(mapping, /route_id: service-candidate-discovery/);
+  assert.match(mapping, /sources: \["Child\.ServiceName", "Child\.ServiceKeyName", "Child\.NodeName"\]/);
+  assert.match(protocol, /CreateServiceW/);
+  assert.match(protocol, /ChangeServiceConfigW/);
+  assert.match(protocol, /DeleteService/);
+  assert.match(protocol, /QueryServiceConfigW/);
+  assert.match(protocol, /QueryServiceStatusEx/);
+  assert.match(protocol, /EdrTestSvc_/);
+  assert.match(protocol, /rem EDRTEST_/);
+  assert.match(behavior, /"create" => 7045/);
+  assert.match(behavior, /"modify" => 7040/);
+  assert.match(behavior, /"delete" => null/);
+  assert.match(controller, /delete_exact_test_service/);
+  assert.match(controller, /service_was_never_started/);
+  assert.match(buildScript, /当前 PowerShell 未以管理员身份运行/);
+  assert.match(startScript, /Build-ServiceActivitySamples\.ps1/);
+  assert.match(liveControlPlane, /"win\.service\.create": "CreateService, CreateServiceW, RpcCreateService, ServiceInstall"/);
+  assert.match(liveControlPlane, /"win\.service\.modify": "ChangeServiceConfig, ChangeServiceConfigW, ServiceConfigChange"/);
+  assert.match(liveControlPlane, /"win\.service\.delete": "DeleteService, DeleteServiceW"/);
+});
+
 test("Network Activity 五项清单、BASELINE、回环编排和腾讯路由完整", async () => {
   const normalizedSchema = await readJson("schemas/normalized-event.schema.json");
   const localEventDataSchema = await readJson("schemas/local-event-data.schema.json");

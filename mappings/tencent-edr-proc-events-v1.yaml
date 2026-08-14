@@ -902,6 +902,165 @@ routes:
       "scheduled_task.name": { sources: ["Child.TaskName", "Child.NodeName"], on_empty: null }
       "scheduled_task.content": { sources: ["Child.TaskContentNew", "Child.TaskContent"], on_empty: null }
 
+  # 服务活动当前没有直接导出样本。API Hook 动作名按 Windows SCM 原生 API 建立首版
+  # 兼容路由；7045/7040 作为 Windows Service Control Manager 的直接语义补充。
+  # 字段使用常见导出别名并保留候选发现，待测试机导出后再收敛实际字段优先级。
+  - route_id: service-create-hook
+    when:
+      "OS": Windows
+      "@table": ServiceEvents
+      "Action.Name": [CreateService, CreateServiceW, RpcCreateService]
+    canonical:
+      "event.type": { constant: service_api }
+      "event.action": { constant: create }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Parent.ProcUserName", on_empty: null }
+      "user.domain": { source: "Parent.ProcDomainName", on_empty: null }
+      "service.name": { sources: ["Child.ServiceName", "Child.ServiceKeyName", "Child.NodeName"] }
+      "service.display_name": { sources: ["Child.DisplayName", "Child.ServiceDisplayName"], on_empty: null }
+      "service.binary_path": { sources: ["Child.BinaryPath", "Child.ImagePath", "Child.ServiceFileName", "Child.FilePath"], on_empty: null }
+      "service.start_type": { sources: ["Child.StartType", "Child.ServiceStartType", "Child.NewStartType"], on_empty: null }
+      "service.account": { sources: ["Child.ServiceAccount", "Child.AccountName", "Child.ServiceStartName"], on_empty: null }
+      "service.service_type": { source: "Child.ServiceType", on_empty: null }
+
+  - route_id: service-create-system-event
+    when:
+      "OS": Windows
+      "Action.EventLogId": 7045
+    canonical:
+      "event.type": { constant: service }
+      "event.action": { constant: create }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { sources: ["Child.SubjectUserName", "Parent.ProcUserName"], on_empty: null }
+      "user.domain": { sources: ["Child.SubjectDomainName", "Parent.ProcDomainName"], on_empty: null }
+      "winlog.event_id": { source: "Action.EventLogId" }
+      "service.name": { sources: ["Child.ServiceName", "Child.ServiceKeyName", "Child.NodeName"] }
+      "service.display_name": { sources: ["Child.DisplayName", "Child.ServiceDisplayName"], on_empty: null }
+      "service.binary_path": { sources: ["Child.ServiceFileName", "Child.BinaryPath", "Child.ImagePath", "Child.FilePath"], on_empty: null }
+      "service.start_type": { sources: ["Child.ServiceStartType", "Child.StartType", "Child.NewStartType"], on_empty: null }
+      "service.account": { sources: ["Child.ServiceAccount", "Child.AccountName", "Child.ServiceStartName"], on_empty: null }
+      "service.service_type": { source: "Child.ServiceType", on_empty: null }
+
+  - route_id: service-modify-hook
+    when:
+      "OS": Windows
+      "@table": ServiceEvents
+      "Action.Name": [ChangeServiceConfig, ChangeServiceConfigW]
+    canonical:
+      "event.type": { constant: service_api }
+      "event.action": { constant: modify }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Parent.ProcUserName", on_empty: null }
+      "user.domain": { source: "Parent.ProcDomainName", on_empty: null }
+      "service.name": { sources: ["Child.ServiceName", "Child.ServiceKeyName", "Child.NodeName"] }
+      "service.display_name": { sources: ["Child.DisplayName", "Child.ServiceDisplayName"], on_empty: null }
+      "service.binary_path": { sources: ["Child.BinaryPath", "Child.ImagePath", "Child.ServiceFileName", "Child.FilePath"], on_empty: null }
+      "service.start_type": { sources: ["Child.NewStartType", "Child.StartType", "Child.ServiceStartType"], on_empty: null }
+      "service.old_start_type": { sources: ["Child.OldStartType", "Child.ServiceOldStartType"], on_empty: null }
+      "service.account": { sources: ["Child.ServiceAccount", "Child.AccountName", "Child.ServiceStartName"], on_empty: null }
+      "service.service_type": { source: "Child.ServiceType", on_empty: null }
+
+  - route_id: service-modify-system-event
+    when:
+      "OS": Windows
+      "Action.EventLogId": 7040
+    canonical:
+      "event.type": { constant: service }
+      "event.action": { constant: modify }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { sources: ["Child.SubjectUserName", "Parent.ProcUserName"], on_empty: null }
+      "user.domain": { sources: ["Child.SubjectDomainName", "Parent.ProcDomainName"], on_empty: null }
+      "winlog.event_id": { source: "Action.EventLogId" }
+      "service.name": { sources: ["Child.ServiceName", "Child.ServiceKeyName", "Child.NodeName"] }
+      "service.display_name": { sources: ["Child.DisplayName", "Child.ServiceDisplayName"], on_empty: null }
+      "service.start_type": { sources: ["Child.NewStartType", "Child.StartType", "Child.ServiceStartType"], on_empty: null }
+      "service.old_start_type": { sources: ["Child.OldStartType", "Child.ServiceOldStartType"], on_empty: null }
+
+  - route_id: service-delete-hook
+    when:
+      "OS": Windows
+      "@table": ServiceEvents
+      "Action.Name": [DeleteService, DeleteServiceW]
+    canonical:
+      "event.type": { constant: service_api }
+      "event.action": { constant: delete }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Parent.ProcUserName", on_empty: null }
+      "user.domain": { source: "Parent.ProcDomainName", on_empty: null }
+      "service.name": { sources: ["Child.ServiceName", "Child.ServiceKeyName", "Child.NodeName"] }
+      "service.display_name": { sources: ["Child.DisplayName", "Child.ServiceDisplayName"], on_empty: null }
+      "service.binary_path": { sources: ["Child.BinaryPath", "Child.ImagePath", "Child.ServiceFileName", "Child.FilePath"], on_empty: null }
+
+  - route_id: service-candidate-discovery
+    when:
+      "OS": Windows
+      "@table": ServiceEvents
+    canonical:
+      "event.type": { constant: service }
+      "event.action": { source: "Action.Name", on_empty: unknown }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "service.name": { sources: ["Child.ServiceName", "Child.ServiceKeyName", "Child.NodeName"], on_empty: null }
+      "service.display_name": { sources: ["Child.DisplayName", "Child.ServiceDisplayName"], on_empty: null }
+      "service.binary_path": { sources: ["Child.BinaryPath", "Child.ImagePath", "Child.ServiceFileName", "Child.FilePath"], on_empty: null }
+      "service.start_type": { sources: ["Child.NewStartType", "Child.StartType", "Child.ServiceStartType"], on_empty: null }
+      "service.old_start_type": { sources: ["Child.OldStartType", "Child.ServiceOldStartType"], on_empty: null }
+      "service.account": { sources: ["Child.ServiceAccount", "Child.AccountName", "Child.ServiceStartName"], on_empty: null }
+      "service.service_type": { source: "Child.ServiceType", on_empty: null }
+
   # reference/reg/edr_reg_relate.json 的 2168 条真实导出均来自 RegEvents，动作均为
   # RegSetValue。产品只输出已归入 Child.RegGroupName 的重点注册表区域；新旧值与
   # 新旧类型的实际字段如下。兼容别名保留在真实字段之后，用于旧版导出。

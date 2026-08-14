@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.service.delete",
+  "version": "0.1.0",
+  "display_name_zh": "服务删除",
+  "display_name_en": "Service Deletion",
+  "description": "Controller 预置本轮唯一且禁用的临时服务，Actor 使用 DeleteService 删除精确服务名并等待 SCM 确认消失；测试不会启动服务，也不会枚举或修改其他服务。",
+  "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
+  "risk_level": "L1",
+  "required_privilege": "administrator",
+  "controller": { "executable": "ServiceDelete.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "ServiceDelete.Actor.exe" }],
+  "parameters": {
+    "setup_delay_ms": { "type": "integer", "required": true, "default": 750, "minimum": 0, "maximum": 30000 },
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 45, "cleanup_seconds": 20 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "service.delete_succeeded", "service.occurred_at_utc", "service.completed_at_utc", "service.name",
+    "service.display_name", "service.binary_path", "service.native_api", "service.actor_pid",
+    "service.actor_executable", "service.actor_command_line", "service.before.exists", "service.before.display_name",
+    "service.before.binary_path", "service.before.start_type", "service.before.account", "service.before.service_type",
+    "service.before.state", "service.after.exists", "correlation.nonce"
+  ]
+}

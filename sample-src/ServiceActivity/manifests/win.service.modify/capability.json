@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.service.modify",
+  "version": "0.1.0",
+  "display_name_zh": "服务修改",
+  "display_name_en": "Service Modification",
+  "description": "Controller 预置本轮唯一的手动启动临时服务，Actor 使用 ChangeServiceConfigW 同时修改显示名、无害二进制标记并将启动类型改为禁用；服务从不启动并在采证后精确删除。",
+  "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
+  "risk_level": "L1",
+  "required_privilege": "administrator",
+  "controller": { "executable": "ServiceModify.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "ServiceModify.Actor.exe" }],
+  "parameters": {
+    "setup_delay_ms": { "type": "integer", "required": true, "default": 750, "minimum": 0, "maximum": 30000 },
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 45, "cleanup_seconds": 20 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "service.modify_succeeded", "service.occurred_at_utc", "service.completed_at_utc", "service.name",
+    "service.display_name", "service.binary_path", "service.native_api", "service.actor_pid",
+    "service.actor_executable", "service.actor_command_line", "service.before.exists", "service.before.display_name",
+    "service.before.binary_path", "service.before.start_type", "service.before.state", "service.after.exists",
+    "service.after.display_name", "service.after.binary_path", "service.after.start_type", "service.after.account",
+    "service.after.service_type", "service.after.state", "service.system_event_id", "service.system_event_found",
+    "service.system_event_query_output", "service.diagnostic_error", "correlation.nonce"
+  ]
+}

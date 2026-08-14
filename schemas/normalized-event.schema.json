@@ -136,6 +136,20 @@
       },
       "additionalProperties": false
     },
+    "service": {
+      "type": ["object", "null"],
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "display_name": { "type": ["string", "null"] },
+        "binary_path": { "type": ["string", "null"] },
+        "start_type": { "type": ["string", "integer", "null"] },
+        "old_start_type": { "type": ["string", "integer", "null"] },
+        "account": { "type": ["string", "null"] },
+        "service_type": { "type": ["string", "integer", "null"] },
+        "state": { "type": ["string", "integer", "null"] }
+      },
+      "additionalProperties": false
+    },
     "network": {
       "type": ["object", "null"],
       "properties": {

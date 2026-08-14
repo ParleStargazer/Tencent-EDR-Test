@@ -644,6 +644,8 @@ Registry Activity 三项能力统一使用 `HKCU\Software\EdrTest\Runs\<nonce>\<
 
 Scheduled Task Activity 三项能力操作本轮唯一的 `\EdrTest_<nonce>_<operation>_<method>` 当前用户任务，创建、修改、删除都运行 Task Scheduler 2.0 COM 与系统 `schtasks.exe` 两个独立方法。COM 创建/更新用于验证 `ServiceEvents / InjectHook / RpcSchedTaskCreate` 注册调用链，该动作规范化为 `register`，不能单独区分创建和修改；CLI 分别用 `/Create`、无凭据交互的 `/Change /ENABLE`、`/Delete` 验证 `ScheduleTaskEvents / WinEventLog / 4698、4702、4699`，并只读保存 auditpol 与对应本机 Security 事件诊断。创建任务虽启用但只有一年后的单次触发器；修改预置任务无触发器，即使启用也不会执行。所有动作无害且立即精确清理，测试过程从不启动任务；超出这些约束或使用高权限主体的方法仍属于 L2。BASSLINE 以本地任务状态为绝对基准，两种方法分别比较并采用最佳结论；任务路径、Actor 和相对完成时间是关联主证据。`SchedTaskDelete` 等待测试机实测。完整约束见 `docs/SCHEDULED-TASK-ACTIVITY-SAMPLES.md`。
 
+Service Activity 三项能力使用原生 SCM API 操作本轮唯一的 `EdrTestSvc_<nonce>_<operation>` 临时服务。创建使用 `CreateServiceW`，修改使用 `ChangeServiceConfigW` 同时改变显示名、Binary Path 标记和手动→禁用启动类型，删除使用 `DeleteService`；Controller 以独立 `QueryServiceConfigW`/`QueryServiceStatusEx` 查询作为绝对本地基准。服务 Binary Path 只允许系统 `cmd.exe` 的无害命令，服务始终停止且测试过程从不启动，清理仅删除本轮精确名称。创建和修改分别比较 SCM API Hook 与 System 7045/7040 两条候选方法并采用最佳结论，删除以 API Hook 为直接证据；本地参考中仅有 `StartService`，故腾讯目标 Action.Name 和 Child 配置字段目前是显式标注的待实测首版兼容路由。完整约束见 `docs/SERVICE-ACTIVITY-SAMPLES.md`。
+
 ## 19. 测试策略
 
 ### 19.1 Runner 与 SQLite

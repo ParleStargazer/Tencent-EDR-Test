@@ -42,6 +42,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScheduledTaskActivity.Behav
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScheduledTaskActivity.Controller", "sample-src\ScheduledTaskActivity\ScheduledTaskActivity.Controller\ScheduledTaskActivity.Controller.csproj", "{E4E07123-763C-4439-A58C-FEEBC194E593}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ServiceActivity.Protocol", "sample-src\ServiceActivity\ServiceActivity.Protocol\ServiceActivity.Protocol.csproj", "{9F31D86A-B3D0-4C4F-9F04-A0D58E7952C1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ServiceActivity.Behavior", "sample-src\ServiceActivity\ServiceActivity.Behavior\ServiceActivity.Behavior.csproj", "{A8B17829-2D79-4C11-94D5-6BC2E5EA2B88}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ServiceActivity.Controller", "sample-src\ServiceActivity\ServiceActivity.Controller\ServiceActivity.Controller.csproj", "{8B53BEAD-15AB-41EE-8C64-B07803258039}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -128,5 +134,17 @@ Global
 		{E4E07123-763C-4439-A58C-FEEBC194E593}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E4E07123-763C-4439-A58C-FEEBC194E593}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E4E07123-763C-4439-A58C-FEEBC194E593}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9F31D86A-B3D0-4C4F-9F04-A0D58E7952C1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9F31D86A-B3D0-4C4F-9F04-A0D58E7952C1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9F31D86A-B3D0-4C4F-9F04-A0D58E7952C1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9F31D86A-B3D0-4C4F-9F04-A0D58E7952C1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A8B17829-2D79-4C11-94D5-6BC2E5EA2B88}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A8B17829-2D79-4C11-94D5-6BC2E5EA2B88}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A8B17829-2D79-4C11-94D5-6BC2E5EA2B88}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A8B17829-2D79-4C11-94D5-6BC2E5EA2B88}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8B53BEAD-15AB-41EE-8C64-B07803258039}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8B53BEAD-15AB-41EE-8C64-B07803258039}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8B53BEAD-15AB-41EE-8C64-B07803258039}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8B53BEAD-15AB-41EE-8C64-B07803258039}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

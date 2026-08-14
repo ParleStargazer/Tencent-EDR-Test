@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>ServiceActivity.Behavior</AssemblyName>
+    <RootNamespace>ServiceActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ServiceActivity.Protocol\ServiceActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

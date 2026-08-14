@@ -1,0 +1,56 @@
+schema_version: "1.1"
+baseline_id: win.service.delete
+version: "0.1.0"
+title: Windows 服务删除遥测
+description: 本地以 SCM 独立查询确认本轮唯一禁用服务由存在变为不存在；Windows 没有稳定的等价 System 删除事件，因此云端首版要求 DeleteService API Hook 直接证据。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L1
+capability:
+  id: win.service.delete
+  version: "0.1.0"
+  parameters: { setup_delay_ms: 750, post_operation_hold_ms: 1500 }
+local_requirements:
+  - { field: facts.service.delete_succeeded, operator: equals, expected: true }
+  - { field: facts.service.native_api, operator: equals, expected: DeleteService }
+  - { field: facts.service.name, operator: present }
+  - { field: facts.service.before.exists, operator: equals, expected: true }
+  - { field: facts.service.before.display_name, operator: present }
+  - { field: facts.service.before.binary_path, operator: present }
+  - { field: facts.service.before.start_type, operator: equals, expected: disabled }
+  - { field: facts.service.before.state, operator: equals, expected: stopped }
+  - { field: facts.service.after.exists, operator: equals, expected: false }
+  - { field: facts.service.actor_pid, operator: present }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.service.name, cloud_field: service.name, strength: strong, normalizers: [lowercase, trim] }
+    - { local_field: facts.service.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.service.actor_pid, cloud_field: process.pid, strength: medium }
+cloud_expectations:
+  - id: service-delete-api-hook
+    event_type: service_api
+    event_actions: [delete]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.service.completed_at_utc
+      anchors:
+        - { local_field: facts.service.name, cloud_field: service.name, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.service.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.service.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: service.name, operator: equals, expected_from_local: facts.service.name, severity: required, normalizers: [lowercase, trim] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.service.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.service.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: service.display_name, operator: equals, expected_from_local: facts.service.before.display_name, severity: recommended }
+      - { field: service.binary_path, operator: equals, expected_from_local: facts.service.before.binary_path, severity: recommended, normalizers: [windows_path] }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: active
+  change_reason: Windows Service Control Manager 没有与 7045/7040 对等且稳定的删除事件，首版以 DeleteService API Hook、唯一服务名、Actor 和精确时间为直接证据。
+  references: [Microsoft DeleteService, Tencent EDR ServiceEvents / assumed DeleteService]

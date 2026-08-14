@@ -39,6 +39,7 @@ public static class Program
         await RunTest("用户账号五项 BASELINE 与通用/腾讯映射闭环", TestUserAccountComparison, failures);
         await RunTest("注册表三项 BASELINE 与通用/腾讯映射闭环", TestRegistryComparison, failures);
         await RunTest("计划任务三项 BASELINE 与通用/腾讯映射闭环", TestScheduledTaskComparison, failures);
+        await RunTest("服务活动三项 BASELINE 与通用/腾讯映射闭环", TestServiceComparison, failures);
         if (failures.Count == 0)
         {
             Console.WriteLine("全部框架测试通过。");
@@ -985,6 +986,188 @@ public static class Program
                 match?["canonical_field"]?.GetValue<string>() == "scheduled_task.content"
                 && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.TaskContent") == true) == true,
             "4698 方法必须把 Child.TaskContent 映射回 JSON 对照高亮。");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestServiceComparison()
+    {
+        using var fixture = TestDirectory.Create();
+        var repository = FindRepositoryRoot();
+        var local = new JsonObject
+        {
+            ["schema_version"] = "1.1",
+            ["run"] = new JsonObject
+            {
+                ["run_id"] = Ids.NewUuid7(),
+                ["host"] = new JsonObject { ["hostname"] = "SERVICE-FIXTURE", ["machine_id"] = "service-fixture-host" },
+            },
+            ["capabilities"] = new JsonArray(), ["programs"] = new JsonArray(), ["local_events"] = new JsonArray(),
+            ["local_facts"] = new JsonArray(), ["artifacts"] = new JsonArray(), ["cleanup_results"] = new JsonArray(),
+            ["execution_logs"] = new JsonArray(),
+        };
+        var genericCloud = new JsonArray();
+        var tencentCloud = new JsonArray();
+        var baselinePaths = new List<string>();
+        var definitions = new[]
+        {
+            (Operation: "create", NativeApi: "CreateServiceW", EventId: (int?)7045),
+            (Operation: "modify", NativeApi: "ChangeServiceConfigW", EventId: (int?)7040),
+            (Operation: "delete", NativeApi: "DeleteService", EventId: (int?)null),
+        };
+        var baseTime = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        foreach (var (definition, index) in definitions.Select((value, index) => (value, index)))
+        {
+            var caseRunId = Ids.NewUuid7();
+            var eventId = Ids.NewUuid7();
+            var occurredAt = baseTime.AddSeconds(index * 10);
+            var apiOccurredAt = occurredAt.AddMilliseconds(-1);
+            var actorPid = 10_400 + index;
+            var actorPath = $@"C:\EDR-Test\Service{definition.Operation}.Actor.exe";
+            var serviceName = $"EdrTestSvc_fixture{index}_{definition.Operation}";
+            var displayName = $"EDRTEST|service-fixture-{index}|SERVICE|{definition.Operation.ToUpperInvariant()}";
+            var beforeDisplayName = $"EDRTEST|service-fixture-{index}|SERVICE|BEFORE";
+            var beforeBinaryPath = "\"C:\\Windows\\System32\\cmd.exe\" /d /c exit 0";
+            var binaryPath = $"\"C:\\Windows\\System32\\cmd.exe\" /d /c rem EDRTEST_fixture{index}_{definition.Operation.ToUpperInvariant()}";
+            local["capabilities"]!.AsArray().Add(new JsonObject
+            {
+                ["case_run_id"] = caseRunId, ["capability_id"] = $"win.service.{definition.Operation}",
+                ["capability_version"] = "0.1.0", ["display_name_zh"] = definition.Operation,
+                ["display_name_en"] = definition.Operation, ["status"] = "LOCAL_PASS",
+                ["nonce"] = $"service-fixture-{index}", ["started_at_utc"] = Values.Utc(occurredAt.AddSeconds(-1)),
+                ["ended_at_utc"] = Values.Utc(occurredAt.AddSeconds(2)),
+            });
+            local["programs"]!.AsArray().Add(new JsonObject
+            {
+                ["program_instance_id"] = Ids.NewUuid7(), ["case_run_id"] = caseRunId, ["role"] = "actor",
+                ["pid"] = actorPid, ["file_name"] = Path.GetFileName(actorPath), ["executable"] = actorPath,
+                ["command_line"] = $"{actorPath} --operation {definition.Operation}",
+            });
+            local["local_events"]!.AsArray().Add(new JsonObject
+            {
+                ["local_event_id"] = eventId, ["case_run_id"] = caseRunId, ["sequence"] = 1,
+                ["event_type"] = "service", ["event_action"] = definition.Operation,
+                ["occurred_at_utc"] = Values.Utc(occurredAt),
+                ["data"] = new JsonObject { ["kind"] = "service", ["operation"] = definition.Operation, ["service_name"] = serviceName },
+            });
+            var facts = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                [$"service.{definition.Operation}_succeeded"] = true,
+                ["service.native_api"] = definition.NativeApi, ["service.name"] = serviceName,
+                ["service.display_name"] = displayName, ["service.binary_path"] = binaryPath,
+                ["service.actor_pid"] = actorPid, ["service.actor_executable"] = actorPath,
+                ["service.completed_at_utc"] = Values.Utc(occurredAt),
+                ["service.before.exists"] = definition.Operation != "create",
+                ["service.after.exists"] = definition.Operation != "delete",
+            };
+            if (definition.Operation is "modify" or "delete")
+            {
+                facts["service.before.display_name"] = beforeDisplayName;
+                facts["service.before.binary_path"] = beforeBinaryPath;
+                facts["service.before.start_type"] = definition.Operation == "modify" ? "demand" : "disabled";
+                facts["service.before.state"] = "stopped";
+            }
+            if (definition.Operation == "delete")
+            {
+                facts["service.before.account"] = "LocalSystem";
+                facts["service.before.service_type"] = "win32_own_process";
+            }
+            else
+            {
+                facts["service.after.display_name"] = displayName;
+                facts["service.after.binary_path"] = binaryPath;
+                facts["service.after.start_type"] = "disabled";
+                facts["service.after.account"] = "LocalSystem";
+                facts["service.after.service_type"] = "win32_own_process";
+                facts["service.after.state"] = "stopped";
+            }
+            foreach (var (key, value) in facts)
+                local["local_facts"]!.AsArray().Add(Fact(caseRunId, key, value));
+
+            genericCloud.Add(new JsonObject
+            {
+                ["table"] = "ServiceActivity", ["event_id"] = eventId + "-api", ["host_id"] = "service-fixture-host",
+                ["host_name"] = "SERVICE-FIXTURE", ["event_time"] = Values.Utc(apiOccurredAt), ["event_type"] = "service_api",
+                ["action"] = definition.Operation, ["actor_pid"] = actorPid, ["actor_name"] = Path.GetFileName(actorPath),
+                ["actor_executable"] = actorPath, ["actor_command_line"] = $"{actorPath} --operation {definition.Operation}",
+                ["service_name"] = serviceName,
+                ["service_display_name"] = definition.Operation == "delete" ? beforeDisplayName : displayName,
+                ["service_binary_path"] = definition.Operation == "delete" ? beforeBinaryPath : binaryPath,
+                ["service_start_type"] = "disabled", ["service_old_start_type"] = definition.Operation == "modify" ? "demand" : null,
+                ["service_account"] = "LocalSystem", ["service_type"] = "win32_own_process", ["service_state"] = "stopped",
+            });
+            tencentCloud.Add(new JsonObject
+            {
+                ["OS"] = "Windows", ["@table"] = "ServiceEvents", ["@timestamp"] = Values.Utc(apiOccurredAt),
+                ["Action.Type"] = "InjectHook", ["Action.Name"] = definition.NativeApi,
+                ["Common.EventUUId"] = eventId + "-api", ["Common.EventTime"] = apiOccurredAt.ToUnixTimeMilliseconds(),
+                ["Common.Mid"] = "service-fixture-host", ["Environment.HostName"] = "SERVICE-FIXTURE",
+                ["Parent.ProcPid"] = actorPid, ["Parent.FileName"] = Path.GetFileName(actorPath), ["Parent.FilePath"] = actorPath,
+                ["Parent.ProcCmdline"] = $"{actorPath} --operation {definition.Operation}", ["Child.ServiceName"] = serviceName,
+                ["Child.DisplayName"] = definition.Operation == "delete" ? beforeDisplayName : displayName,
+                ["Child.BinaryPath"] = definition.Operation == "delete" ? beforeBinaryPath : binaryPath,
+                ["Child.NewStartType"] = "disabled", ["Child.OldStartType"] = definition.Operation == "modify" ? "demand" : null,
+                ["Child.ServiceAccount"] = "LocalSystem", ["Child.ServiceType"] = "win32_own_process",
+            });
+            if (definition.EventId is not int systemEventId) { baselinePaths.Add(Path.Combine(repository, "baselines", "windows", $"service_{definition.Operation}.yaml")); continue; }
+            genericCloud.Add(new JsonObject
+            {
+                ["table"] = "ServiceActivity", ["event_id"] = eventId + "-system", ["host_id"] = "service-fixture-host",
+                ["host_name"] = "SERVICE-FIXTURE", ["event_time"] = Values.Utc(occurredAt), ["event_type"] = "service",
+                ["action"] = definition.Operation, ["actor_pid"] = 748, ["actor_name"] = "services.exe",
+                ["actor_executable"] = @"C:\Windows\System32\services.exe", ["event_log_id"] = systemEventId,
+                ["service_name"] = serviceName, ["service_display_name"] = displayName, ["service_binary_path"] = binaryPath,
+                ["service_start_type"] = "disabled", ["service_old_start_type"] = definition.Operation == "modify" ? "demand" : null,
+                ["service_account"] = "LocalSystem", ["service_type"] = "win32_own_process",
+            });
+            tencentCloud.Add(new JsonObject
+            {
+                ["OS"] = "Windows", ["@table"] = "SystemEvents", ["@timestamp"] = Values.Utc(occurredAt),
+                ["Action.Type"] = "WinEventLog", ["Action.Name"] = definition.Operation == "create" ? "ServiceInstall" : "ServiceConfigChange",
+                ["Action.EventLogId"] = systemEventId, ["Common.EventUUId"] = eventId + "-system",
+                ["Common.EventTime"] = occurredAt.ToUnixTimeMilliseconds(), ["Common.Mid"] = "service-fixture-host",
+                ["Environment.HostName"] = "SERVICE-FIXTURE", ["Parent.ProcPid"] = 748,
+                ["Parent.FileName"] = "services.exe", ["Parent.FilePath"] = @"C:\Windows\System32\services.exe",
+                ["Parent.ProcCmdline"] = @"C:\Windows\System32\services.exe", ["Child.ServiceName"] = serviceName,
+                ["Child.DisplayName"] = displayName, ["Child.ServiceFileName"] = binaryPath,
+                ["Child.StartType"] = "disabled", ["Child.OldStartType"] = definition.Operation == "modify" ? "demand" : null,
+                ["Child.ServiceAccount"] = "LocalSystem", ["Child.ServiceType"] = "win32_own_process",
+            });
+            baselinePaths.Add(Path.Combine(repository, "baselines", "windows", $"service_{definition.Operation}.yaml"));
+        }
+
+        var localPath = Path.Combine(fixture.Path, "service-local.json");
+        var genericPath = Path.Combine(fixture.Path, "service-generic.json");
+        var tencentPath = Path.Combine(fixture.Path, "service-tencent.json");
+        File.WriteAllText(localPath, local.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(genericPath, genericCloud.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(tencentPath, tencentCloud.ToJsonString(JsonDefaults.Options));
+        var generic = CompareService.Compare(new CompareRequest(localPath, [genericPath],
+            Path.Combine(repository, "mappings", "generic-service-activity-v1.yaml"), baselinePaths,
+            Path.Combine(fixture.Path, "service-generic-validation.json")));
+        var tencentResult = CompareService.Compare(new CompareRequest(localPath, [tencentPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"), baselinePaths,
+            Path.Combine(fixture.Path, "service-tencent-validation.json")));
+        Assert(generic["summary"]?["pass"]?.GetValue<int>() == 3,
+            $"通用服务映射应使三项 BASELINE 全部通过：{generic.ToJsonString(JsonDefaults.Options)}");
+        Assert(tencentResult["summary"]?["pass"]?.GetValue<int>() == 3,
+            $"腾讯服务路由应使三项 BASELINE 全部通过：{tencentResult.ToJsonString(JsonDefaults.Options)}");
+        foreach (var operation in new[] { "create", "modify" })
+        {
+            var capability = tencentResult["capabilities"]?.AsArray().Single(value =>
+                value?["capability_id"]?.GetValue<string>() == $"win.service.{operation}")?.AsObject()
+                ?? throw new InvalidOperationException($"腾讯比较结果缺少服务 {operation} 能力。");
+            Assert(capability["method_results"]?.AsArray().Count == 2
+                && capability["method_results"]?.AsArray().All(value => value?["status"]?.GetValue<string>() == "PASS") == true,
+                $"服务 {operation} 必须分别输出 API Hook 与 System Event 两个通过的方法结果：{capability["method_results"]?.ToJsonString(JsonDefaults.Options)}");
+        }
+        var create = tencentResult["capabilities"]?.AsArray().Single(value =>
+            value?["capability_id"]?.GetValue<string>() == "win.service.create")?.AsObject()
+            ?? throw new InvalidOperationException("腾讯比较结果缺少服务创建能力。");
+        Assert(create["edr_candidates"]?.AsArray().Any(candidate =>
+            candidate?["baseline_matches"]?.AsArray().Any(match =>
+                match?["canonical_field"]?.GetValue<string>() == "service.name"
+                && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.ServiceName") == true) == true,
+            "服务创建候选必须把 Child.ServiceName 映射回 JSON 对照高亮。");
         return Task.CompletedTask;
     }
 

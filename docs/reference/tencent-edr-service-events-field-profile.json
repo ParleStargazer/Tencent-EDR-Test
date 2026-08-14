@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "title": "腾讯 EDR ServiceEvents 服务活动参考字段画像",
+  "generated_from": "reference 下截至 2026-08-14 的脱敏导出",
+  "source": {
+    "table": "ServiceEvents",
+    "action_type": "InjectHook",
+    "confirmed_action_name": "StartService",
+    "confirmed_event_count": 8,
+    "source_file_count": 3,
+    "union_field_count": 129
+  },
+  "target_activity_coverage": {
+    "CreateService": 0,
+    "ChangeServiceConfig": 0,
+    "DeleteService": 0,
+    "System7045": 0,
+    "System7040": 0,
+    "status": "目标三项没有直接参考记录；动作名和配置字段别名等待新一轮实测校准"
+  },
+  "confirmed_service_fields": {
+    "Child.ServiceName": ["wuauserv", "LxpSvc", "smphost"],
+    "Child.StartType": ["手动启动"],
+    "Child.FilePath": ["c:\\windows\\system32\\svchost.exe"],
+    "Child.ProcCmdline": ["C:\\Windows\\system32\\svchost.exe -k netsvcs -p"],
+    "Parent.FilePath": ["C:\\Windows\\System32\\svchost.exe", "C:\\Windows\\SysWOW64\\wbem\\WmiPrvSE.exe"],
+    "Parent.ProcPid": [896, 3096],
+    "PParent.FilePath": ["C:\\Windows\\system32\\services.exe", "C:\\Windows\\system32\\svchost.exe"]
+  },
+  "provisional_target_actions": {
+    "create": ["CreateService", "CreateServiceW", "RpcCreateService", "ServiceInstall"],
+    "modify": ["ChangeServiceConfig", "ChangeServiceConfigW", "ServiceConfigChange"],
+    "delete": ["DeleteService", "DeleteServiceW"]
+  },
+  "provisional_field_aliases": {
+    "service.name": ["Child.ServiceName", "Child.ServiceKeyName", "Child.NodeName"],
+    "service.display_name": ["Child.DisplayName", "Child.ServiceDisplayName"],
+    "service.binary_path": ["Child.BinaryPath", "Child.ImagePath", "Child.ServiceFileName", "Child.FilePath"],
+    "service.start_type": ["Child.NewStartType", "Child.StartType", "Child.ServiceStartType"],
+    "service.old_start_type": ["Child.OldStartType", "Child.ServiceOldStartType"],
+    "service.account": ["Child.ServiceAccount", "Child.AccountName", "Child.ServiceStartName"],
+    "service.service_type": ["Child.ServiceType"]
+  },
+  "notes": [
+    "确认字段只证明 ServiceEvents 能表达服务启动，不证明目标三项一定使用相同字段。",
+    "完整 260808 导出字段目录另见 tencent-edr-260808-field-catalog.json。",
+    "首版路由必须保留 ServiceEvents 候选发现，避免目标动作名不同就完全丢失低置信候选。"
+  ]
+}
