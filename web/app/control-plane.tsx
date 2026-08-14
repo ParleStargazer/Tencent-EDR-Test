@@ -127,9 +127,9 @@ export const capabilityCatalog: CapabilityCategory[] = [
     nameZh: "哈希算法",
     nameEn: "Hash Algorithms",
     capabilities: [
-      defineCapability("win.hash.md5", "MD5 哈希", "MD5", "L0", "Controller · Actor · Target"),
-      defineCapability("win.hash.sha", "SHA 哈希", "SHA", "L0", "Controller · Actor · Target"),
-      defineCapability("win.hash.imphash", "导入表哈希", "IMPHASH", "L0", "Controller · Actor · Target"),
+      defineCapability("win.hash.md5", "MD5 哈希", "MD5", "L0", "Controller · Actor"),
+      defineCapability("win.hash.sha", "SHA 哈希", "SHA", "L0", "Controller · Actor"),
+      defineCapability("win.hash.imphash", "导入表哈希", "IMPHASH", "L0", "Controller · Actor"),
     ],
   },
   {

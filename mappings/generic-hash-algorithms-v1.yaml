@@ -1,0 +1,44 @@
+schema_version: "1.0"
+profile_id: generic-hash-algorithms-v1
+vendor: Generic
+product: Hash Algorithms Self-Test Fixture
+description: 用于验证 MD5、SHA-256 与 IMPHASH 三项 BASELINE 的扁平 JSON 适配，不代表厂商生产字段。
+
+input:
+  containers: [json-array, jsonl]
+  encoding: utf-8
+  record_selector:
+    all: { table: HashAlgorithms }
+  event_id_field: event_id
+  host_id_field: host_id
+  event_time: { field: event_time, format: iso8601 }
+
+routes:
+  - route_id: hash-file-create
+    when: { table: HashAlgorithms }
+    canonical:
+      "event.type": { constant: file }
+      "event.action": { constant: create }
+      "event.category": { constant: file }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "host.hostname": { source: host_name }
+      "process.pid": { source: actor_pid }
+      "process.name": { source: actor_name }
+      "process.executable": { source: actor_executable, transform: [windows_path] }
+      "process.command_line": { source: actor_command_line }
+      "file.path": { source: file_path, transform: [windows_path] }
+      "file.name": { source: file_name }
+      "file.size": { source: file_size }
+      "file.format": { source: file_format, on_empty: null }
+      "file.operation_name": { constant: create_new }
+      "file.hash.md5": { source: file_md5, transform: [lowercase], on_empty: null }
+      "file.hash.sha1": { source: file_sha1, transform: [lowercase], on_empty: null }
+      "file.hash.sha256": { source: file_sha256, transform: [lowercase], on_empty: null }
+      "file.hash.sha512": { source: file_sha512, transform: [lowercase], on_empty: null }
+      "file.hash.imphash": { source: file_imphash, transform: [lowercase], on_empty: null }
+      "file.hash.sha_type": { source: file_sha_type, on_empty: null }
+
+raw_reference: { id_field: event_id, ordinal_base: 0 }
+unmapped_fields: { policy: count-and-ignore, preserve_in_report: false }

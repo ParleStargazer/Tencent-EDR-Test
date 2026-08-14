@@ -1,0 +1,58 @@
+schema_version: "1.1"
+baseline_id: win.hash.sha
+version: "0.1.0"
+title: Windows SHA 哈希字段遥测
+description: 创建本轮唯一 JSON 文件并独立计算 SHA-1、SHA-256 与 SHA-512；EDR 的 Child.FileSha 按 FileShaType=3 解释为 SHA-256，必须与本地 SHA-256 完全一致。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L0
+capability:
+  id: win.hash.sha
+  version: "0.1.0"
+  parameters: { payload_size: 8192, post_operation_hold_ms: 1500 }
+local_requirements:
+  - { field: facts.hash.operation_succeeded, operator: equals, expected: true }
+  - { field: facts.hash.extension, operator: equals, expected: ".json" }
+  - { field: facts.hash.path, operator: present }
+  - { field: facts.hash.file_size_bytes, operator: present }
+  - { field: facts.hash.algorithm, operator: equals, expected: sha256 }
+  - { field: facts.hash.digest, operator: present }
+  - { field: facts.hash.sha1, operator: present }
+  - { field: facts.hash.sha256, operator: present }
+  - { field: facts.hash.sha512, operator: present }
+  - { field: facts.hash.actor_pid, operator: present }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.hash.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.hash.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.hash.actor_pid, cloud_field: process.pid, strength: medium }
+method_selection: { strategy: best }
+cloud_expectations:
+  - id: hash-sha-json-file-create
+    method: { id: json, title: JSON 文件创建 }
+    event_type: file
+    event_actions: [create]
+    cardinality: { min: 1, max: 5 }
+    correlation:
+      time_from_local: facts.hash.occurred_at_utc
+      anchors:
+        - { local_field: facts.hash.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.hash.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: file.path, operator: equals, expected_from_local: facts.hash.path, severity: required, normalizers: [windows_path] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.hash.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.hash.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: file.size, operator: equals, expected_from_local: facts.hash.file_size_bytes, severity: required }
+      - { field: file.hash.sha256, operator: equals, expected_from_local: facts.hash.sha256, severity: required, normalizers: [lowercase] }
+      - { field: file.hash.sha_type, operator: equals, expected: 3, severity: recommended }
+      - { field: file.operation_name, operator: equals, expected: create_new, severity: recommended }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: active
+  references: [reference/260808210300run, Tencent EDR FileEvents / Child.FileSha / Child.FileShaType]

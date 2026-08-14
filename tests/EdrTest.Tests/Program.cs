@@ -40,6 +40,7 @@ public static class Program
         await RunTest("注册表三项 BASELINE 与通用/腾讯映射闭环", TestRegistryComparison, failures);
         await RunTest("计划任务三项 BASELINE 与通用/腾讯映射闭环", TestScheduledTaskComparison, failures);
         await RunTest("服务活动三项 BASELINE 与通用/腾讯映射闭环", TestServiceComparison, failures);
+        await RunTest("哈希算法三项 BASELINE 与通用/腾讯映射闭环", TestHashAlgorithmsComparison, failures);
         if (failures.Count == 0)
         {
             Console.WriteLine("全部框架测试通过。");
@@ -1177,6 +1178,154 @@ public static class Program
                 match?["canonical_field"]?.GetValue<string>() == "service.name"
                 && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.ServiceName") == true) == true,
             "服务创建候选必须把 Child.ServiceName 映射回 JSON 对照高亮。");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestHashAlgorithmsComparison()
+    {
+        using var fixture = TestDirectory.Create();
+        var repository = FindRepositoryRoot();
+        var local = new JsonObject
+        {
+            ["schema_version"] = "1.1",
+            ["run"] = new JsonObject
+            {
+                ["run_id"] = Ids.NewUuid7(),
+                ["host"] = new JsonObject { ["hostname"] = "HASH-FIXTURE", ["machine_id"] = "hash-fixture-host" },
+            },
+            ["capabilities"] = new JsonArray(), ["programs"] = new JsonArray(), ["local_events"] = new JsonArray(),
+            ["local_facts"] = new JsonArray(), ["artifacts"] = new JsonArray(), ["cleanup_results"] = new JsonArray(),
+            ["execution_logs"] = new JsonArray(),
+        };
+        var genericCloud = new JsonArray();
+        var tencentCloud = new JsonArray();
+        var baselinePaths = new List<string>();
+        var definitions = new[]
+        {
+            (Capability: "win.hash.md5", Operation: "md5", Extension: ".json", Digest: "0123456789abcdef0123456789abcdef"),
+            (Capability: "win.hash.sha", Operation: "sha", Extension: ".json", Digest: new string('a', 64)),
+            (Capability: "win.hash.imphash", Operation: "imphash", Extension: ".exe", Digest: "fedcba9876543210fedcba9876543210"),
+        };
+        var baseTime = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        foreach (var (definition, index) in definitions.Select((value, index) => (value, index)))
+        {
+            var caseRunId = Ids.NewUuid7();
+            var localEventId = Ids.NewUuid7();
+            var occurredAt = baseTime.AddSeconds(index * 10);
+            var actorPid = 12_000 + index;
+            var actorPath = $@"C:\EDR-Test\Hash{definition.Operation}.Actor.exe";
+            var filePath = $@"C:\EDR-Test\work\hash-{index}{definition.Extension}";
+            var md5 = definition.Operation == "md5" ? definition.Digest : new string('b', 32);
+            var sha1 = new string('c', 40);
+            var sha256 = definition.Operation == "sha" ? definition.Digest : new string('d', 64);
+            var sha512 = new string('e', 128);
+            var imphash = definition.Operation == "imphash" ? definition.Digest : null;
+
+            local["capabilities"]!.AsArray().Add(new JsonObject
+            {
+                ["case_run_id"] = caseRunId, ["capability_id"] = definition.Capability,
+                ["capability_version"] = "0.1.0", ["display_name_zh"] = definition.Operation,
+                ["display_name_en"] = definition.Operation, ["status"] = "LOCAL_PASS",
+                ["nonce"] = $"hash-fixture-{index}", ["started_at_utc"] = Values.Utc(occurredAt.AddSeconds(-1)),
+                ["ended_at_utc"] = Values.Utc(occurredAt.AddSeconds(2)),
+            });
+            local["programs"]!.AsArray().Add(new JsonObject
+            {
+                ["program_instance_id"] = Ids.NewUuid7(), ["case_run_id"] = caseRunId, ["role"] = "actor",
+                ["pid"] = actorPid, ["file_name"] = Path.GetFileName(actorPath), ["executable"] = actorPath,
+                ["command_line"] = $"{actorPath} --operation {definition.Operation}",
+            });
+            local["local_events"]!.AsArray().Add(new JsonObject
+            {
+                ["local_event_id"] = localEventId, ["case_run_id"] = caseRunId, ["sequence"] = 1,
+                ["event_type"] = "hash", ["event_action"] = definition.Operation,
+                ["occurred_at_utc"] = Values.Utc(occurredAt),
+                ["data"] = new JsonObject
+                {
+                    ["kind"] = "hash", ["operation"] = definition.Operation, ["file_path"] = filePath,
+                    ["algorithm"] = definition.Operation == "sha" ? "sha256" : definition.Operation,
+                },
+            });
+            var facts = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["hash.operation_succeeded"] = true, ["hash.occurred_at_utc"] = Values.Utc(occurredAt),
+                ["hash.actor_pid"] = actorPid, ["hash.actor_executable"] = actorPath,
+                ["hash.extension"] = definition.Extension, ["hash.path"] = filePath,
+                ["hash.file_size_bytes"] = definition.Operation == "imphash" ? 150_528 : 8_192,
+                ["hash.algorithm"] = definition.Operation == "sha" ? "sha256" : definition.Operation,
+                ["hash.digest"] = definition.Digest, ["hash.md5"] = md5, ["hash.sha1"] = sha1,
+                ["hash.sha256"] = sha256, ["hash.sha512"] = sha512, ["hash.imphash"] = imphash,
+                ["hash.is_portable_executable"] = definition.Operation == "imphash",
+                ["hash.import_count"] = definition.Operation == "imphash" ? 118 : null,
+                ["hash.source_pe_sha256"] = definition.Operation == "imphash" ? sha256 : null,
+                ["hash.source_matches_target"] = definition.Operation == "imphash" ? true : null,
+            };
+            foreach (var (key, value) in facts)
+            {
+                if (value is not null) local["local_facts"]!.AsArray().Add(Fact(caseRunId, key, value));
+            }
+
+            var size = definition.Operation == "imphash" ? 150_528 : 8_192;
+            genericCloud.Add(new JsonObject
+            {
+                ["table"] = "HashAlgorithms", ["event_id"] = localEventId, ["host_id"] = "hash-fixture-host",
+                ["host_name"] = "HASH-FIXTURE", ["event_time"] = Values.Utc(occurredAt.AddMilliseconds(4)),
+                ["actor_pid"] = actorPid, ["actor_name"] = Path.GetFileName(actorPath), ["actor_executable"] = actorPath,
+                ["file_path"] = filePath, ["file_name"] = Path.GetFileName(filePath), ["file_size"] = size,
+                ["file_format"] = definition.Operation == "imphash" ? "PE32+ executable" : "JSON",
+                ["file_md5"] = md5, ["file_sha1"] = sha1, ["file_sha256"] = sha256,
+                ["file_sha512"] = sha512, ["file_imphash"] = imphash,
+                ["file_sha_type"] = definition.Operation == "sha" ? 3 : null,
+            });
+            tencentCloud.Add(new JsonObject
+            {
+                ["OS"] = "Windows", ["@table"] = "FileEvents", ["@timestamp"] = Values.Utc(occurredAt.AddMilliseconds(4)),
+                ["Action.Type"] = "File", ["Action.Name"] = "FileWriteClose", ["Child.FileCreateOpName"] = "新建文件",
+                ["Common.EventUUId"] = localEventId, ["Common.EventTime"] = occurredAt.AddMilliseconds(4).ToUnixTimeMilliseconds(),
+                ["Common.Mid"] = "hash-fixture-host", ["Environment.HostName"] = "HASH-FIXTURE",
+                ["Parent.ProcPid"] = actorPid, ["Parent.FileName"] = Path.GetFileName(actorPath), ["Parent.FilePath"] = actorPath,
+                ["Child.FilePath"] = filePath, ["Child.FileName"] = Path.GetFileName(filePath), ["Child.FileSize"] = size,
+                ["Child.FileFormat"] = definition.Operation == "imphash" ? "PE32+ executable" : "JSON",
+                ["Child.FileMd5"] = md5, ["Child.FileSha"] = sha256,
+                ["Child.FileShaType"] = definition.Operation == "sha" ? 3 : null,
+                ["Child.FileImpHash"] = imphash,
+            });
+            baselinePaths.Add(Path.Combine(repository, "baselines", "windows", $"hash_{definition.Operation}.yaml"));
+        }
+
+        var localPath = Path.Combine(fixture.Path, "hash-local.json");
+        var genericPath = Path.Combine(fixture.Path, "hash-generic.json");
+        var tencentPath = Path.Combine(fixture.Path, "hash-tencent.json");
+        File.WriteAllText(localPath, local.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(genericPath, genericCloud.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(tencentPath, tencentCloud.ToJsonString(JsonDefaults.Options));
+        var generic = CompareService.Compare(new CompareRequest(localPath, [genericPath],
+            Path.Combine(repository, "mappings", "generic-hash-algorithms-v1.yaml"), baselinePaths,
+            Path.Combine(fixture.Path, "hash-generic-validation.json")));
+        var tencent = CompareService.Compare(new CompareRequest(localPath, [tencentPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"), baselinePaths,
+            Path.Combine(fixture.Path, "hash-tencent-validation.json")));
+        Assert(generic["summary"]?["pass"]?.GetValue<int>() == 3,
+            $"通用哈希映射应使三项 BASELINE 全部通过：{generic.ToJsonString(JsonDefaults.Options)}");
+        Assert(tencent["summary"]?["pass"]?.GetValue<int>() == 3,
+            $"腾讯哈希字段路由应使三项 BASELINE 全部通过：{tencent.ToJsonString(JsonDefaults.Options)}");
+        var rawFields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["win.hash.md5"] = "/Child.FileMd5",
+            ["win.hash.sha"] = "/Child.FileSha",
+            ["win.hash.imphash"] = "/Child.FileImpHash",
+        };
+        foreach (var (capabilityId, rawPointer) in rawFields)
+        {
+            var capability = tencent["capabilities"]?.AsArray().Single(value =>
+                value?["capability_id"]?.GetValue<string>() == capabilityId)?.AsObject()
+                ?? throw new InvalidOperationException($"腾讯比较结果缺少哈希能力：{capabilityId}");
+            Assert(capability["edr_candidates"]?.AsArray().Any(candidate =>
+                candidate?["baseline_matches"]?.AsArray().Any(match =>
+                    match?["raw_json_pointer"]?.GetValue<string>() == rawPointer
+                    && match?["status"]?.GetValue<string>() == "passed") == true) == true,
+                $"{capabilityId} 必须将核心摘要字段映射回 JSON 对照高亮：{rawPointer}");
+        }
         return Task.CompletedTask;
     }
 

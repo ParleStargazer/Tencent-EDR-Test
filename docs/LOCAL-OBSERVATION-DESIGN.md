@@ -248,9 +248,11 @@ correlation.nonce
 
 | 能力 | `event_type/action` | 必须收集 |
 | --- | --- | --- |
-| MD5 哈希（MD5） | `hash/md5` | 文件绝对路径、大小、算法名、32 位十六进制摘要、计算结果 |
-| SHA 哈希（SHA） | `hash/sha` | 文件绝对路径、大小、实际算法（SHA-1/SHA-256/SHA-512）、与算法位数一致的摘要、计算结果 |
-| 导入表哈希（IMPHASH） | `hash/imphash` | PE 文件路径、大小、IMPHASH、解析结果 |
+| MD5 哈希（MD5） | `hash/md5` | Actor；本轮唯一合法 `.json` 文件绝对路径、大小；完整文件 MD5；独立复算与清理结果 |
+| SHA 哈希（SHA） | `hash/sha` | Actor；本轮唯一合法 `.json` 文件；SHA-1/SHA-256/SHA-512；以 SHA-256 对接 EDR `FileSha`；独立复算结果 |
+| 导入表哈希（IMPHASH） | `hash/imphash` | Actor；本轮唯一真实 `.exe` PE；源/目标 SHA-256；PE 导入项数量与 IMPHASH；复制后的 EXE 不执行；解析与清理结果 |
+
+三项哈希能力都使用文件路径、Actor 路径/PID 和 15 ms 时间差关联 `file/create` EDR 候选。MD5 与 SHA 的测试文件必须是可解析 JSON；IMPHASH 的测试文件必须是 Actor PE 的字节级副本。腾讯现有字段目录已经确认 `Child.FileMd5`、`Child.FileSha` 与 `Child.FileShaType`，IMPHASH 字段暂按能力假设保留，缺失时不能判为通过。完整约束见 `docs/HASH-ALGORITHMS-SAMPLES.md`。
 
 ### 5.6 注册表活动（Registry Activity）
 

@@ -18,6 +18,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileManipulation.Behavior",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileManipulation.Controller", "sample-src\FileManipulation\FileManipulation.Controller\FileManipulation.Controller.csproj", "{7D7CB30B-8E52-40B1-8BA2-7FB5A29E242A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HashAlgorithms.Protocol", "sample-src\HashAlgorithms\HashAlgorithms.Protocol\HashAlgorithms.Protocol.csproj", "{D1691678-EC78-4B0B-AEE3-A048850C04D4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HashAlgorithms.Behavior", "sample-src\HashAlgorithms\HashAlgorithms.Behavior\HashAlgorithms.Behavior.csproj", "{95D1CCDC-C76A-4519-9A57-D3AC1FE51D4D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HashAlgorithms.Controller", "sample-src\HashAlgorithms\HashAlgorithms.Controller\HashAlgorithms.Controller.csproj", "{06CE410A-B8DD-49A9-8342-FBD514D1C0DD}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UserAccountActivity.Protocol", "sample-src\UserAccountActivity\UserAccountActivity.Protocol\UserAccountActivity.Protocol.csproj", "{9AFA6BBC-6076-4C41-8295-2857DAB0A468}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UserAccountActivity.Behavior", "sample-src\UserAccountActivity\UserAccountActivity.Behavior\UserAccountActivity.Behavior.csproj", "{60CA0F70-A03D-4294-B73B-45531A1F4862}"
@@ -86,6 +92,18 @@ Global
 		{7D7CB30B-8E52-40B1-8BA2-7FB5A29E242A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7D7CB30B-8E52-40B1-8BA2-7FB5A29E242A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7D7CB30B-8E52-40B1-8BA2-7FB5A29E242A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D1691678-EC78-4B0B-AEE3-A048850C04D4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D1691678-EC78-4B0B-AEE3-A048850C04D4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D1691678-EC78-4B0B-AEE3-A048850C04D4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D1691678-EC78-4B0B-AEE3-A048850C04D4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{95D1CCDC-C76A-4519-9A57-D3AC1FE51D4D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{95D1CCDC-C76A-4519-9A57-D3AC1FE51D4D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{95D1CCDC-C76A-4519-9A57-D3AC1FE51D4D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{95D1CCDC-C76A-4519-9A57-D3AC1FE51D4D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{06CE410A-B8DD-49A9-8342-FBD514D1C0DD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{06CE410A-B8DD-49A9-8342-FBD514D1C0DD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{06CE410A-B8DD-49A9-8342-FBD514D1C0DD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{06CE410A-B8DD-49A9-8342-FBD514D1C0DD}.Release|Any CPU.Build.0 = Release|Any CPU
 		{9AFA6BBC-6076-4C41-8295-2857DAB0A468}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{9AFA6BBC-6076-4C41-8295-2857DAB0A468}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9AFA6BBC-6076-4C41-8295-2857DAB0A468}.Release|Any CPU.ActiveCfg = Release|Any CPU

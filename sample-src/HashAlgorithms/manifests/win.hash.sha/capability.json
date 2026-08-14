@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.hash.sha",
+  "version": "0.1.0",
+  "display_name_zh": "SHA 哈希",
+  "display_name_en": "SHA",
+  "description": "Actor 使用 CreateNew 创建本轮唯一 JSON 文件；Controller 独立复算 SHA-1、SHA-256 与 SHA-512，以 SHA-256 对接 EDR 的 FileSha 字段。",
+  "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
+  "risk_level": "L0",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "HashSha.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "HashSha.Actor.exe" }],
+  "parameters": {
+    "payload_size": { "type": "integer", "required": true, "default": 8192, "minimum": 256, "maximum": 1048576 },
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "hash.operation_succeeded", "hash.occurred_at_utc", "hash.actor_pid", "hash.actor_executable",
+    "hash.extension", "hash.path", "hash.file_size_bytes", "hash.algorithm", "hash.digest",
+    "hash.sha1", "hash.sha256", "hash.sha512"
+  ]
+}

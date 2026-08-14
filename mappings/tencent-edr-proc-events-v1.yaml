@@ -482,6 +482,9 @@ routes:
       "file.name": { source: "Child.FileName" }
       "file.size": { source: "Child.FileSize" }
       "file.hash.md5": { source: "Child.FileMd5", transform: [lowercase], on_empty: null }
+      "file.hash.sha256": { sources: ["Child.FileSha", "Child.FileSha256"], transform: [lowercase], on_empty: null }
+      "file.hash.sha_type": { sources: ["Child.FileShaType", "Child.FileSha256Type"], on_empty: null }
+      "file.hash.imphash": { sources: ["Child.FileImpHash", "Child.FileImphash", "Child.ImpHash"], transform: [lowercase], on_empty: null }
       "file.created": { source: "Child.FileCreateTime", transform: [unix_s_to_utc], on_zero: null }
       "file.modified": { source: "Child.FileModifyTime", transform: [unix_s_to_utc], on_zero: null }
       "file.accessed": { source: "Child.FileAccessTime", transform: [unix_s_to_utc], on_zero: null }

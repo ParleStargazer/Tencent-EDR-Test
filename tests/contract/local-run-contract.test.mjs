@@ -595,6 +595,68 @@ test("Network Activity 五项清单、BASELINE、回环编排和腾讯路由完�
   assert.match(startScript, /Build-NetworkActivitySamples\.ps1/);
 });
 
+test("哈希算法三项使用 JSON/EXE 真实样本并接入 BASELINE 与字段映射", async () => {
+  const controller = await readFile(
+    new URL("sample-src/HashAlgorithms/HashAlgorithms.Controller/Program.cs", root),
+    "utf8",
+  );
+  const behavior = await readFile(
+    new URL("sample-src/HashAlgorithms/HashAlgorithms.Behavior/Program.cs", root),
+    "utf8",
+  );
+  const importHash = await readFile(
+    new URL("sample-src/HashAlgorithms/HashAlgorithms.Protocol/ImportHashCalculator.cs", root),
+    "utf8",
+  );
+  const genericMapping = await readFile(
+    new URL("mappings/generic-hash-algorithms-v1.yaml", root),
+    "utf8",
+  );
+  const tencentMapping = await readFile(
+    new URL("mappings/tencent-edr-proc-events-v1.yaml", root),
+    "utf8",
+  );
+  const startScript = await readFile(new URL("scripts/Start-EdrTest.ps1", root), "utf8");
+  const definitions = [
+    ["win.hash.md5", "md5", ".json"],
+    ["win.hash.sha", "sha", ".json"],
+    ["win.hash.imphash", "imphash", ".exe"],
+  ];
+
+  for (const [capabilityId, operation, extension] of definitions) {
+    const manifest = await readJson(
+      `sample-src/HashAlgorithms/manifests/${capabilityId}/capability.json`,
+    );
+    const baseline = await readFile(
+      new URL(`baselines/windows/hash_${operation}.yaml`, root),
+      "utf8",
+    );
+    assert.equal(manifest.capability_id, capabilityId);
+    assert.equal(manifest.version, "0.1.0");
+    assert.equal(manifest.participants.length, 1);
+    assert.equal(manifest.participants[0].role, "actor");
+    assert.ok(manifest.expected_fact_keys.includes(`hash.${operation === "sha" ? "sha256" : operation}`));
+    assert.match(baseline, new RegExp(`baseline_id: ${capabilityId.replaceAll(".", "\\.")}`));
+    assert.match(baseline, /max_time_difference_ms: 15/);
+    assert.match(baseline, new RegExp(`expected: "?${extension.replace(".", "\\.")}"?`));
+    assert.match(baseline, /method_selection: \{ strategy: best \}/);
+  }
+
+  assert.match(behavior, /operation == "imphash" \? "\.exe" : "\.json"/);
+  assert.match(behavior, /FileMode\.CreateNew/);
+  assert.match(behavior, /JsonDocument\.Parse/);
+  assert.match(behavior, /Environment\.ProcessPath/);
+  assert.match(controller, /copy_pe_and_parse_import_table/);
+  assert.match(controller, /Hashing\.FileSha256\(source\) == current\.Sha256/);
+  assert.match(importHash, /PE 文件没有导入表/);
+  assert.match(importHash, /MD5\.HashData\(Encoding\.UTF8\.GetBytes\(source\)\)/);
+  assert.match(genericMapping, /"file\.hash\.sha512"/);
+  assert.match(genericMapping, /"file\.hash\.imphash"/);
+  assert.match(tencentMapping, /sources: \["Child\.FileSha", "Child\.FileSha256"\]/);
+  assert.match(tencentMapping, /sources: \["Child\.FileImpHash", "Child\.FileImphash", "Child\.ImpHash"\]/);
+  assert.match(startScript, /Build-HashAlgorithmsSamples\.ps1/);
+});
+
 test("260808 腾讯 EDR 全字段目录完整、脱敏且可复现", async () => {
   const catalog = await readJson(
     "docs/reference/tencent-edr-260808-field-catalog.json",

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>HashAlgorithms.Controller</AssemblyName>
+    <RootNamespace>HashAlgorithms</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\EdrTest\EdrTest.csproj" />
+    <ProjectReference Include="..\HashAlgorithms.Protocol\HashAlgorithms.Protocol.csproj" />
+  </ItemGroup>
+</Project>

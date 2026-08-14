@@ -37,6 +37,7 @@
         "md5": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{32}$" },
         "sha1": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{40}$" },
         "sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
+        "sha512": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{128}$" },
         "imphash": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{32}$" }
       },
       "minProperties": 1
@@ -441,14 +442,21 @@
     "hash": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "operation", "file_path", "file_size_bytes", "algorithm", "digest", "result"],
+      "required": ["kind", "operation", "actor", "file_path", "file_size_bytes", "algorithm", "digest", "result"],
       "properties": {
         "kind": { "const": "hash" },
         "operation": { "enum": ["md5", "sha", "imphash"] },
+        "actor": { "$ref": "#/$defs/process_ref" },
         "file_path": { "type": "string", "minLength": 1 },
         "algorithm": { "enum": ["md5", "sha1", "sha256", "sha512", "imphash"] },
         "digest": { "type": "string", "pattern": "^[A-Fa-f0-9]{32,128}$" },
         "file_size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "hashes": { "$ref": "#/$defs/hashes" },
+        "is_portable_executable": { "type": "boolean" },
+        "import_count": { "type": ["integer", "null"], "minimum": 0 },
+        "source_pe_path": { "type": ["string", "null"] },
+        "source_pe_sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
+        "source_matches_target": { "type": ["boolean", "null"] },
         "result": { "$ref": "#/$defs/operation_result" }
       },
       "allOf": [
