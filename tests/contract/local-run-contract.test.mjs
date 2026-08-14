@@ -451,7 +451,7 @@ test("Service Activity 三项安全样本、SCM 本地基准、映射和 BASSLIN
     assert.ok(manifest.expected_fact_keys.includes("service.actor_pid"));
     assert.ok(manifest.expected_fact_keys.includes("service.before.exists"));
     assert.ok(manifest.expected_fact_keys.includes("service.after.exists"));
-    assert.match(baseline, /max_time_difference_ms: 15/);
+    assert.match(baseline, /max_time_difference_ms: 25/);
     assert.match(baseline, new RegExp(`expected: ${nativeApi}`));
     assert.match(baseline, /cloud_field: service\.name/);
     if (eventId === null) {

@@ -2,7 +2,7 @@ schema_version: "1.1"
 baseline_id: win.service.create
 version: "0.1.0"
 title: Windows 服务创建遥测
-description: 本地以 SCM 独立查询确认唯一禁用服务确实创建；云端分别检查 CreateService API Hook 与 Windows System 7045 两条遥测路径，并采用证据更完整者形成结论。
+description: 本地以 SCM 独立查询确认唯一禁用服务确实创建；腾讯 EDR 实测直接证据为 ServiceEvents/CreateService，Common.EventTime 应与调用开始时间关联，System 7045 作为未观测到的兼容路径保留。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -28,7 +28,7 @@ local_requirements:
 correlation:
   time_before_seconds: 60
   time_after_seconds: 300
-  max_time_difference_ms: 15
+  max_time_difference_ms: 25
   anchors:
     - { local_field: facts.service.name, cloud_field: service.name, strength: strong, normalizers: [lowercase, trim] }
     - { local_field: facts.service.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
@@ -36,38 +36,39 @@ correlation:
 method_selection: { strategy: best }
 cloud_expectations:
   - id: service-create-api-hook
-    method: { id: scm_api_hook, title: SCM CreateService API Hook }
+    method: { id: scm_api_hook, title: SCM CreateService API Hook（腾讯实测） }
     event_type: service_api
     event_actions: [create]
-    cardinality: { min: 1, max: 10 }
+    cardinality: { min: 1, max: 3 }
     correlation:
-      time_from_local: facts.service.completed_at_utc
+      time_from_local: facts.service.occurred_at_utc
+      max_time_difference_ms: 25
       anchors:
         - { local_field: facts.service.name, cloud_field: service.name, strength: strong, normalizers: [lowercase, trim] }
-        - { local_field: facts.service.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
-        - { local_field: facts.service.actor_pid, cloud_field: process.pid, strength: medium }
     assertions:
+      - { field: event.action, operator: equals, expected: create, severity: required }
       - { field: service.name, operator: equals, expected_from_local: facts.service.name, severity: required, normalizers: [lowercase, trim] }
       - { field: process.pid, operator: equals, expected_from_local: facts.service.actor_pid, severity: required }
       - { field: process.executable, operator: equals, expected_from_local: facts.service.actor_executable, severity: required, normalizers: [windows_path] }
-      - { field: service.binary_path, operator: equals, expected_from_local: facts.service.binary_path, severity: required, normalizers: [windows_path] }
-      - { field: service.display_name, operator: equals, expected_from_local: facts.service.display_name, severity: recommended }
-      - { field: service.start_type, operator: present, severity: recommended }
-      - { field: service.account, operator: present, severity: recommended }
-      - { field: service.service_type, operator: present, severity: recommended }
+      - { field: service.binary_path, operator: present, severity: required }
+      - { field: service.start_type, operator: present, severity: required }
+      - { field: process.command_line, operator: contains, expected_from_local: facts.service.name, severity: informational }
+      - { field: service.display_name, operator: present, severity: informational }
+      - { field: service.account, operator: present, severity: informational }
+      - { field: service.service_type, operator: present, severity: informational }
   - id: service-create-system-7045
-    method: { id: system_event_7045, title: Windows System 7045（推荐） }
+    method: { id: system_event_7045, title: Windows System 7045（本轮未观测到） }
     event_type: service
     event_actions: [create]
-    cardinality: { min: 1, max: 10 }
+    cardinality: { min: 1, max: 3 }
     correlation:
-      time_from_local: facts.service.completed_at_utc
+      time_from_local: facts.service.occurred_at_utc
       anchors:
         - { local_field: facts.service.name, cloud_field: service.name, strength: strong, normalizers: [lowercase, trim] }
-        - { local_field: facts.service.binary_path, cloud_field: service.binary_path, strength: strong, normalizers: [windows_path] }
     assertions:
+      - { field: event.action, operator: equals, expected: create, severity: required }
       - { field: service.name, operator: equals, expected_from_local: facts.service.name, severity: required, normalizers: [lowercase, trim] }
-      - { field: service.binary_path, operator: equals, expected_from_local: facts.service.binary_path, severity: required, normalizers: [windows_path] }
+      - { field: service.binary_path, operator: present, severity: required }
       - { field: winlog.event_id, operator: equals, expected: 7045, severity: required }
       - { field: service.start_type, operator: present, severity: recommended }
       - { field: service.account, operator: present, severity: recommended }
@@ -84,5 +85,5 @@ scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: 首版同时覆盖原生 CreateServiceW API Hook 与 Windows Service Control Manager 7045；腾讯实际 Action.Name 和 Child 字段等待测试机导出校准。
-  references: [Microsoft CreateServiceW, Microsoft Windows Security Event 4697, Windows System Event 7045, Tencent EDR 行为采集]
+  change_reason: 260814202100 实测 Action.Name=CreateService；EDR Common.EventTime 相对本地 service.occurred_at_utc 为 +20.914 ms，而相对 completed_at_utc 为 -162.651 ms，因此 API Hook 改用调用开始时间并采用 25 ms 强证据。Child 仅稳定提供 ServiceName、FilePath、ProcCmdline、StartType，未提供 DisplayName、Account、ServiceType。
+  references: [reference/260814202100run, Microsoft CreateServiceW, Windows System Event 7045, Tencent EDR ServiceEvents]

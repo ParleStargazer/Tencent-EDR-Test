@@ -2,7 +2,7 @@ schema_version: "1.1"
 baseline_id: win.service.modify
 version: "0.1.0"
 title: Windows 服务修改遥测
-description: 本地确认同一唯一服务的显示名、二进制标记和启动类型由手动变为禁用；云端分别检查 ChangeServiceConfig API Hook 与 Windows System 7040 两条遥测路径。
+description: 本地确认同一唯一服务的显示名、二进制标记和启动类型由手动变为禁用；云端仍要求 ChangeServiceConfig 或 System 7040 直接证据，不能把 Actor 启动前由 Controller 产生的 CreateService 预置事件作为修改通过依据。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -30,7 +30,7 @@ local_requirements:
 correlation:
   time_before_seconds: 60
   time_after_seconds: 300
-  max_time_difference_ms: 15
+  max_time_difference_ms: 25
   anchors:
     - { local_field: facts.service.name, cloud_field: service.name, strength: strong, normalizers: [lowercase, trim] }
     - { local_field: facts.service.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
@@ -41,31 +41,33 @@ cloud_expectations:
     method: { id: scm_api_hook, title: SCM ChangeServiceConfig API Hook }
     event_type: service_api
     event_actions: [modify]
-    cardinality: { min: 1, max: 10 }
+    cardinality: { min: 1, max: 3 }
     correlation:
-      time_from_local: facts.service.completed_at_utc
+      time_from_local: facts.service.occurred_at_utc
+      max_time_difference_ms: 25
       anchors:
         - { local_field: facts.service.name, cloud_field: service.name, strength: strong, normalizers: [lowercase, trim] }
-        - { local_field: facts.service.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
-        - { local_field: facts.service.actor_pid, cloud_field: process.pid, strength: medium }
     assertions:
+      - { field: event.action, operator: equals, expected: modify, severity: required }
       - { field: service.name, operator: equals, expected_from_local: facts.service.name, severity: required, normalizers: [lowercase, trim] }
       - { field: process.pid, operator: equals, expected_from_local: facts.service.actor_pid, severity: required }
       - { field: process.executable, operator: equals, expected_from_local: facts.service.actor_executable, severity: required, normalizers: [windows_path] }
-      - { field: service.binary_path, operator: equals, expected_from_local: facts.service.binary_path, severity: required, normalizers: [windows_path] }
-      - { field: service.display_name, operator: equals, expected_from_local: facts.service.display_name, severity: recommended }
-      - { field: service.start_type, operator: present, severity: recommended }
-      - { field: service.old_start_type, operator: present, severity: recommended }
+      - { field: service.binary_path, operator: present, severity: required }
+      - { field: service.start_type, operator: present, severity: required }
+      - { field: process.command_line, operator: contains, expected_from_local: facts.service.name, severity: informational }
+      - { field: service.display_name, operator: present, severity: informational }
+      - { field: service.old_start_type, operator: present, severity: informational }
   - id: service-modify-system-7040
     method: { id: system_event_7040, title: Windows System 7040（推荐） }
     event_type: service
     event_actions: [modify]
-    cardinality: { min: 1, max: 10 }
+    cardinality: { min: 1, max: 3 }
     correlation:
-      time_from_local: facts.service.completed_at_utc
+      time_from_local: facts.service.occurred_at_utc
       anchors:
         - { local_field: facts.service.name, cloud_field: service.name, strength: strong, normalizers: [lowercase, trim] }
     assertions:
+      - { field: event.action, operator: equals, expected: modify, severity: required }
       - { field: service.name, operator: equals, expected_from_local: facts.service.name, severity: required, normalizers: [lowercase, trim] }
       - { field: winlog.event_id, operator: equals, expected: 7040, severity: required }
       - { field: service.start_type, operator: present, severity: required }
@@ -82,5 +84,5 @@ scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: 使用 ChangeServiceConfigW 同时改变唯一标记和 demand→disabled，既形成可验证本地差异，也产生标准 7040 启动类型变更语义。
-  references: [Microsoft ChangeServiceConfigW, Windows System Event 7040, Tencent EDR 行为采集]
+  change_reason: 260814202100 在本地 ChangeServiceConfigW 调用窗口内未发现 ChangeServiceConfig 或 7040；唯一同名 ServiceEvents/CreateService 是 Controller 在 Actor 启动前约 1.124 秒产生的预置行为。BASELINE 改用 service.occurred_at_utc、唯一服务名和显式 event.action=modify，避免把预置创建误判为修改。
+  references: [reference/260814202100run, Microsoft ChangeServiceConfigW, Windows System Event 7040, Tencent EDR ServiceEvents]
