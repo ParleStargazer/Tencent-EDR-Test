@@ -1,0 +1,36 @@
+schema_version: "1.0"
+profile_id: generic-group-policy-activity-v1
+vendor: Generic
+product: Group Policy Activity Self-Test Fixture
+description: 用于验证 Group Policy Modification BASELINE 与比较器的扁平 JSON 适配；不是厂商生产映射。
+input:
+  containers: [json-array, jsonl]
+  encoding: utf-8
+  record_selector:
+    all: { table: GroupPolicyActivity }
+  event_id_field: event_id
+  host_id_field: host_id
+  event_time: { field: event_time, format: iso8601 }
+routes:
+  - route_id: group-policy-modify
+    when: { table: GroupPolicyActivity, action: modify }
+    canonical:
+      "event.type": { constant: registry }
+      "event.action": { constant: set_value }
+      "event.category": { constant: configuration }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "process.pid": { source: actor_pid }
+      "process.name": { source: actor_name }
+      "process.executable": { source: actor_executable, transform: [windows_path] }
+      "process.command_line": { source: actor_command_line }
+      "registry.key": { source: registry_key, transform: [windows_path] }
+      "registry.value_name": { source: registry_value_name }
+      "registry.value_data": { source: registry_value_data }
+      "registry.old_value_data": { source: registry_old_value_data }
+      "registry.value_type": { source: registry_value_type }
+      "registry.old_value_type": { source: registry_old_value_type }
+      "registry.group_name": { source: registry_group_name }
+raw_reference: { id_field: event_id, ordinal_base: 0 }
+unmapped_fields: { policy: count-and-ignore, preserve_in_report: false }

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>NamedPipeActivity.Controller</AssemblyName>
+    <RootNamespace>NamedPipeActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\EdrTest\EdrTest.csproj" />
+    <ProjectReference Include="..\NamedPipeActivity.Protocol\NamedPipeActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

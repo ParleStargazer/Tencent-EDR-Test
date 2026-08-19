@@ -38,6 +38,7 @@ public static class Program
         await RunTest("文件原始字段仅筛选 EDR 候选", TestFileRawFieldFilters, failures);
         await RunTest("用户账号五项 BASELINE 与通用/腾讯映射闭环", TestUserAccountComparison, failures);
         await RunTest("注册表三项 BASELINE 与通用/腾讯映射闭环", TestRegistryComparison, failures);
+        await RunTest("组策略修改 BASELINE 与通用/腾讯映射闭环", TestGroupPolicyComparison, failures);
         await RunTest("计划任务三项 BASELINE 与通用/腾讯映射闭环", TestScheduledTaskComparison, failures);
         await RunTest("服务活动三项 BASELINE 与通用/腾讯映射闭环", TestServiceComparison, failures);
         await RunTest("哈希算法三项 BASELINE 与通用/腾讯映射闭环", TestHashAlgorithmsComparison, failures);
@@ -773,6 +774,76 @@ public static class Program
                 && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.RegistryPath"
                 && match?["status"]?.GetValue<string>() == "passed") == true) == true,
             "腾讯注册表候选应记录实际命中的字段别名，并在 JSON 对照中高亮键路径。");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestGroupPolicyComparison()
+    {
+        using var fixture = TestDirectory.Create();
+        var repository = FindRepositoryRoot();
+        var caseRunId = Ids.NewUuid7();
+        var eventId = Ids.NewUuid7();
+        var occurredAt = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        const int actorPid = 8240;
+        const string actorPath = @"C:\EDR-Test\GroupPolicyModify.Actor.exe";
+        const string keyPath = @"HKEY_LOCAL_MACHINE\SOFTWARE\Policies\EdrTest\Runs\0123456789abcdef0123456789abcdef";
+        const string valueName = "ValidationMarker";
+        const string beforeValue = "EDRTEST|0123456789abcdef0123456789abcdef|BEFORE";
+        const string afterValue = "EDRTEST|0123456789abcdef0123456789abcdef|AFTER";
+        var local = new JsonObject
+        {
+            ["schema_version"] = "1.1",
+            ["run"] = new JsonObject { ["run_id"] = Ids.NewUuid7(), ["host"] = new JsonObject { ["hostname"] = "POLICY-FIXTURE", ["machine_id"] = "policy-fixture-host" } },
+            ["capabilities"] = new JsonArray(new JsonObject
+            {
+                ["case_run_id"] = caseRunId, ["capability_id"] = "win.group_policy.modify", ["capability_version"] = "0.1.0",
+                ["display_name_zh"] = "组策略修改", ["display_name_en"] = "Group Policy Modification", ["status"] = "LOCAL_PASS",
+                ["nonce"] = "0123456789abcdef0123456789abcdef", ["started_at_utc"] = Values.Utc(occurredAt.AddSeconds(-1)), ["ended_at_utc"] = Values.Utc(occurredAt.AddSeconds(1)),
+            }),
+            ["programs"] = new JsonArray(new JsonObject { ["case_run_id"] = caseRunId, ["program_instance_id"] = Ids.NewUuid7(), ["role"] = "actor", ["pid"] = actorPid, ["executable"] = actorPath, ["command_line"] = actorPath + " --value-name ValidationMarker" }),
+            ["local_events"] = new JsonArray(new JsonObject { ["local_event_id"] = eventId, ["case_run_id"] = caseRunId, ["sequence"] = 1, ["event_type"] = "group_policy", ["event_action"] = "modify", ["occurred_at_utc"] = Values.Utc(occurredAt), ["data"] = new JsonObject { ["kind"] = "group_policy", ["operation"] = "modify" } }),
+            ["local_facts"] = new JsonArray(), ["artifacts"] = new JsonArray(), ["cleanup_results"] = new JsonArray(), ["execution_logs"] = new JsonArray(),
+        };
+        var facts = new Dictionary<string, JsonNode?>
+        {
+            ["group_policy.modify_succeeded"] = true, ["group_policy.occurred_at_utc"] = Values.Utc(occurredAt),
+            ["group_policy.key_path"] = keyPath, ["group_policy.value_name"] = valueName,
+            ["group_policy.before_value"] = beforeValue, ["group_policy.after_value"] = afterValue,
+            ["group_policy.actor_pid"] = actorPid, ["group_policy.actor_executable"] = actorPath,
+        };
+        foreach (var (key, value) in facts) local["local_facts"]!.AsArray().Add(new JsonObject
+        { ["local_fact_id"] = Ids.NewUuid7(), ["case_run_id"] = caseRunId, ["local_event_id"] = eventId, ["key"] = key, ["value"] = value?.DeepClone() });
+
+        var genericCloud = new JsonArray(new JsonObject
+        {
+            ["table"] = "GroupPolicyActivity", ["event_id"] = eventId, ["host_id"] = "policy-fixture-host", ["event_time"] = Values.Utc(occurredAt),
+            ["action"] = "modify", ["actor_pid"] = actorPid, ["actor_name"] = Path.GetFileName(actorPath), ["actor_executable"] = actorPath,
+            ["actor_command_line"] = actorPath, ["registry_key"] = keyPath, ["registry_value_name"] = valueName,
+            ["registry_value_data"] = afterValue, ["registry_old_value_data"] = beforeValue,
+            ["registry_value_type"] = "字符串", ["registry_old_value_type"] = "字符串", ["registry_group_name"] = "组策略",
+        });
+        var tencentCloud = new JsonArray(new JsonObject
+        {
+            ["OS"] = "Windows", ["@table"] = "RegEvents", ["@timestamp"] = Values.Utc(occurredAt), ["Action.Type"] = "Reg", ["Action.Name"] = "RegSetValue",
+            ["Common.EventUUId"] = eventId, ["Common.EventTime"] = occurredAt.ToUnixTimeMilliseconds(), ["Common.Mid"] = "policy-fixture-host", ["Environment.HostName"] = "POLICY-FIXTURE",
+            ["Parent.ProcPid"] = actorPid, ["Parent.FileName"] = Path.GetFileName(actorPath), ["Parent.FilePath"] = actorPath, ["Parent.ProcCmdline"] = actorPath,
+            ["Child.RegKeyPath"] = keyPath, ["Child.RegValName"] = valueName, ["Child.RegValData"] = afterValue, ["Child.RegOldValData"] = beforeValue,
+            ["Child.RegValType"] = "字符串", ["Child.RegOldValType"] = "字符串", ["Child.RegGroupName"] = "组策略", ["Common.MonitorName"] = "组策略",
+        });
+        var localPath = Path.Combine(fixture.Path, "group-policy-local.json");
+        var genericPath = Path.Combine(fixture.Path, "group-policy-generic.json");
+        var tencentPath = Path.Combine(fixture.Path, "group-policy-tencent.json");
+        File.WriteAllText(localPath, local.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(genericPath, genericCloud.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(tencentPath, tencentCloud.ToJsonString(JsonDefaults.Options));
+        var baseline = new[] { Path.Combine(repository, "baselines", "windows", "group_policy_modify.yaml") };
+        var generic = CompareService.Compare(new CompareRequest(localPath, [genericPath], Path.Combine(repository, "mappings", "generic-group-policy-activity-v1.yaml"), baseline, Path.Combine(fixture.Path, "generic-result.json")));
+        var tencent = CompareService.Compare(new CompareRequest(localPath, [tencentPath], Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"), baseline, Path.Combine(fixture.Path, "tencent-result.json")));
+        Assert(generic["summary"]?["pass"]?.GetValue<int>() == 1, $"通用组策略映射应通过：{generic.ToJsonString(JsonDefaults.Options)}");
+        Assert(tencent["summary"]?["pass"]?.GetValue<int>() == 1, $"腾讯组策略映射应通过：{tencent.ToJsonString(JsonDefaults.Options)}");
+        Assert(tencent["capabilities"]?.AsArray()[0]?["edr_candidates"]?.AsArray()[0]?["baseline_matches"]?.AsArray().Any(match =>
+            match?["canonical_field"]?.GetValue<string>() == "registry.group_name" && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.RegGroupName") == true,
+            "组策略候选应高亮 Child.RegGroupName。");
         return Task.CompletedTask;
     }
 

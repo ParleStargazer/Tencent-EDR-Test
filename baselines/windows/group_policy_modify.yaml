@@ -1,0 +1,57 @@
+schema_version: "1.1"
+baseline_id: win.group_policy.modify
+version: "0.1.0"
+title: Windows 组策略修改遥测
+description: 以本地隔离 HKLM 策略值的前后状态、Actor 身份和紧邻 RegSetValueExW 的时间为绝对基准。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L1
+capability:
+  id: win.group_policy.modify
+  version: "0.1.0"
+  parameters: { post_operation_hold_ms: 1500 }
+local_requirements:
+  - { field: facts.group_policy.modify_succeeded, operator: equals, expected: true }
+  - { field: facts.group_policy.key_path, operator: present }
+  - { field: facts.group_policy.value_name, operator: equals, expected: ValidationMarker }
+  - { field: facts.group_policy.before_value, operator: present }
+  - { field: facts.group_policy.after_value, operator: present }
+  - { field: facts.group_policy.actor_pid, operator: present }
+  - { field: facts.group_policy.actor_executable, operator: present }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.group_policy.key_path, cloud_field: registry.key, strength: strong, normalizers: [registry_hive_path] }
+    - { local_field: facts.group_policy.value_name, cloud_field: registry.value_name, strength: strong, normalizers: [lowercase] }
+    - { local_field: facts.group_policy.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.group_policy.actor_pid, cloud_field: process.pid, strength: medium }
+cloud_expectations:
+  - id: group-policy-reg-set-value
+    event_type: registry
+    event_actions: [set_value]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.group_policy.occurred_at_utc
+      anchors:
+        - { local_field: facts.group_policy.key_path, cloud_field: registry.key, strength: strong, normalizers: [registry_hive_path] }
+        - { local_field: facts.group_policy.value_name, cloud_field: registry.value_name, strength: strong, normalizers: [lowercase] }
+        - { local_field: facts.group_policy.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.group_policy.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: registry.key, operator: equals, expected_from_local: facts.group_policy.key_path, severity: required, normalizers: [registry_hive_path] }
+      - { field: registry.value_name, operator: equals, expected_from_local: facts.group_policy.value_name, severity: required, normalizers: [lowercase] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.group_policy.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.group_policy.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: registry.old_value_data, operator: equals, expected_from_local: facts.group_policy.before_value, severity: required }
+      - { field: registry.value_data, operator: equals, expected_from_local: facts.group_policy.after_value, severity: required }
+      - { field: registry.value_type, operator: present, severity: required }
+      - { field: registry.group_name, operator: equals, expected: 组策略, severity: required }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: active
+  references: [reference/reg/edr_reg_relate.json, Tencent EDR RegEvents / RegSetValue]

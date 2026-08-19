@@ -20,6 +20,81 @@ input:
     format: unix_ms
 
 routes:
+  # 腾讯导出的命名管道事件位于 FileEvents；Child.PipeOpName 是创建/打开的直接语义。
+  # 连接记录在部分版本中可能只导出 "\\"，因此完整管道名由 BASELINE 降为推荐项，
+  # 但 Actor PID/路径与 15 ms 本地时间仍必须满足。
+  - route_id: named-pipe-create
+    when:
+      "@table": FileEvents
+      "Action.Type": File
+      "Action.Name": NamedPipe
+      "Child.PipeOpName": 创建管道
+    canonical:
+      "event.type": { constant: named_pipe }
+      "event.action": { constant: create }
+      "event.category": { constant: ipc }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid" }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName" }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path] }
+      "process.command_line": { source: "Parent.ProcCmdline" }
+      "named_pipe.name": { source: "Child.PipeName" }
+      "named_pipe.node_name": { source: "Child.NodeName", on_empty: null }
+      "named_pipe.operation_name": { source: "Child.PipeOpName" }
+      "named_pipe.type": { source: "Child.Type", on_empty: null }
+
+  - route_id: named-pipe-connect
+    when:
+      "@table": FileEvents
+      "Action.Type": File
+      "Action.Name": NamedPipe
+      "Child.PipeOpName": 打开管道
+    canonical:
+      "event.type": { constant: named_pipe }
+      "event.action": { constant: connect }
+      "event.category": { constant: ipc }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid" }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName" }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path] }
+      "process.command_line": { source: "Parent.ProcCmdline" }
+      "named_pipe.name": { source: "Child.PipeName", on_empty: null }
+      "named_pipe.node_name": { source: "Child.NodeName", on_empty: null }
+      "named_pipe.operation_name": { source: "Child.PipeOpName" }
+      "named_pipe.type": { source: "Child.Type", on_empty: null }
+
+  - route_id: named-pipe-candidate-discovery
+    when:
+      "@table": FileEvents
+      "Action.Name": NamedPipe
+    canonical:
+      "event.type": { constant: named_pipe }
+      "event.action": { source: "Child.PipeOpName", on_empty: unknown }
+      "event.category": { constant: ipc }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "named_pipe.name": { source: "Child.PipeName", on_empty: null }
+      "named_pipe.node_name": { source: "Child.NodeName", on_empty: null }
+      "named_pipe.operation_name": { source: "Child.PipeOpName", on_empty: null }
+      "named_pipe.type": { source: "Child.Type", on_empty: null }
+
   # 260809213600run 实测：当前产品对本机 TCP/UDP 样本导出 NetBind，而非 SocketRequest。
   # 该记录只有协议与预绑定源端点 0.0.0.0:0；目的端点只保留在本地绝对基准中，不能伪造到云端字段。
   - route_id: network-tcp-net-bind

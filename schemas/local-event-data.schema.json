@@ -647,6 +647,13 @@
         "policy_path": { "type": "string", "minLength": 1 },
         "policy_name": { "type": ["string", "null"] },
         "backing_registry_path": { "type": ["string", "null"] },
+        "hive": { "type": "string", "minLength": 1 },
+        "key_path": { "type": "string", "minLength": 1 },
+        "value_name": { "type": "string", "minLength": 1 },
+        "value_type": { "type": ["string", "null"] },
+        "before_value": {},
+        "after_value": {},
+        "native_api": { "type": "string", "minLength": 1 },
         "before": { "$ref": "#/$defs/state_snapshot" },
         "after": { "$ref": "#/$defs/state_snapshot" },
         "result": { "$ref": "#/$defs/operation_result" }
@@ -660,10 +667,23 @@
         "kind": { "const": "named_pipe" },
         "operation": { "enum": ["create", "connect"] },
         "pipe_name": { "type": "string", "pattern": "^\\\\\\\\[.][\\\\]pipe[\\\\].+" },
+        "operation_name": { "type": "string", "minLength": 1 },
+        "actor": { "$ref": "#/$defs/process_ref" },
+        "helper": { "$ref": "#/$defs/process_ref" },
         "server": { "$ref": "#/$defs/process_ref" },
         "client": { "$ref": "#/$defs/process_ref" },
         "direction": { "enum": ["inbound", "outbound", "duplex"] },
         "impersonation_level": { "type": ["string", "null"] },
+        "handshake": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["server", "client", "nonce_verified"],
+          "properties": {
+            "server": { "type": "object" },
+            "client": { "type": "object" },
+            "nonce_verified": { "type": "boolean" }
+          }
+        },
         "result": { "$ref": "#/$defs/operation_result" }
       },
       "allOf": [

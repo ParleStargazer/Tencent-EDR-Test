@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>GroupPolicyActivity.Protocol</AssemblyName>
+    <RootNamespace>GroupPolicyActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Common\ReliableProtocolFile.cs" Link="ReliableProtocolFile.cs" />
+  </ItemGroup>
+</Project>

@@ -780,3 +780,41 @@ test("SQLite v2 可以初始化且具备 JSON 导出所需的关键采集列", a
     database.close();
   }
 });
+
+test("组策略与命名管道三项能力具备完整样本、BASELINE、映射和启动接入", async () => {
+  const definitions = [
+    ["win.group_policy.modify", "group_policy_modify.yaml", 1, "administrator"],
+    ["win.named_pipe.create", "named_pipe_create.yaml", 2, "standard_user"],
+    ["win.named_pipe.connect", "named_pipe_connect.yaml", 2, "standard_user"],
+  ];
+  for (const [capabilityId, baselineName, participantCount, privilege] of definitions) {
+    const domain = capabilityId.startsWith("win.group_policy") ? "GroupPolicyActivity" : "NamedPipeActivity";
+    const manifest = await readJson(`sample-src/${domain}/manifests/${capabilityId}/capability.json`);
+    const baseline = await readFile(new URL(`baselines/windows/${baselineName}`, root), "utf8");
+    assert.equal(manifest.capability_id, capabilityId);
+    assert.equal(manifest.version, "0.1.0");
+    assert.equal(manifest.required_privilege, privilege);
+    assert.equal(manifest.participants.length, participantCount);
+    assert.match(baseline, /max_time_difference_ms: 15/);
+    assert.match(baseline, new RegExp(`baseline_id: ${capabilityId.replaceAll(".", "\\.")}`));
+  }
+
+  const groupBehavior = await readFile(new URL("sample-src/GroupPolicyActivity/GroupPolicyActivity.Behavior/Program.cs", root), "utf8");
+  const pipeBehavior = await readFile(new URL("sample-src/NamedPipeActivity/NamedPipeActivity.Behavior/Program.cs", root), "utf8");
+  const pipeController = await readFile(new URL("sample-src/NamedPipeActivity/NamedPipeActivity.Controller/Program.cs", root), "utf8");
+  const tencentMapping = await readFile(new URL("mappings/tencent-edr-proc-events-v1.yaml", root), "utf8");
+  const front = await readFile(new URL("web/app/live-control-plane.tsx", root), "utf8");
+  const start = await readFile(new URL("scripts/Start-EdrTest.ps1", root), "utf8");
+  assert.match(groupBehavior, /RegSetValueExW/);
+  assert.match(groupBehavior, /SOFTWARE\\\\Policies\\\\EdrTest\\\\Runs/);
+  assert.match(pipeBehavior, /CreateNamedPipeW/);
+  assert.match(pipeBehavior, /CreateFileW/);
+  assert.match(pipeController, /serverIsActor = operation == "create"/);
+  assert.match(pipeController, /named_pipe\.nonce_verified/);
+  assert.match(tencentMapping, /"Child\.PipeOpName": 创建管道/);
+  assert.match(tencentMapping, /"Child\.PipeOpName": 打开管道/);
+  assert.match(front, /"win\.group_policy\.modify": "RegSetValue"/);
+  assert.match(front, /"win\.named_pipe\.create": "NamedPipe"/);
+  assert.match(start, /Build-GroupPolicyActivitySamples\.ps1/);
+  assert.match(start, /Build-NamedPipeActivitySamples\.ps1/);
+});

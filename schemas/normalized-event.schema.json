@@ -129,6 +129,16 @@
       },
       "additionalProperties": false
     },
+    "named_pipe": {
+      "type": ["object", "null"],
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "node_name": { "type": ["string", "null"] },
+        "operation_name": { "type": ["string", "null"] },
+        "type": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
     "scheduled_task": {
       "type": ["object", "null"],
       "properties": {

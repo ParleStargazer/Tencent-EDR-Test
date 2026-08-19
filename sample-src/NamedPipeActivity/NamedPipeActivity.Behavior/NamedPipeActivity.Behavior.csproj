@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>NamedPipeActivity.Behavior</AssemblyName>
+    <RootNamespace>NamedPipeActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NamedPipeActivity.Protocol\NamedPipeActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,33 @@
+schema_version: "1.0"
+profile_id: generic-named-pipe-activity-v1
+vendor: Generic
+product: Named Pipe Activity Self-Test Fixture
+description: 用于验证 Named Pipe Activity 两项 BASELINE 与比较器的扁平 JSON 适配；不是厂商生产映射。
+input:
+  containers: [json-array, jsonl]
+  encoding: utf-8
+  record_selector:
+    all: { table: NamedPipeActivity }
+  event_id_field: event_id
+  host_id_field: host_id
+  event_time: { field: event_time, format: iso8601 }
+routes:
+  - route_id: named-pipe-activity
+    when: { table: NamedPipeActivity }
+    canonical:
+      "event.type": { constant: named_pipe }
+      "event.action": { source: action }
+      "event.category": { constant: ipc }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "process.pid": { source: actor_pid }
+      "process.name": { source: actor_name }
+      "process.executable": { source: actor_executable, transform: [windows_path] }
+      "process.command_line": { source: actor_command_line }
+      "named_pipe.name": { source: pipe_name }
+      "named_pipe.node_name": { source: node_name, on_empty: null }
+      "named_pipe.operation_name": { source: operation_name }
+      "named_pipe.type": { source: pipe_type, on_empty: null }
+raw_reference: { id_field: event_id, ordinal_base: 0 }
+unmapped_fields: { policy: count-and-ignore, preserve_in_report: false }

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>GroupPolicyActivity.Controller</AssemblyName>
+    <RootNamespace>GroupPolicyActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\EdrTest\EdrTest.csproj" />
+    <ProjectReference Include="..\GroupPolicyActivity.Protocol\GroupPolicyActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

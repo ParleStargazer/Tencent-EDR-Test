@@ -21,3 +21,14 @@ dotnet run --project tests/EdrTest.Tests/EdrTest.Tests.csproj --no-build
 ```
 
 端到端测试会在系统临时目录组装一个受控能力包，真实启动独立 Controller 子进程，并验证 `Runner → SQLite → Export → Mapping → BASELINE → PASS`。测试结束后自动删除临时制品。
+
+命名管道与组策略能力另有 Windows 行为测试：
+
+```powershell
+pwsh -NoProfile -File scripts/Test-NamedPipeActivitySamples.ps1
+
+# 需要管理员 PowerShell；标准用户运行会明确拒绝修改 HKLM
+pwsh -NoProfile -File scripts/Test-GroupPolicyActivitySamples.ps1
+```
+
+命名管道测试同时验证通用映射和腾讯 `FileEvents / NamedPipe` 映射。组策略的通用/腾讯 `RegEvents / RegSetValue` 比较闭环已包含在框架测试中。

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>GroupPolicyActivity.Behavior</AssemblyName>
+    <RootNamespace>GroupPolicyActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GroupPolicyActivity.Protocol\GroupPolicyActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

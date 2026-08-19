@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>NamedPipeActivity.Protocol</AssemblyName>
+    <RootNamespace>NamedPipeActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Common\ReliableProtocolFile.cs" Link="ReliableProtocolFile.cs" />
+  </ItemGroup>
+</Project>

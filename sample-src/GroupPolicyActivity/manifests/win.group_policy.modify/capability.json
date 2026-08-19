@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.group_policy.modify",
+  "version": "0.1.0",
+  "display_name_zh": "组策略修改",
+  "display_name_en": "Group Policy Modification",
+  "description": "Controller 在 HKLM\\SOFTWARE\\Policies\\EdrTest\\Runs 下预置本轮隔离字符串值，Actor 使用 RegSetValueExW 修改，Controller 独立复核并精确删除本轮键。",
+  "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
+  "risk_level": "L1",
+  "required_privilege": "administrator",
+  "controller": { "executable": "GroupPolicyModify.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "GroupPolicyModify.Actor.exe" }],
+  "parameters": {
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "group_policy.modify_succeeded", "group_policy.occurred_at_utc", "group_policy.completed_at_utc",
+    "group_policy.hive", "group_policy.key_path", "group_policy.value_name", "group_policy.value_type",
+    "group_policy.before_value", "group_policy.after_value", "group_policy.native_api", "group_policy.actor_pid",
+    "group_policy.actor_executable", "group_policy.actor_command_line", "correlation.nonce"
+  ]
+}

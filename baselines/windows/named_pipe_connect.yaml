@@ -1,0 +1,52 @@
+schema_version: "1.1"
+baseline_id: win.named_pipe.connect
+version: "0.1.0"
+title: Windows 命名管道连接遥测
+description: Helper 创建管道后 Actor 使用 CreateFileW 打开；本地双向 nonce 握手、Actor 身份和时间为绝对基准。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L0
+capability:
+  id: win.named_pipe.connect
+  version: "0.1.0"
+  parameters: { post_operation_hold_ms: 1000 }
+local_requirements:
+  - { field: facts.named_pipe.operation_succeeded, operator: equals, expected: true }
+  - { field: facts.named_pipe.operation, operator: equals, expected: connect }
+  - { field: facts.named_pipe.name, operator: present }
+  - { field: facts.named_pipe.actor_pid, operator: present }
+  - { field: facts.named_pipe.actor_executable, operator: present }
+  - { field: facts.named_pipe.helper_pid, operator: present }
+  - { field: facts.named_pipe.nonce_verified, operator: equals, expected: true }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.named_pipe.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.named_pipe.actor_pid, cloud_field: process.pid, strength: medium }
+cloud_expectations:
+  - id: named-pipe-connect-event
+    event_type: named_pipe
+    event_actions: [connect]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.named_pipe.occurred_at_utc
+      anchors:
+        - { local_field: facts.named_pipe.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.named_pipe.actor_pid, cloud_field: process.pid, strength: medium }
+        - { local_field: facts.named_pipe.name, cloud_field: named_pipe.name, strength: medium, normalizers: [lowercase] }
+    assertions:
+      - { field: named_pipe.operation_name, operator: equals, expected: 打开管道, severity: required }
+      - { field: process.pid, operator: equals, expected_from_local: facts.named_pipe.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.named_pipe.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: named_pipe.name, operator: equals, expected_from_local: facts.named_pipe.name, severity: recommended, normalizers: [lowercase] }
+      - { field: named_pipe.node_name, operator: present, severity: recommended }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: active
+  notes: 既有腾讯连接记录可能只导出反斜杠，故完整管道名为推荐项；打开语义、Actor 与时间仍为必需项。
+  references: [Tencent EDR FileEvents / NamedPipe]

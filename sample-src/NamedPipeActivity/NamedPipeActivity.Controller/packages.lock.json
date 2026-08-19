@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net8.0-windows7.0": {
+      "Microsoft.Data.Sqlite": {
+        "type": "Transitive",
+        "resolved": "8.0.29",
+        "contentHash": "UT01MJBITsT5CFLK9bhYWjz847BHlC2em7nhBNCCSYsI72mIzrXHfrQT8R+huQKJGZo94/a9GWGzKPn7mmlMyw==",
+        "dependencies": {
+          "Microsoft.Data.Sqlite.Core": "8.0.29",
+          "SQLitePCLRaw.bundle_e_sqlite3": "2.1.6"
+        }
+      },
+      "Microsoft.Data.Sqlite.Core": {
+        "type": "Transitive",
+        "resolved": "8.0.29",
+        "contentHash": "B/7Z0la03kNVdmZtgSN/PocA2nsPiVUq56iCh25oW8W31Yzg1ofrMWy79i0DcDOXuHjy7+jlsUlSNytwe9Et5A==",
+        "dependencies": {
+          "SQLitePCLRaw.core": "2.1.6"
+        }
+      },
+      "SQLitePCLRaw.bundle_e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "2.1.12",
+        "contentHash": "mAgscpQMLw5/nfA1Q5oJVAT29yROUo1ifZGbbTpx/lwZpSxMUGoYbKfmvdm8oXER+RzxqBmmQzeBEVKfeHv2nw==",
+        "dependencies": {
+          "SQLitePCLRaw.lib.e_sqlite3": "2.1.12",
+          "SQLitePCLRaw.provider.e_sqlite3": "2.1.12"
+        }
+      },
+      "SQLitePCLRaw.core": {
+        "type": "Transitive",
+        "resolved": "2.1.12",
+        "contentHash": "ETpNw9DY3ckWLgRRAeCHj+GKOuPi61aeczkXhgHexUvqoZBAYg8RYESE2J7O1M7+o6QbdSEZwrw9bfqztUVWXg==",
+        "dependencies": {
+          "System.Memory": "4.5.3"
+        }
+      },
+      "SQLitePCLRaw.lib.e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "2.1.12",
+        "contentHash": "fWi8Dbknuhgg72fWinIdjXVaqO1hHL4YBBwVLnr7e1c9TAZwJ0QE38j9syW1hwx6HaqEVTwI+O07WPdZn8Rp0w=="
+      },
+      "SQLitePCLRaw.provider.e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "2.1.12",
+        "contentHash": "W3oH4XIfCzFrgUSDKHhN6N+dgzA5YHOR2VxX8GB6Qy7CyrJJgxPEG8NirgYWlPQC5P2jz2knSsexWu4tDUL33g==",
+        "dependencies": {
+          "SQLitePCLRaw.core": "2.1.12"
+        }
+      },
+      "System.Memory": {
+        "type": "Transitive",
+        "resolved": "4.5.3",
+        "contentHash": "3oDzvc/zzetpTKWMShs1AADwZjQ/36HnsufHRPcOjyRAAMLDlu2iD33MBI2opxnezcVUtXyqDXXjoFMOU9c7SA=="
+      },
+      "YamlDotNet": {
+        "type": "Transitive",
+        "resolved": "18.1.0",
+        "contentHash": "5K+9KFg2TdTl7VXv88Qzi/0lqK6JFoNP3lRuImPYGRV7K/QYklDyTrj4+A+KAki1JsQi6qKY+hDyY7d6WRqjrw=="
+      },
+      "edrtest": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Data.Sqlite": "[8.0.29, )",
+          "SQLitePCLRaw.bundle_e_sqlite3": "[2.1.12, )",
+          "YamlDotNet": "[18.1.0, )"
+        }
+      },
+      "namedpipeactivity.protocol": {
+        "type": "Project"
+      }
+    }
+  }
+}

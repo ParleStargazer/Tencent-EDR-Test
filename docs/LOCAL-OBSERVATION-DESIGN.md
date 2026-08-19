@@ -300,14 +300,18 @@ correlation.nonce
 
 | 能力 | `event_type/action` | 必须收集 |
 | --- | --- | --- |
-| 组策略修改（Group Policy Modification） | `group_policy/modify` | Actor；Computer/User Scope；Policy Path/Name；后端注册表路径；前后值；结果 |
+| 组策略修改（Group Policy Modification） | `group_policy/modify` | `RegSetValueExW` Actor；HKLM 隔离策略键和值名；字符串类型；前后值；Actor PID/路径/命令行；紧邻 API 时间；独立复核与精确清理结果 |
+
+该能力仅使用 `HKLM\SOFTWARE\Policies\EdrTest\Runs\<nonce>\ValidationMarker`，不会写入任何 Windows 已知策略值。腾讯真实导出将其归入 `RegEvents / RegSetValue`，并通过 `Child.RegGroupName=组策略` 标识；BASELINE 仍以本地键、值、Actor 与 15 ms 时间为召回和强关联基准。
 
 ### 5.12 命名管道活动（Named Pipe Activity）
 
 | 能力 | `event_type/action` | 必须收集 |
 | --- | --- | --- |
-| 管道创建（Pipe Creation） | `named_pipe/create` | 完整 `\\.\pipe\...` 名；Server PID；方向、模拟级别；结果 |
-| 管道连接（Pipe Connection） | `named_pipe/connect` | 管道名；Server/Client PID；连接时间；结果 |
+| 管道创建（Pipe Creation） | `named_pipe/create` | Actor `CreateNamedPipeW`；完整 `\\.\pipe\EdrTest_...` 名；Actor/Helper 与 Server/Client PID；双向字节数、nonce 和紧邻 API 时间 |
+| 管道连接（Pipe Connection） | `named_pipe/connect` | Helper `CreateNamedPipeW`、Actor `CreateFileW`；完整管道名；两端 PID；连接时间；双向 nonce 握手结果 |
+
+两项能力都使用 Win32 原生 API，避免 .NET 运行时诊断管道污染测试目标。腾讯真实字段为 `FileEvents / NamedPipe`，`Child.PipeOpName` 分别为“创建管道”和“打开管道”。部分打开记录只包含 `\\`，因此连接 BASELINE 将完整管道名设为推荐项，但 Actor PID、路径、打开语义和 15 ms 时间仍为必需项。
 
 ### 5.13 EDR 系统运维活动（EDR SysOps）
 

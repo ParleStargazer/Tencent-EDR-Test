@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.named_pipe.connect",
+  "version": "0.1.0",
+  "display_name_zh": "管道连接",
+  "display_name_en": "Pipe Connection",
+  "description": "Helper 使用 CreateNamedPipeW 预置本轮唯一服务端，Actor 使用 CreateFileW 打开管道；双向 nonce 握手与连接进程身份由 Controller 独立验证。",
+  "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
+  "risk_level": "L0",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "NamedPipeConnect.Controller.exe" },
+  "participants": [
+    { "role": "actor", "executable": "NamedPipeConnect.Actor.exe" },
+    { "role": "helper", "executable": "NamedPipeConnect.Helper.exe" }
+  ],
+  "parameters": { "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1000, "minimum": 0, "maximum": 30000 } },
+  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "named_pipe.operation_succeeded", "named_pipe.occurred_at_utc", "named_pipe.completed_at_utc", "named_pipe.name",
+    "named_pipe.operation", "named_pipe.operation_name", "named_pipe.actor_pid", "named_pipe.actor_executable",
+    "named_pipe.actor_command_line", "named_pipe.helper_pid", "named_pipe.helper_executable", "named_pipe.server_pid",
+    "named_pipe.client_pid", "named_pipe.server_native_api", "named_pipe.client_native_api", "named_pipe.nonce_verified",
+    "named_pipe.bytes_client_to_server", "named_pipe.bytes_server_to_client", "correlation.nonce"
+  ]
+}
