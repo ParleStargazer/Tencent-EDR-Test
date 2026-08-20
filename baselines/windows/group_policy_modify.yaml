@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.group_policy.modify
-version: "0.2.0"
+version: "0.3.0"
 title: Windows 组策略修改遥测
-description: 同轮执行隔离策略键控制组与真实白名单策略值同值回写；本地原始字节哈希、Actor 身份和紧邻 RegSetValueExW 的时间为绝对基准，并采用检出情况最佳的方法形成能力结论。
+description: 同轮执行隔离策略键控制组与真实白名单策略值同值回写；没有现存值时临时预置 EnableSmartScreen=1 并精确恢复，本地原始字节哈希、Actor 身份和紧邻 RegSetValueExW 的时间为绝对基准。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,7 +10,7 @@ platform:
 risk_level: L2
 capability:
   id: win.group_policy.modify
-  version: "0.2.0"
+  version: "0.3.0"
   parameters: { post_operation_hold_ms: 1500, known_policy_target: auto }
 local_requirements:
   - { field: facts.group_policy.modify_succeeded, operator: equals, expected: true }
@@ -21,6 +21,8 @@ local_requirements:
   - { field: facts.group_policy.isolated_policy_key.after.value_data_sha256, operator: present }
   - { field: facts.group_policy.isolated_policy_key.actor_pid, operator: present }
   - { field: facts.group_policy.known_policy_same_value.applicable, operator: equals, expected: true }
+  - { field: facts.group_policy.known_policy_same_value.prepared_for_test, operator: present }
+  - { field: facts.group_policy.known_policy_same_value.original_value_exists, operator: present }
   - { field: facts.group_policy.known_policy_same_value.modify_succeeded, operator: equals, expected: true }
   - { field: facts.group_policy.known_policy_same_value.target_id, operator: present }
   - { field: facts.group_policy.known_policy_same_value.key_path, operator: present }
@@ -64,7 +66,7 @@ cloud_expectations:
       - { field: registry.group_name, operator: equals, expected: 组策略, severity: required }
       - { field: registry.monitor_name, operator: equals, expected: 组策略, severity: required }
   - id: group-policy-known-same-value-reg-set-value
-    method: { id: known_policy_same_value, title: 真实白名单策略值同值回写（L2） }
+    method: { id: known_policy_same_value, title: 真实策略同值回写（已有值或安全兜底，L2） }
     event_type: registry
     event_actions: [set_value]
     cardinality: { min: 1, max: 10 }
@@ -90,5 +92,5 @@ scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: 260820092000run 表明产品只对已知真实策略路径分类；新增仅针对已存在白名单值的同类型同原始字节回写，缺失时禁止创建。
+  change_reason: 260820200600run 表明测试机可能没有现存白名单值；auto 模式缺失时临时预置参考日志确认的安全增强值 EnableSmartScreen=1，由 Actor 同值回写后精确恢复。
   references: [reference/260820092000run, reference/260820092000run/edr_group_policy_reg_relate.json, Tencent EDR RegEvents / RegSetValue]

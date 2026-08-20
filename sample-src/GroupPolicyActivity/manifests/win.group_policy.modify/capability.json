@@ -1,10 +1,10 @@
 {
   "schema_version": "1.1",
   "capability_id": "win.group_policy.modify",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "display_name_zh": "组策略修改",
   "display_name_en": "Group Policy Modification",
-  "description": "同轮执行隔离策略键控制组和真实白名单策略值同值回写；后者只处理已存在值，以原生类型和原始字节写回并验证 SHA-256 完全不变。",
+  "description": "同轮执行隔离策略键控制组和真实白名单策略值同值回写；若没有已存在值，临时预置安全增强值 EnableSmartScreen=1，采证后精确恢复原状态。",
   "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
   "risk_level": "L2",
   "required_privilege": "administrator",
@@ -38,6 +38,8 @@
     "group_policy.isolated_policy_key.value_name",
     "group_policy.isolated_policy_key.actor_pid",
     "group_policy.known_policy_same_value.applicable",
+    "group_policy.known_policy_same_value.prepared_for_test",
+    "group_policy.known_policy_same_value.original_value_exists",
     "group_policy.known_policy_same_value.requested_target",
     "correlation.nonce"
   ]

@@ -19,7 +19,7 @@ if (-not $SuppressPrivilegeWarning) {
     try {
         $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
         if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
-            Write-Warning "组策略修改包含 L2 真实策略同值回写，需要管理员权限并显式确认高风险；当前仍可构建能力包，但实际运行会被 Runner 安全跳过。"
+            Write-Warning "组策略修改包含 L2 真实策略同值回写；没有现存白名单值时会临时预置 EnableSmartScreen=1 并恢复。需要管理员权限并显式确认高风险；当前仍可构建能力包，但实际运行会被 Runner 安全跳过。"
         }
     } finally { $identity.Dispose() }
 }

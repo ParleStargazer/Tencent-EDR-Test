@@ -783,7 +783,7 @@ test("SQLite v2 可以初始化且具备 JSON 导出所需的关键采集列", a
 
 test("组策略与命名管道三项能力具备完整样本、BASELINE、映射和启动接入", async () => {
   const definitions = [
-    ["win.group_policy.modify", "group_policy_modify.yaml", 1, "administrator", "0.2.0", "L2"],
+    ["win.group_policy.modify", "group_policy_modify.yaml", 1, "administrator", "0.3.0", "L2"],
     ["win.named_pipe.create", "named_pipe_create.yaml", 2, "standard_user", "0.1.0", "L0"],
     ["win.named_pipe.connect", "named_pipe_connect.yaml", 2, "standard_user", "0.1.0", "L0"],
   ];
@@ -817,9 +817,15 @@ test("组策略与命名管道三项能力具备完整样本、BASELINE、映射
   assert.match(groupProtocol, /SHA256\.HashData/);
   assert.match(groupProtocol, /class KnownPolicyTargetCatalog/);
   assert.match(groupProtocol, /ResolveCandidates/);
+  assert.match(groupController, /PrepareSafeKnownPolicyValue/);
+  assert.match(groupController, /EnableSmartScreen/);
+  assert.match(groupController, /RegistryValueKind\.DWord/);
+  assert.match(groupController, /拒绝覆盖并发策略更新/);
+  assert.match(groupController, /RestoreKnownPolicyOriginalState/);
+  assert.match(groupController, /DeleteSafeKnownPolicyValue/);
   assert.match(groupController, /Sequence = 1,\s+Action = "delete_exact_group_policy_test_key"/);
   assert.match(groupController, /Sequence = 2,\s+Action = "no_known_policy_value_selected"/);
-  assert.match(groupController, /Sequence = 2,\s+Action = "verify_known_policy_value_unchanged"/);
+  assert.match(groupController, /Sequence = 2,\s+Action = original\.ValueExists \? "verify_known_policy_value_unchanged" : "restore_created_known_policy_value"/);
   assert.ok(groupManifest.parameters.known_policy_target.allowed_values.includes("auto"));
   assert.match(groupBaseline, /method: \{ id: isolated_policy_key/);
   assert.match(groupBaseline, /method: \{ id: known_policy_same_value/);

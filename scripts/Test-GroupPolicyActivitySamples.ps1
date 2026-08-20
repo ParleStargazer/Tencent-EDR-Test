@@ -20,11 +20,10 @@ if ($run.run.status -ne "COMPLETED" -or $run.capabilities[0].status -ne "LOCAL_P
 $facts = @{}
 foreach ($fact in $run.local_facts) { if ($fact.case_run_id -eq $run.capabilities[0].case_run_id) { $facts[$fact.key] = $fact.value } }
 if ($facts['group_policy.isolated_policy_key.modify_succeeded'] -ne $true) { throw "隔离策略键控制组未通过。" }
-if ($facts['group_policy.known_policy_same_value.applicable'] -eq $true) {
-    if ($facts['group_policy.known_policy_same_value.modify_succeeded'] -ne $true) { throw "真实策略同值回写未通过。" }
-    if ($facts['group_policy.known_policy_same_value.before.value_data_sha256'] -ne $facts['group_policy.known_policy_same_value.after.value_data_sha256']) { throw "真实策略值写前写后哈希不一致。" }
-    if ($facts['group_policy.known_policy_same_value.before.raw_data_length'] -ne $facts['group_policy.known_policy_same_value.after.raw_data_length']) { throw "真实策略值写前写后长度不一致。" }
-} else {
-    Write-Warning "当前机器没有已存在的白名单策略值；L2 子测试安全标记为不适用，未创建真实策略值。"
-}
+if ($facts['group_policy.known_policy_same_value.applicable'] -ne $true) { throw "auto 模式下 L2 真实策略子测试未执行。" }
+if ($facts['group_policy.known_policy_same_value.modify_succeeded'] -ne $true) { throw "真实策略同值回写未通过。" }
+if ($facts['group_policy.known_policy_same_value.before.value_data_sha256'] -ne $facts['group_policy.known_policy_same_value.after.value_data_sha256']) { throw "真实策略值写前写后哈希不一致。" }
+if ($facts['group_policy.known_policy_same_value.before.raw_data_length'] -ne $facts['group_policy.known_policy_same_value.after.raw_data_length']) { throw "真实策略值写前写后长度不一致。" }
+$cleanup = @($run.cleanup_results | Where-Object case_run_id -eq $run.capabilities[0].case_run_id | Sort-Object sequence)
+if ($cleanup.Count -ne 2 -or $cleanup[0].status -ne 'succeeded' -or $cleanup[1].status -ne 'succeeded') { throw "组策略两阶段清理未全部通过。" }
 Write-Host "[PASS] 组策略修改端到端测试通过：$($local.FullName)"

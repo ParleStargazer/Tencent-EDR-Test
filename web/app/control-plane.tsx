@@ -187,7 +187,7 @@ export const capabilityCatalog: CapabilityCategory[] = [
     nameZh: "其他相关事件",
     nameEn: "Other Relevant Events",
     capabilities: [
-      defineCapability("win.group_policy.modify", "组策略修改", "Group Policy Modification", "L2", "Controller · Actor · 隔离键 + 真实策略同值回写"),
+      defineCapability("win.group_policy.modify", "组策略修改", "Group Policy Modification", "L2", "Controller · Actor · 隔离键 + 可逆真实策略同值回写"),
     ],
   },
   {

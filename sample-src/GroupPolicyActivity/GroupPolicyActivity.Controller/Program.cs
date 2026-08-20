@@ -19,6 +19,7 @@ internal static class Program
         string? isolatedKeyPath = null;
         KnownPolicyTarget? knownTarget = null;
         PolicySnapshot? knownOriginal = null;
+        PolicySnapshot? knownPrepared = null;
         var isolatedCleanupCompleted = false;
         var knownCleanupCompleted = false;
         var stopwatch = Stopwatch.StartNew();
@@ -76,6 +77,7 @@ internal static class Program
             if (knownTarget is null)
             {
                 AddFact(database, invocation, "group_policy.known_policy_same_value.applicable", JsonValue.Create(false), null);
+                AddFact(database, invocation, "group_policy.known_policy_same_value.prepared_for_test", JsonValue.Create(false), null);
                 AddFact(database, invocation, "group_policy.known_policy_same_value.not_applicable_reason", JsonValue.Create(notApplicableReason), null);
                 database.AddCleanup(new CleanupObservation
                 {
@@ -90,24 +92,35 @@ internal static class Program
             else
             {
                 knownOriginal = RegistryNative.Snapshot(knownTarget.KeyPath, knownTarget.ValueName);
-                if (!knownOriginal.ValueExists) throw new IOException("选中的白名单策略值在执行前已不存在；拒绝创建。");
+                var preparedForTest = !knownOriginal.ValueExists;
+                if (preparedForTest)
+                {
+                    PrepareSafeKnownPolicyValue(knownTarget);
+                    knownPrepared = RegistryNative.Snapshot(knownTarget.KeyPath, knownTarget.ValueName);
+                    if (!IsSafeFallbackValue(knownTarget, knownPrepared))
+                        throw new IOException("未能确认 L2 兜底策略值已按 DWORD 1 安全预置。");
+                }
+                else knownPrepared = knownOriginal;
+                AddFact(database, invocation, "group_policy.known_policy_same_value.prepared_for_test", JsonValue.Create(preparedForTest), null);
+                AddFact(database, invocation, "group_policy.known_policy_same_value.original_key_exists", JsonValue.Create(knownOriginal.KeyExists), null);
+                AddFact(database, invocation, "group_policy.known_policy_same_value.original_value_exists", JsonValue.Create(knownOriginal.ValueExists), null);
                 var knownArguments = new[] { "--method", "known_policy_same_value", "--known-policy-target", knownTarget.Id };
                 var known = ExecuteMethod(database, invocation, package, "known_policy_same_value", "真实策略同值回写", knownArguments,
                     "group-policy-known-value-result.json", holdMs, ref activeActor, stopwatch,
                     result => result.Succeeded
                         && result.TargetId == knownTarget.Id
-                        && SnapshotsEqual(knownOriginal, result.Before)
+                        && SnapshotsEqual(knownPrepared, result.Before)
                         && SnapshotsEqual(result.Before, result.After)
                         && SnapshotsEqual(result.After, RegistryNative.Snapshot(knownTarget.KeyPath, knownTarget.ValueName)));
                 knownMethodSucceeded = known.Succeeded;
-                var knownCleanup = VerifyKnownPolicyUnchanged(invocation, knownTarget, knownOriginal, activeActor);
+                var knownCleanup = RestoreKnownPolicyOriginalState(invocation, knownTarget, knownOriginal, knownPrepared, activeActor);
                 activeActor?.Dispose(); activeActor = null;
                 database.AddCleanup(knownCleanup);
                 knownCleanupCompleted = true;
                 if (knownCleanup.Status != "succeeded")
                 {
                     database.CompleteCapability(invocation.CaseRunId, "CLEANUP_ERROR", DateTimeOffset.UtcNow, stopwatch.ElapsedMilliseconds,
-                        "KNOWN_POLICY_VALUE_CHANGED", knownCleanup.ErrorMessage);
+                        "KNOWN_POLICY_RESTORE_FAILED", knownCleanup.ErrorMessage);
                     return 30;
                 }
             }
@@ -139,7 +152,7 @@ internal static class Program
                     }
                     if (!knownCleanupCompleted && knownTarget is not null && knownOriginal is not null)
                     {
-                        var cleanup = VerifyKnownPolicyUnchanged(invocation, knownTarget, knownOriginal, activeActor);
+                        var cleanup = RestoreKnownPolicyOriginalState(invocation, knownTarget, knownOriginal, knownPrepared, activeActor);
                         database.AddCleanup(cleanup);
                         cleanupFailed |= cleanup.Status != "succeeded";
                     }
@@ -248,7 +261,8 @@ internal static class Program
     private static KnownPolicyTarget? SelectKnownTarget(string selection, out string? reason)
     {
         var errors = new List<string>();
-        foreach (var target in KnownPolicyTargetCatalog.ResolveCandidates(selection))
+        var candidates = KnownPolicyTargetCatalog.ResolveCandidates(selection);
+        foreach (var target in candidates)
         {
             try
             {
@@ -256,6 +270,12 @@ internal static class Program
                 if (snapshot.ValueExists) { reason = null; return target; }
             }
             catch (Exception exception) { errors.Add($"{target.Id}: {exception.Message}"); }
+        }
+        var fallback = candidates.FirstOrDefault(target => target.Id == "windows-smart-screen-enable");
+        if (fallback is not null)
+        {
+            reason = "当前机器没有已存在的白名单策略值；L2 子测试将临时预置安全增强值 EnableSmartScreen=1，并在采证后恢复原状态。";
+            return fallback;
         }
         reason = errors.Count > 0
             ? $"白名单策略值均不可读取：{string.Join(" | ", errors)}"
@@ -265,17 +285,69 @@ internal static class Program
         return null;
     }
 
+    private static void PrepareSafeKnownPolicyValue(KnownPolicyTarget target)
+    {
+        if (target.Id != "windows-smart-screen-enable"
+            || target.KeyPath != @"SOFTWARE\Policies\Microsoft\Windows\System"
+            || target.ValueName != "EnableSmartScreen")
+            throw new InvalidOperationException("拒绝为非安全兜底目标创建组策略值。");
+        using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        using var key = root.CreateSubKey(target.KeyPath, writable: true)
+            ?? throw new IOException("无法创建 Windows System 策略键。");
+        if (key.GetValueNames().Any(name => string.Equals(name, target.ValueName, StringComparison.OrdinalIgnoreCase)))
+            throw new IOException("安全兜底值在预置前被其他进程创建；拒绝覆盖并发策略更新，请重试。");
+        key.SetValue(target.ValueName, 1, RegistryValueKind.DWord);
+    }
+
+    private static bool IsSafeFallbackValue(KnownPolicyTarget target, PolicySnapshot snapshot) =>
+        target.Id == "windows-smart-screen-enable"
+        && snapshot.ValueExists && snapshot.NativeType == 4 && snapshot.RawDataLength == 4
+        && string.Equals(snapshot.ValueData, "1", StringComparison.Ordinal);
+
     private static bool SnapshotsEqual(PolicySnapshot left, PolicySnapshot right) =>
         left.KeyExists && left.ValueExists && right.KeyExists && right.ValueExists
         && left.NativeType == right.NativeType && left.RawDataLength == right.RawDataLength
         && string.Equals(left.ValueDataSha256, right.ValueDataSha256, StringComparison.Ordinal);
 
-    private static CleanupObservation VerifyKnownPolicyUnchanged(ControllerInvocation invocation, KnownPolicyTarget target,
-        PolicySnapshot original, Process? actor)
+    private static CleanupObservation RestoreKnownPolicyOriginalState(ControllerInvocation invocation, KnownPolicyTarget target,
+        PolicySnapshot original, PolicySnapshot? prepared, Process? actor)
     {
         var started = DateTimeOffset.UtcNow;
         var errors = new List<string>();
         Stop(actor, errors);
+        var valueRemoved = false;
+        var emptyCreatedKeyRemoved = false;
+        PolicySnapshot beforeRestore;
+        try { beforeRestore = RegistryNative.Snapshot(target.KeyPath, target.ValueName); }
+        catch (Exception exception)
+        {
+            errors.Add(exception.Message);
+            beforeRestore = new PolicySnapshot { KeyExists = false, ValueExists = false };
+        }
+        if (original.ValueExists)
+        {
+            if (!SnapshotsEqual(original, beforeRestore))
+                errors.Add("真实策略值的类型、长度或原始数据哈希与测试前不同；未自动覆盖可能的并发策略更新。");
+        }
+        else if (beforeRestore.ValueExists)
+        {
+            if ((prepared is not null && SnapshotsEqual(prepared, beforeRestore)) || IsSafeFallbackValue(target, beforeRestore))
+            {
+                try
+                {
+                    DeleteSafeKnownPolicyValue(target);
+                    valueRemoved = true;
+                }
+                catch (Exception exception) { errors.Add(exception.Message); }
+            }
+            else errors.Add("临时策略值已被外部进程改变；为避免删除并发策略更新，未自动移除。");
+        }
+        var afterValueRestore = SafeSnapshot(target.KeyPath, target.ValueName);
+        if (!original.KeyExists && !afterValueRestore.ValueExists)
+        {
+            try { emptyCreatedKeyRemoved = RemoveSafeKnownPolicyKeyIfEmpty(target); }
+            catch (Exception exception) { errors.Add(exception.Message); }
+        }
         PolicySnapshot current;
         try { current = RegistryNative.Snapshot(target.KeyPath, target.ValueName); }
         catch (Exception exception)
@@ -283,22 +355,60 @@ internal static class Program
             errors.Add(exception.Message);
             current = new PolicySnapshot { KeyExists = false, ValueExists = false };
         }
-        if (!SnapshotsEqual(original, current))
-            errors.Add("真实策略值的类型、长度或原始数据哈希与测试前不同；未自动覆盖可能的并发策略更新。");
+        if (original.ValueExists ? !SnapshotsEqual(original, current) : current.ValueExists)
+            errors.Add("真实策略值未恢复到测试前状态。");
         var alive = actor is not null && IsAlive(actor);
         return new CleanupObservation
         {
             CaseRunId = invocation.CaseRunId, Sequence = 2,
-            Action = "verify_known_policy_value_unchanged",
+            Action = original.ValueExists ? "verify_known_policy_value_unchanged" : "restore_created_known_policy_value",
             Status = errors.Count == 0 && !alive ? "succeeded" : "failed", StartedAtUtc = started, EndedAtUtc = DateTimeOffset.UtcNow,
             Before = new JsonObject
             {
                 ["target_id"] = target.Id, ["key_path"] = $"HKEY_LOCAL_MACHINE\\{target.KeyPath}",
-                ["value_name"] = target.ValueName, ["snapshot"] = SnapshotJson(original),
+                ["value_name"] = target.ValueName, ["original_snapshot"] = SnapshotJson(original),
+                ["prepared_snapshot"] = prepared is null ? null : SnapshotJson(prepared),
+                ["before_restore_snapshot"] = SnapshotJson(beforeRestore),
             },
-            After = new JsonObject { ["snapshot"] = SnapshotJson(current), ["actor_alive"] = alive, ["registry_write_during_cleanup"] = false },
+            After = new JsonObject
+            {
+                ["snapshot"] = SnapshotJson(current), ["actor_alive"] = alive,
+                ["registry_write_during_cleanup"] = !original.ValueExists,
+                ["temporary_value_removed"] = valueRemoved,
+                ["empty_created_key_removed"] = emptyCreatedKeyRemoved,
+            },
             ErrorMessage = errors.Count == 0 ? null : string.Join(" | ", errors),
         };
+    }
+
+    private static void DeleteSafeKnownPolicyValue(KnownPolicyTarget target)
+    {
+        if (target.Id != "windows-smart-screen-enable")
+            throw new InvalidOperationException("拒绝删除非安全兜底目标的策略值。");
+        using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        using var key = root.OpenSubKey(target.KeyPath, writable: true);
+        if (key is null) return;
+        key.DeleteValue(target.ValueName, throwOnMissingValue: false);
+    }
+
+    private static bool RemoveSafeKnownPolicyKeyIfEmpty(KnownPolicyTarget target)
+    {
+        if (target.Id != "windows-smart-screen-enable")
+            throw new InvalidOperationException("拒绝清理非安全兜底目标的策略键。");
+        var separator = target.KeyPath.LastIndexOf('\\');
+        var parentPath = target.KeyPath[..separator];
+        var leaf = target.KeyPath[(separator + 1)..];
+        using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        using (var key = root.OpenSubKey(target.KeyPath, writable: false))
+        {
+            if (key is null) return true;
+            if (key.GetValueNames().Length > 0 || key.GetSubKeyNames().Length > 0) return false;
+        }
+        using var parent = root.OpenSubKey(parentPath, writable: true)
+            ?? throw new IOException("安全兜底策略父键在清理前已不存在。");
+        parent.DeleteSubKey(leaf, throwOnMissingSubKey: false);
+        using var remaining = root.OpenSubKey(target.KeyPath, writable: false);
+        return remaining is null;
     }
 
     private static CleanupObservation CleanupIsolated(ControllerInvocation invocation, string keyPath, Process? actor)

@@ -793,7 +793,7 @@ public static class Program
             ["run"] = new JsonObject { ["run_id"] = Ids.NewUuid7(), ["host"] = new JsonObject { ["hostname"] = "POLICY-FIXTURE", ["machine_id"] = "policy-fixture-host" } },
             ["capabilities"] = new JsonArray(new JsonObject
             {
-                ["case_run_id"] = caseRunId, ["capability_id"] = "win.group_policy.modify", ["capability_version"] = "0.2.0",
+                ["case_run_id"] = caseRunId, ["capability_id"] = "win.group_policy.modify", ["capability_version"] = "0.3.0",
                 ["display_name_zh"] = "组策略修改", ["display_name_en"] = "Group Policy Modification", ["status"] = "LOCAL_PASS",
                 ["nonce"] = "0123456789abcdef0123456789abcdef", ["started_at_utc"] = Values.Utc(baseTime.AddSeconds(-1)), ["ended_at_utc"] = Values.Utc(baseTime.AddSeconds(2)),
             }),
@@ -819,6 +819,8 @@ public static class Program
             },
         };
         local["local_facts"]!.AsArray().Add(Fact(caseRunId, "group_policy.modify_succeeded", true));
+        local["local_facts"]!.AsArray().Add(Fact(caseRunId, "group_policy.known_policy_same_value.prepared_for_test", false));
+        local["local_facts"]!.AsArray().Add(Fact(caseRunId, "group_policy.known_policy_same_value.original_value_exists", true));
         foreach (var definition in definitions)
         {
             local["programs"]!.AsArray().Add(new JsonObject
