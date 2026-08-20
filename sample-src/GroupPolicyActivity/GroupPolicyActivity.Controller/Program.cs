@@ -209,7 +209,8 @@ internal static class Program
         database.AddArtifact(artifact);
         var localEvent = new LocalEventObservation
         {
-            CaseRunId = invocation.CaseRunId, EventType = "group_policy", EventAction = "modify", Nonce = invocation.Nonce,
+            CaseRunId = invocation.CaseRunId, Sequence = actorInstanceIndex + 1,
+            EventType = "group_policy", EventAction = "modify", Nonce = invocation.Nonce,
             OccurredAtUtc = result.OccurredAtUtc, ObservedAtUtc = DateTimeOffset.UtcNow,
             MonotonicOffsetMs = stopwatch.ElapsedMilliseconds, Source = "group_policy_activity_controller",
             CollectionMethod = method == "known_policy_same_value"

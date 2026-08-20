@@ -15,7 +15,7 @@
 - 本地导出 Schema：[schemas/run-export.schema.json](schemas/run-export.schema.json)
 - 分类事件数据 Schema：[schemas/local-event-data.schema.json](schemas/local-event-data.schema.json)
 - 本地信息采集设计：[docs/LOCAL-OBSERVATION-DESIGN.md](docs/LOCAL-OBSERVATION-DESIGN.md)
-- 能力样本接入指南：[docs/SAMPLE-INTEGRATION.md](docs/SAMPLE-INTEGRATION.md)
+- 新能力开发与接入规范：[docs/SAMPLE-INTEGRATION.md](docs/SAMPLE-INTEGRATION.md)
 - Process Activity 六项能力样本：[docs/PROCESS-ACTIVITY-SAMPLES.md](docs/PROCESS-ACTIVITY-SAMPLES.md)
 - File Manipulation 五项能力样本：[docs/FILE-MANIPULATION-SAMPLES.md](docs/FILE-MANIPULATION-SAMPLES.md)
 - User Account Activity 五项能力样本：[docs/USER-ACCOUNT-ACTIVITY-SAMPLES.md](docs/USER-ACCOUNT-ACTIVITY-SAMPLES.md)

@@ -28,7 +28,7 @@ public static class Program
         var failures = new List<string>();
         await RunTest("能力包路径和参数校验", TestManifestValidation, failures);
         await RunTest("协议 JSON 遇到短暂文件独占时可靠重试", TestReliableProtocolFile, failures);
-        await RunTest("同角色多程序实例使用独立序号入库", TestMultipleProgramInstanceIndexes, failures);
+        await RunTest("多子测试使用独立程序与事件序号入库", TestMultipleObservationIndexes, failures);
         await RunTest("L2/L3 默认风险门禁", TestHighRiskGate, failures);
         await RunTest("同一轮按顺序执行多个能力", TestMultipleCapabilities, failures);
         await RunTest("Runner 与 SQLite 完整保留长日志", TestLongControllerOutput, failures);
@@ -111,7 +111,7 @@ public static class Program
         Assert(!Directory.EnumerateFiles(fixture.Path, "*.tmp-*", SearchOption.TopDirectoryOnly).Any(), "协议写入遗留临时文件。");
     }
 
-    private static Task TestMultipleProgramInstanceIndexes()
+    private static Task TestMultipleObservationIndexes()
     {
         using var fixture = TestDirectory.Create();
         var manifestPath = PreparePackage(fixture.Path, "L0", "--fixture-controller");
@@ -124,13 +124,38 @@ public static class Program
 
         using var database = RunDatabase.Create(databasePath, new RunSeed(runId, "program-instance-indexes", null, observedAt));
         database.AddCapability(runId, caseRunId, 1, "instance-indexes", package, JsonSerializer.SerializeToElement(new { }));
-        database.AddProgram(CreateProgram(caseRunId, "actor", 0, executable, 10001, Environment.ProcessId,
-            $"\"{executable}\" --method first", observedAt));
-        database.AddProgram(CreateProgram(caseRunId, "actor", 1, executable, 10002, Environment.ProcessId,
-            $"\"{executable}\" --method second", observedAt.AddMilliseconds(1)));
+        var firstActor = CreateProgram(caseRunId, "actor", 0, executable, 10001, Environment.ProcessId,
+            $"\"{executable}\" --method first", observedAt);
+        var secondActor = CreateProgram(caseRunId, "actor", 1, executable, 10002, Environment.ProcessId,
+            $"\"{executable}\" --method second", observedAt.AddMilliseconds(1));
+        database.AddProgram(firstActor);
+        database.AddProgram(secondActor);
+        database.AddEvent(IndexedEvent(caseRunId, firstActor.ProgramInstanceId, 1, observedAt, "first"));
+        database.AddEvent(IndexedEvent(caseRunId, secondActor.ProgramInstanceId, 2, observedAt.AddMilliseconds(1), "second"));
 
         return Task.CompletedTask;
     }
+
+    private static LocalEventObservation IndexedEvent(
+        string caseRunId, string actorProgramId, int sequence, DateTimeOffset occurredAt, string method) => new()
+    {
+        CaseRunId = caseRunId,
+        Sequence = sequence,
+        EventType = "group_policy",
+        EventAction = "modify",
+        Nonce = "instance-indexes",
+        OccurredAtUtc = occurredAt,
+        ObservedAtUtc = occurredAt,
+        Source = "multi_observation_index_test",
+        CollectionMethod = method,
+        ActorProgramId = actorProgramId,
+        Data = new JsonObject
+        {
+            ["kind"] = "group_policy",
+            ["operation"] = "modify",
+            ["method"] = method,
+        },
+    };
 
     private static async Task TestEndToEnd()
     {

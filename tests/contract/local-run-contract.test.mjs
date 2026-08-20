@@ -826,6 +826,7 @@ test("组策略与命名管道三项能力具备完整样本、BASELINE、映射
   assert.match(groupController, /"isolated_policy_key" => 0/);
   assert.match(groupController, /"known_policy_same_value" => 1/);
   assert.match(groupController, /InstanceIndex = instanceIndex/);
+  assert.match(groupController, /Sequence = actorInstanceIndex \+ 1/);
   assert.match(groupController, /Sequence = 1,\s+Action = "delete_exact_group_policy_test_key"/);
   assert.match(groupController, /Sequence = 2,\s+Action = "no_known_policy_value_selected"/);
   assert.match(groupController, /Sequence = 2,\s+Action = original\.ValueExists \? "verify_known_policy_value_unchanged" : "restore_created_known_policy_value"/);
@@ -842,4 +843,40 @@ test("组策略与命名管道三项能力具备完整样本、BASELINE、映射
   assert.match(front, /"win\.named_pipe\.create": "NamedPipe"/);
   assert.match(start, /Build-GroupPolicyActivitySamples\.ps1/);
   assert.match(start, /Build-NamedPipeActivitySamples\.ps1/);
+});
+
+test("既有多子测试 Controller 显式分配 SQLite 唯一序号", async () => {
+  const [file, registry, network, scheduledTask, groupPolicy, process] = await Promise.all([
+    "FileManipulation",
+    "RegistryActivity",
+    "NetworkActivity",
+    "ScheduledTaskActivity",
+    "GroupPolicyActivity",
+    "ProcessActivity",
+  ].map((domain) => readFile(new URL(`sample-src/${domain}/${domain}.Controller/Program.cs`, root), "utf8")));
+
+  assert.match(file, /foreach \(var \(subtest, instanceIndex\) in Subtests\.Select/);
+  assert.match(file, /InstanceIndex = state\.InstanceIndex/);
+  assert.ok([...file.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
+
+  assert.match(registry, /foreach \(var \(method, index\) in Methods\.Select/);
+  assert.match(registry, /InstanceIndex = state\.InstanceIndex/);
+  assert.ok([...registry.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
+
+  assert.match(network, /foreach \(var \(subtest, instanceIndex\) in Subtests\(operation\)\.Select/);
+  assert.match(network, /InstanceIndex = instanceIndex/);
+  assert.ok([...network.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
+
+  assert.match(scheduledTask, /foreach \(var \(method, index\) in methods\.Select/);
+  assert.ok([...scheduledTask.matchAll(/InstanceIndex = instanceIndex/g)].length >= 2);
+  assert.match(scheduledTask, /Sequence = index \+ 1/);
+  assert.match(scheduledTask, /Cleanup\(invocation, taskPath, actorProcess, method, index \+ 1\)/);
+
+  assert.match(groupPolicy, /"isolated_policy_key" => 0/);
+  assert.match(groupPolicy, /"known_policy_same_value" => 1/);
+  assert.match(groupPolicy, /Sequence = actorInstanceIndex \+ 1/);
+
+  assert.match(process, /var imageAttempts = operation == "image_load"/);
+  assert.match(process, /imageAttempts\.Select\(\(attempt, index\) => CreateEvent\(/);
+  assert.match(process, /evidence\?\.ArtifactId, attempt, index \+ 1/);
 });
