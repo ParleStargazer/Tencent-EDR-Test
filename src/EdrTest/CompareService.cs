@@ -1022,6 +1022,7 @@ public static class CompareService
             "registry.key" => "EDR 记录的注册表键路径",
             "registry.value_name" => "EDR 记录的注册表值名",
             "registry.value_data" => "EDR 记录的注册表值数据",
+            "registry.monitor_name" => "EDR 记录的注册表监控规则名称",
             "thread.id" => "EDR 记录的线程 ID",
             _ when field.StartsWith("facts.", StringComparison.Ordinal) => "本地行为证据",
             _ => $"字段 {field}",

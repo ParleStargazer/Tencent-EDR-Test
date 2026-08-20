@@ -32,5 +32,6 @@ routes:
       "registry.value_type": { source: registry_value_type }
       "registry.old_value_type": { source: registry_old_value_type }
       "registry.group_name": { source: registry_group_name }
+      "registry.monitor_name": { source: monitor_name, on_empty: null }
 raw_reference: { id_field: event_id, ordinal_base: 0 }
 unmapped_fields: { policy: count-and-ignore, preserve_in_report: false }

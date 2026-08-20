@@ -187,7 +187,7 @@ export const capabilityCatalog: CapabilityCategory[] = [
     nameZh: "其他相关事件",
     nameEn: "Other Relevant Events",
     capabilities: [
-      defineCapability("win.group_policy.modify", "组策略修改", "Group Policy Modification", "L1"),
+      defineCapability("win.group_policy.modify", "组策略修改", "Group Policy Modification", "L2", "Controller · Actor · 隔离键 + 真实策略同值回写"),
     ],
   },
   {
@@ -361,9 +361,11 @@ export function ControlPlane() {
     [selectedIds],
   );
 
-  const selectedRiskCount = selectedCapabilities.filter(
-    (capability) => capability.risk === "L1",
-  ).length;
+  const selectedRiskCount = selectedCapabilities.filter((capability) => capability.risk !== "L0").length;
+  const selectedRiskLevel = selectedCapabilities.reduce<RiskLevel>(
+    (maximum, capability) => Number(capability.risk.slice(1)) > Number(maximum.slice(1)) ? capability.risk : maximum,
+    "L0",
+  );
   const activeRunId = activeRun?.id;
   const activeRunStatus = activeRun?.status;
 
@@ -721,7 +723,7 @@ export function ControlPlane() {
           <article className="metric-card">
             <p>本轮已选</p>
             <strong>{selectedIds.length}</strong>
-            <span>{selectedRiskCount ? `${selectedRiskCount} 项 L1` : "全部为 L0"}</span>
+            <span>{selectedRiskCount ? `${selectedRiskCount} 项非 L0 · 最高 ${selectedRiskLevel}` : "全部为 L0"}</span>
           </article>
           <article className="metric-card">
             <p>运行数据库</p>
@@ -810,7 +812,7 @@ export function ControlPlane() {
               <div className="plan-summary">
                 <div><span>执行模式</span><strong>顺序执行</strong></div>
                 <div><span>能力数量</span><strong>{selectedIds.length} 项</strong></div>
-                <div><span>风险上限</span><strong>{selectedRiskCount ? "L1" : "L0"}</strong></div>
+                <div><span>风险上限</span><strong>{selectedRiskLevel}</strong></div>
                 <div><span>数据文件</span><strong>独立 .db</strong></div>
               </div>
               <button className="primary-button" type="button" onClick={startRun} disabled={activeRun?.status === "running"}>

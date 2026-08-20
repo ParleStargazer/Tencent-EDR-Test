@@ -125,7 +125,8 @@
         "old_value_data": {},
         "value_type": { "type": ["string", "integer", "null"] },
         "old_value_type": { "type": ["string", "integer", "null"] },
-        "group_name": { "type": ["string", "null"] }
+        "group_name": { "type": ["string", "null"] },
+        "monitor_name": { "type": ["string", "null"] }
       },
       "additionalProperties": false
     },

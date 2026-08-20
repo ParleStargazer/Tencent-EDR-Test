@@ -1169,6 +1169,7 @@ routes:
       "registry.value_type": { source: "Child.RegValType", on_empty: null }
       "registry.old_value_type": { source: "Child.RegOldValType", on_empty: null }
       "registry.group_name": { source: "Child.RegGroupName", on_empty: null }
+      "registry.monitor_name": { source: "Common.MonitorName", on_empty: null }
 
   - route_id: registry-set-value
     when:
@@ -1197,6 +1198,7 @@ routes:
       "registry.value_type": { source: "Child.RegValType", on_empty: null }
       "registry.old_value_type": { source: "Child.RegOldValType", on_empty: null }
       "registry.group_name": { source: "Child.RegGroupName", on_empty: null }
+      "registry.monitor_name": { source: "Common.MonitorName", on_empty: null }
 
   - route_id: registry-delete
     when:
@@ -1225,6 +1227,7 @@ routes:
       "registry.value_type": { source: "Child.RegValType", on_empty: null }
       "registry.old_value_type": { source: "Child.RegOldValType", on_empty: null }
       "registry.group_name": { source: "Child.RegGroupName", on_empty: null }
+      "registry.monitor_name": { source: "Common.MonitorName", on_empty: null }
 
   # 未识别的新动作仍进入候选池；它不会绕过本地键路径、值名、Actor 和时间基准，
   # 仅用于在厂商版本变化时展示可能相关的低置信 JSON 块。
@@ -1254,6 +1257,7 @@ routes:
       "registry.value_type": { source: "Child.RegValType", on_empty: null }
       "registry.old_value_type": { source: "Child.RegOldValType", on_empty: null }
       "registry.group_name": { source: "Child.RegGroupName", on_empty: null }
+      "registry.monitor_name": { source: "Common.MonitorName", on_empty: null }
 
   # 进程候选发现路由只依赖表结构，不依赖 Action.Name。这样即使用户填写了尚未写入
   # 精确语义路由的厂商 Action，仍可先依据 Child/Parent 进程锚点建立高置信候选。

@@ -31,4 +31,4 @@ pwsh -NoProfile -File scripts/Test-NamedPipeActivitySamples.ps1
 pwsh -NoProfile -File scripts/Test-GroupPolicyActivitySamples.ps1
 ```
 
-命名管道测试同时验证通用映射和腾讯 `FileEvents / NamedPipe` 映射。组策略的通用/腾讯 `RegEvents / RegSetValue` 比较闭环已包含在框架测试中。
+命名管道测试同时验证通用映射和腾讯 `FileEvents / NamedPipe` 映射。组策略脚本必须在管理员 PowerShell 中运行，并会显式启用 L2 风险确认；若存在白名单策略值，还会验证同值回写前后的原生数据哈希和长度完全一致。组策略双方法的通用/腾讯 `RegEvents / RegSetValue` 比较闭环已包含在框架测试中。

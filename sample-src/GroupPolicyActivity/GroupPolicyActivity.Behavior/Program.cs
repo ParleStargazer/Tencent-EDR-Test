@@ -1,47 +1,66 @@
-using System.ComponentModel;
-using System.Runtime.InteropServices;
-using System.Text;
-using Microsoft.Win32;
-
 namespace GroupPolicyActivity;
 
 internal static class Program
 {
     private const int BehaviorError = 20;
-    private const int KeySetValue = 0x0002;
-    private const int KeyWow6464Key = 0x0100;
-    private const uint RegSz = 1;
-    private static readonly UIntPtr HkeyLocalMachine = new(0x80000002u);
-
     public static int Main(string[] args)
     {
         string? resultPath = null;
         var keyPath = string.Empty;
         var valueName = string.Empty;
+        var method = string.Empty;
+        string? targetId = null;
         try
         {
             var options = ArgumentReader.Parse(args);
-            keyPath = ValidateKeyPath(options.Require("key-path"));
-            valueName = options.Require("value-name");
-            var valueData = options.Require("value-data");
+            method = options.Require("method");
             resultPath = Path.GetFullPath(options.Require("result"));
             var holdMs = options.GetInt("hold-ms", 1_500, 0, 30_000);
-            if (!string.Equals(valueName, "ValidationMarker", StringComparison.Ordinal))
-                throw new ArgumentException("组策略样本只允许修改 ValidationMarker。");
+            PolicySnapshot before;
+            PolicySnapshot after;
+            bool succeeded;
+            DateTimeOffset occurredAtUtc;
+            DateTimeOffset completedAtUtc;
+            if (method == "isolated_policy_key")
+            {
+                keyPath = ValidateIsolatedKeyPath(options.Require("key-path"));
+                valueName = options.Require("value-name");
+                var valueData = options.Require("value-data");
+                if (!string.Equals(valueName, "ValidationMarker", StringComparison.Ordinal))
+                    throw new ArgumentException("隔离组策略方法只允许修改 ValidationMarker。");
+                before = RegistryNative.Snapshot(keyPath, valueName);
+                occurredAtUtc = DateTimeOffset.UtcNow;
+                RegistryNative.WriteStringValue(keyPath, valueName, valueData);
+                completedAtUtc = DateTimeOffset.UtcNow;
+                after = RegistryNative.Snapshot(keyPath, valueName);
+                succeeded = before.ValueExists && after.ValueExists
+                    && !string.Equals(before.ValueDataSha256, after.ValueDataSha256, StringComparison.Ordinal)
+                    && string.Equals(after.ValueData, valueData, StringComparison.Ordinal);
+            }
+            else if (method == "known_policy_same_value")
+            {
+                targetId = options.Require("known-policy-target");
+                var target = KnownPolicyTargetCatalog.ResolveExact(targetId);
+                keyPath = target.KeyPath;
+                valueName = target.ValueName;
+                occurredAtUtc = DateTimeOffset.UtcNow;
+                var snapshots = RegistryNative.RewriteSameValue(keyPath, valueName);
+                completedAtUtc = DateTimeOffset.UtcNow;
+                before = snapshots.Before.Snapshot;
+                after = snapshots.After.Snapshot;
+                succeeded = before.ValueExists && after.ValueExists
+                    && before.NativeType == after.NativeType
+                    && before.RawDataLength == after.RawDataLength
+                    && string.Equals(before.ValueDataSha256, after.ValueDataSha256, StringComparison.Ordinal);
+            }
+            else throw new ArgumentException($"未知组策略方法：{method}");
 
-            var before = Snapshot(keyPath, valueName);
-            var occurredAtUtc = DateTimeOffset.UtcNow;
-            SetStringValue(keyPath, valueName, valueData);
-            var completedAtUtc = DateTimeOffset.UtcNow;
-            var after = Snapshot(keyPath, valueName);
-            var succeeded = before.KeyExists && before.ValueExists && after.KeyExists && after.ValueExists
-                && !string.Equals(before.ValueData, valueData, StringComparison.Ordinal)
-                && string.Equals(after.ValueData, valueData, StringComparison.Ordinal);
             ProtocolJson.WriteAtomic(resultPath, new BehaviorResult
             {
-                Succeeded = succeeded, OccurredAtUtc = occurredAtUtc, CompletedAtUtc = completedAtUtc,
+                Method = method, Applicable = true, Succeeded = succeeded,
+                OccurredAtUtc = occurredAtUtc, CompletedAtUtc = completedAtUtc,
                 Hive = "HKLM", KeyPath = $"HKEY_LOCAL_MACHINE\\{keyPath}", ValueName = valueName,
-                NativeApi = "RegSetValueExW", Before = before, After = after, Win32Error = 0,
+                NativeApi = "RegSetValueExW", Before = before, After = after, TargetId = targetId, Win32Error = 0,
                 Error = succeeded ? null : "RegSetValueExW 后的本地状态未满足预期。",
             });
             if (holdMs > 0) Thread.Sleep(holdMs);
@@ -54,10 +73,11 @@ internal static class Program
                 var snapshot = SafeSnapshot(keyPath, valueName);
                 ProtocolJson.WriteAtomic(resultPath, new BehaviorResult
                 {
+                    Method = string.IsNullOrWhiteSpace(method) ? "unknown" : method, Applicable = true,
                     Succeeded = false, OccurredAtUtc = DateTimeOffset.UtcNow, CompletedAtUtc = DateTimeOffset.UtcNow,
                     Hive = "HKLM", KeyPath = string.IsNullOrWhiteSpace(keyPath) ? "HKEY_LOCAL_MACHINE" : $"HKEY_LOCAL_MACHINE\\{keyPath}",
-                    ValueName = valueName, NativeApi = "RegSetValueExW", Before = snapshot, After = snapshot,
-                    Win32Error = exception is Win32Exception win32 ? win32.NativeErrorCode : exception.HResult & 0xFFFF,
+                    ValueName = valueName, NativeApi = "RegSetValueExW", Before = snapshot, After = snapshot, TargetId = targetId,
+                    Win32Error = exception is System.ComponentModel.Win32Exception win32 ? win32.NativeErrorCode : exception.HResult & 0xFFFF,
                     Error = exception.Message,
                 });
             }
@@ -66,41 +86,13 @@ internal static class Program
         }
     }
 
-    public static PolicySnapshot Snapshot(string keyPath, string valueName)
-    {
-        using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
-        using var key = root.OpenSubKey(keyPath, writable: false);
-        if (key is null) return new PolicySnapshot { KeyExists = false, ValueExists = false };
-        var names = key.GetValueNames();
-        var exists = names.Contains(valueName, StringComparer.Ordinal);
-        return new PolicySnapshot
-        {
-            KeyExists = true, ValueExists = exists,
-            ValueKind = exists ? key.GetValueKind(valueName).ToString() : null,
-            ValueData = exists ? key.GetValue(valueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames)?.ToString() : null,
-        };
-    }
-
     private static PolicySnapshot SafeSnapshot(string keyPath, string valueName)
     {
-        try { return string.IsNullOrWhiteSpace(keyPath) ? new PolicySnapshot { KeyExists = false, ValueExists = false } : Snapshot(keyPath, valueName); }
+        try { return string.IsNullOrWhiteSpace(keyPath) ? new PolicySnapshot { KeyExists = false, ValueExists = false } : RegistryNative.Snapshot(keyPath, valueName); }
         catch { return new PolicySnapshot { KeyExists = false, ValueExists = false }; }
     }
 
-    private static void SetStringValue(string keyPath, string valueName, string valueData)
-    {
-        var status = RegOpenKeyExW(HkeyLocalMachine, keyPath, 0, KeySetValue | KeyWow6464Key, out var key);
-        if (status != 0) throw new Win32Exception(status, $"RegOpenKeyExW 失败：{status}");
-        try
-        {
-            var bytes = Encoding.Unicode.GetBytes(valueData + '\0');
-            status = RegSetValueExW(key, valueName, 0, RegSz, bytes, bytes.Length);
-            if (status != 0) throw new Win32Exception(status, $"RegSetValueExW 失败：{status}");
-        }
-        finally { RegCloseKey(key); }
-    }
-
-    private static string ValidateKeyPath(string value)
+    private static string ValidateIsolatedKeyPath(string value)
     {
         var path = value.Trim().TrimStart('\\');
         const string prefix = "SOFTWARE\\Policies\\EdrTest\\Runs\\";
@@ -111,12 +103,4 @@ internal static class Program
         return path;
     }
 
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
-    private static extern int RegOpenKeyExW(UIntPtr root, string subKey, int options, int desiredAccess, out IntPtr result);
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
-    private static extern int RegSetValueExW(IntPtr key, string valueName, int reserved, uint type, byte[] data, int dataSize);
-
-    [DllImport("advapi32.dll")]
-    private static extern int RegCloseKey(IntPtr key);
 }
