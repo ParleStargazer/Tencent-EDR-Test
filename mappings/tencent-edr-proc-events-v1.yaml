@@ -21,8 +21,8 @@ input:
 
 routes:
   # 腾讯导出的命名管道事件位于 FileEvents；Child.PipeOpName 是创建/打开的直接语义。
-  # 连接记录在部分版本中可能只导出 "\\"，因此完整管道名由 BASELINE 降为推荐项，
-  # 但 Actor PID/路径与 15 ms 本地时间仍必须满足。
+  # 本地名通常为 \\.\pipe\Name，腾讯导出为 \Name；named_pipe_path 将二者统一。
+  # 仅为 "\" 的占位值会归一化为 null，避免压过同进程、同时间的完整名称记录。
   - route_id: named-pipe-create
     when:
       "@table": FileEvents
@@ -43,8 +43,8 @@ routes:
       "process.name": { source: "Parent.FileName" }
       "process.executable": { source: "Parent.FilePath", transform: [windows_path] }
       "process.command_line": { source: "Parent.ProcCmdline" }
-      "named_pipe.name": { source: "Child.PipeName" }
-      "named_pipe.node_name": { source: "Child.NodeName", on_empty: null }
+      "named_pipe.name": { source: "Child.PipeName", transform: [named_pipe_path], on_empty: null }
+      "named_pipe.node_name": { source: "Child.NodeName", transform: [named_pipe_path], on_empty: null }
       "named_pipe.operation_name": { source: "Child.PipeOpName" }
       "named_pipe.type": { source: "Child.Type", on_empty: null }
 
@@ -68,8 +68,8 @@ routes:
       "process.name": { source: "Parent.FileName" }
       "process.executable": { source: "Parent.FilePath", transform: [windows_path] }
       "process.command_line": { source: "Parent.ProcCmdline" }
-      "named_pipe.name": { source: "Child.PipeName", on_empty: null }
-      "named_pipe.node_name": { source: "Child.NodeName", on_empty: null }
+      "named_pipe.name": { source: "Child.PipeName", transform: [named_pipe_path], on_empty: null }
+      "named_pipe.node_name": { source: "Child.NodeName", transform: [named_pipe_path], on_empty: null }
       "named_pipe.operation_name": { source: "Child.PipeOpName" }
       "named_pipe.type": { source: "Child.Type", on_empty: null }
 
@@ -90,8 +90,8 @@ routes:
       "process.name": { source: "Parent.FileName", on_empty: null }
       "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
       "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
-      "named_pipe.name": { source: "Child.PipeName", on_empty: null }
-      "named_pipe.node_name": { source: "Child.NodeName", on_empty: null }
+      "named_pipe.name": { source: "Child.PipeName", transform: [named_pipe_path], on_empty: null }
+      "named_pipe.node_name": { source: "Child.NodeName", transform: [named_pipe_path], on_empty: null }
       "named_pipe.operation_name": { source: "Child.PipeOpName", on_empty: null }
       "named_pipe.type": { source: "Child.Type", on_empty: null }
 

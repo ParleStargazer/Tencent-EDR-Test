@@ -1644,6 +1644,7 @@ public static class CompareService
         "lowercase" => value?.ToString()?.ToLowerInvariant(),
         "trim" => value?.ToString()?.Trim(),
         "windows_path" => NormalizeWindowsPath(value?.ToString()),
+        "named_pipe_path" => NormalizeNamedPipePath(value?.ToString()),
         "network_direction" => NormalizeNetworkDirection(value?.ToString()),
         "http_method" => NormalizeHttpMethod(value?.ToString()),
         "unix_ms_to_utc" when TryInt64(value, out var milliseconds) => Values.Utc(DateTimeOffset.FromUnixTimeMilliseconds(milliseconds)),
@@ -1661,6 +1662,7 @@ public static class CompareService
                 "lowercase" => value?.ToString()?.ToLowerInvariant(),
                 "trim" => value?.ToString()?.Trim(),
                 "windows_path" => NormalizeWindowsPath(value?.ToString()),
+                "named_pipe_path" => NormalizeNamedPipePath(value?.ToString()),
                 "registry_hive_path" => NormalizeRegistryHivePath(value?.ToString()),
                 "sid" => value?.ToString()?.Trim().ToUpperInvariant(),
                 "ip" => value?.ToString()?.Trim().ToLowerInvariant(),
@@ -1674,6 +1676,24 @@ public static class CompareService
     private static string? NormalizeWindowsPath(string? value) => string.IsNullOrWhiteSpace(value)
         ? value
         : value.Trim().Replace('/', '\\').TrimEnd('\\').ToLowerInvariant();
+
+    private static string? NormalizeNamedPipePath(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+
+        var name = value.Trim().Replace('/', '\\').TrimStart('\\');
+        foreach (var prefix in new[] { @".\pipe\", @"?\pipe\", @"device\namedpipe\", @"pipe\" })
+        {
+            if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            name = name[prefix.Length..];
+            break;
+        }
+
+        name = name.Trim('\\');
+        return string.IsNullOrWhiteSpace(name)
+            ? null
+            : @"\\.\pipe\" + name.ToLowerInvariant();
+    }
 
     private static string? NormalizeRegistryHivePath(string? value)
     {

@@ -37,12 +37,12 @@ cloud_expectations:
       anchors:
         - { local_field: facts.named_pipe.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
         - { local_field: facts.named_pipe.actor_pid, cloud_field: process.pid, strength: medium }
-        - { local_field: facts.named_pipe.name, cloud_field: named_pipe.name, strength: medium, normalizers: [lowercase] }
+        - { local_field: facts.named_pipe.name, cloud_field: named_pipe.name, strength: medium, normalizers: [named_pipe_path] }
     assertions:
       - { field: named_pipe.operation_name, operator: equals, expected: 打开管道, severity: required }
       - { field: process.pid, operator: equals, expected_from_local: facts.named_pipe.actor_pid, severity: required }
       - { field: process.executable, operator: equals, expected_from_local: facts.named_pipe.actor_executable, severity: required, normalizers: [windows_path] }
-      - { field: named_pipe.name, operator: equals, expected_from_local: facts.named_pipe.name, severity: recommended, normalizers: [lowercase] }
+      - { field: named_pipe.name, operator: equals, expected_from_local: facts.named_pipe.name, severity: recommended, normalizers: [named_pipe_path] }
       - { field: named_pipe.node_name, operator: present, severity: recommended }
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:

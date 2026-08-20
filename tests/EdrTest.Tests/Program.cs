@@ -39,6 +39,7 @@ public static class Program
         await RunTest("用户账号五项 BASELINE 与通用/腾讯映射闭环", TestUserAccountComparison, failures);
         await RunTest("注册表三项 BASELINE 与通用/腾讯映射闭环", TestRegistryComparison, failures);
         await RunTest("组策略修改 BASELINE 与通用/腾讯映射闭环", TestGroupPolicyComparison, failures);
+        await RunTest("命名管道格式归一化与完整候选优先", TestNamedPipeComparison, failures);
         await RunTest("计划任务三项 BASELINE 与通用/腾讯映射闭环", TestScheduledTaskComparison, failures);
         await RunTest("服务活动三项 BASELINE 与通用/腾讯映射闭环", TestServiceComparison, failures);
         await RunTest("哈希算法三项 BASELINE 与通用/腾讯映射闭环", TestHashAlgorithmsComparison, failures);
@@ -844,6 +845,116 @@ public static class Program
         Assert(tencent["capabilities"]?.AsArray()[0]?["edr_candidates"]?.AsArray()[0]?["baseline_matches"]?.AsArray().Any(match =>
             match?["canonical_field"]?.GetValue<string>() == "registry.group_name" && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.RegGroupName") == true,
             "组策略候选应高亮 Child.RegGroupName。");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestNamedPipeComparison()
+    {
+        using var fixture = TestDirectory.Create();
+        var repository = FindRepositoryRoot();
+        var caseRunId = Ids.NewUuid7();
+        var eventId = Ids.NewUuid7();
+        var occurredAt = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        const int actorPid = 1452;
+        const int helperPid = 4244;
+        const string actorPath = @"C:\EDR-Test\NamedPipeConnect.Actor.exe";
+        const string localPipeName = @"\\.\pipe\EdrTest_4c6dae54912029b48066eb4dfef9cc70_connect";
+        const string tencentPipeName = @"\EdrTest_4c6dae54912029b48066eb4dfef9cc70_connect";
+        const string canonicalPipeName = @"\\.\pipe\edrtest_4c6dae54912029b48066eb4dfef9cc70_connect";
+        var local = new JsonObject
+        {
+            ["schema_version"] = "1.1",
+            ["run"] = new JsonObject
+            {
+                ["run_id"] = Ids.NewUuid7(),
+                ["host"] = new JsonObject { ["hostname"] = "PIPE-FIXTURE", ["machine_id"] = "pipe-fixture-host" },
+            },
+            ["capabilities"] = new JsonArray(new JsonObject
+            {
+                ["case_run_id"] = caseRunId, ["capability_id"] = "win.named_pipe.connect", ["capability_version"] = "0.1.0",
+                ["display_name_zh"] = "管道连接", ["display_name_en"] = "Pipe Connection", ["status"] = "LOCAL_PASS",
+                ["nonce"] = "4c6dae54912029b48066eb4dfef9cc70", ["started_at_utc"] = Values.Utc(occurredAt.AddSeconds(-1)),
+                ["ended_at_utc"] = Values.Utc(occurredAt.AddSeconds(1)),
+            }),
+            ["programs"] = new JsonArray(new JsonObject
+            {
+                ["case_run_id"] = caseRunId, ["program_instance_id"] = Ids.NewUuid7(), ["role"] = "actor",
+                ["pid"] = actorPid, ["executable"] = actorPath, ["command_line"] = actorPath + " --operation connect",
+            }),
+            ["local_events"] = new JsonArray(new JsonObject
+            {
+                ["local_event_id"] = eventId, ["case_run_id"] = caseRunId, ["sequence"] = 1,
+                ["event_type"] = "named_pipe", ["event_action"] = "connect", ["occurred_at_utc"] = Values.Utc(occurredAt),
+                ["data"] = new JsonObject { ["kind"] = "named_pipe", ["operation"] = "connect" },
+            }),
+            ["local_facts"] = new JsonArray(
+                Fact(caseRunId, "named_pipe.operation_succeeded", true),
+                Fact(caseRunId, "named_pipe.operation", "connect"),
+                Fact(caseRunId, "named_pipe.name", localPipeName),
+                Fact(caseRunId, "named_pipe.actor_pid", actorPid),
+                Fact(caseRunId, "named_pipe.actor_executable", actorPath),
+                Fact(caseRunId, "named_pipe.helper_pid", helperPid),
+                Fact(caseRunId, "named_pipe.nonce_verified", true),
+                Fact(caseRunId, "named_pipe.occurred_at_utc", Values.Utc(occurredAt))),
+            ["artifacts"] = new JsonArray(), ["cleanup_results"] = new JsonArray(), ["execution_logs"] = new JsonArray(),
+        };
+
+        JsonObject TencentEvent(string id, string pipeName) => new()
+        {
+            ["OS"] = "Windows", ["@table"] = "FileEvents", ["@timestamp"] = Values.Utc(occurredAt),
+            ["Action.Type"] = "File", ["Action.Name"] = "NamedPipe", ["Common.EventUUId"] = id,
+            ["Common.EventTime"] = occurredAt.ToUnixTimeMilliseconds(), ["Common.Mid"] = "pipe-fixture-host",
+            ["Environment.HostName"] = "PIPE-FIXTURE", ["Parent.ProcPid"] = actorPid,
+            ["Parent.FileName"] = Path.GetFileName(actorPath), ["Parent.FilePath"] = actorPath,
+            ["Parent.ProcCmdline"] = actorPath + " --operation connect", ["Child.PipeName"] = pipeName,
+            ["Child.NodeName"] = pipeName, ["Child.PipeOpName"] = "打开管道", ["Child.Type"] = "管道",
+        };
+
+        var localPath = Path.Combine(fixture.Path, "named-pipe-local.json");
+        var tencentPath = Path.Combine(fixture.Path, "named-pipe-tencent.json");
+        File.WriteAllText(localPath, local.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(tencentPath, new JsonArray(
+            TencentEvent("00000000-placeholder", @"\"),
+            TencentEvent("ffffffff-complete", tencentPipeName)).ToJsonString(JsonDefaults.Options));
+        var baseline = new[] { Path.Combine(repository, "baselines", "windows", "named_pipe_connect.yaml") };
+        var tencent = CompareService.Compare(new CompareRequest(localPath, [tencentPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"), baseline,
+            Path.Combine(fixture.Path, "named-pipe-tencent-result.json")));
+        Assert(tencent["summary"]?["pass"]?.GetValue<int>() == 1,
+            $"短格式腾讯管道名应与本地完整格式匹配：{tencent.ToJsonString(JsonDefaults.Options)}");
+        var candidates = tencent["capabilities"]?[0]?["edr_candidates"]?.AsArray()
+            ?? throw new InvalidOperationException("命名管道结果缺少 EDR 候选。");
+        Assert(candidates.Count == 2, "占位记录与完整名称记录都应保留供 JSON 对照查看。");
+        Assert(candidates[0]?["raw_event"]?["Child.PipeName"]?.GetValue<string>() == tencentPipeName
+            && candidates[0]?["canonical_event"]?["named_pipe.name"]?.GetValue<string>() == canonicalPipeName,
+            $"完整管道名记录必须排在首位并输出统一格式：{candidates.ToJsonString(JsonDefaults.Options)}");
+        Assert(candidates[0]?["correlation_score"]?.GetValue<double>()
+                > candidates[1]?["correlation_score"]?.GetValue<double>()
+            && candidates[1]?["canonical_event"]?["named_pipe.name"] is null,
+            "单独反斜杠必须作为缺失值降级，不能与完整名称记录同分或排在其前面。");
+        Assert(candidates[0]?["baseline_matches"]?.AsArray().Any(match =>
+            match?["canonical_field"]?.GetValue<string>() == "named_pipe.name"
+            && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.PipeName"
+            && match?["status"]?.GetValue<string>() == "passed") == true,
+            "JSON 对照必须高亮本地与 EDR 管道名的一致关系。");
+
+        var genericPath = Path.Combine(fixture.Path, "named-pipe-generic.json");
+        File.WriteAllText(genericPath, new JsonArray(new JsonObject
+        {
+            ["table"] = "NamedPipeActivity", ["event_id"] = "device-format", ["host_id"] = "pipe-fixture-host",
+            ["event_time"] = Values.Utc(occurredAt), ["action"] = "connect", ["actor_pid"] = actorPid,
+            ["actor_name"] = Path.GetFileName(actorPath), ["actor_executable"] = actorPath,
+            ["actor_command_line"] = actorPath + " --operation connect",
+            ["pipe_name"] = @"\Device\NamedPipe\EdrTest_4c6dae54912029b48066eb4dfef9cc70_connect",
+            ["node_name"] = @"\Device\NamedPipe\EdrTest_4c6dae54912029b48066eb4dfef9cc70_connect",
+            ["operation_name"] = "打开管道", ["pipe_type"] = "管道",
+        }).ToJsonString(JsonDefaults.Options));
+        var generic = CompareService.Compare(new CompareRequest(localPath, [genericPath],
+            Path.Combine(repository, "mappings", "generic-named-pipe-activity-v1.yaml"), baseline,
+            Path.Combine(fixture.Path, "named-pipe-generic-result.json")));
+        Assert(generic["summary"]?["pass"]?.GetValue<int>() == 1
+            && generic["capabilities"]?[0]?["edr_candidates"]?[0]?["canonical_event"]?["named_pipe.name"]?.GetValue<string>() == canonicalPipeName,
+            $"Device NamedPipe 格式也应统一并通过：{generic.ToJsonString(JsonDefaults.Options)}");
         return Task.CompletedTask;
     }
 

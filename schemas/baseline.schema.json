@@ -139,7 +139,7 @@
     "normalizers": {
       "type": "array",
       "items": {
-        "enum": ["lowercase", "windows_path", "sid", "ip", "timestamp_utc", "trim"]
+        "enum": ["lowercase", "windows_path", "named_pipe_path", "sid", "ip", "timestamp_utc", "trim"]
       },
       "uniqueItems": true
     },

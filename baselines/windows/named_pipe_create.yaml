@@ -25,7 +25,7 @@ correlation:
   time_after_seconds: 300
   max_time_difference_ms: 15
   anchors:
-    - { local_field: facts.named_pipe.name, cloud_field: named_pipe.name, strength: strong, normalizers: [lowercase] }
+    - { local_field: facts.named_pipe.name, cloud_field: named_pipe.name, strength: strong, normalizers: [named_pipe_path] }
     - { local_field: facts.named_pipe.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
     - { local_field: facts.named_pipe.actor_pid, cloud_field: process.pid, strength: medium }
 cloud_expectations:
@@ -36,11 +36,11 @@ cloud_expectations:
     correlation:
       time_from_local: facts.named_pipe.occurred_at_utc
       anchors:
-        - { local_field: facts.named_pipe.name, cloud_field: named_pipe.name, strength: strong, normalizers: [lowercase] }
+        - { local_field: facts.named_pipe.name, cloud_field: named_pipe.name, strength: strong, normalizers: [named_pipe_path] }
         - { local_field: facts.named_pipe.actor_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
         - { local_field: facts.named_pipe.actor_pid, cloud_field: process.pid, strength: medium }
     assertions:
-      - { field: named_pipe.name, operator: equals, expected_from_local: facts.named_pipe.name, severity: required, normalizers: [lowercase] }
+      - { field: named_pipe.name, operator: equals, expected_from_local: facts.named_pipe.name, severity: required, normalizers: [named_pipe_path] }
       - { field: named_pipe.operation_name, operator: equals, expected: 创建管道, severity: required }
       - { field: process.pid, operator: equals, expected_from_local: facts.named_pipe.actor_pid, severity: required }
       - { field: process.executable, operator: equals, expected_from_local: facts.named_pipe.actor_executable, severity: required, normalizers: [windows_path] }

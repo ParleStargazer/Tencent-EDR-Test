@@ -25,8 +25,8 @@ routes:
       "process.name": { source: actor_name }
       "process.executable": { source: actor_executable, transform: [windows_path] }
       "process.command_line": { source: actor_command_line }
-      "named_pipe.name": { source: pipe_name }
-      "named_pipe.node_name": { source: node_name, on_empty: null }
+      "named_pipe.name": { source: pipe_name, transform: [named_pipe_path], on_empty: null }
+      "named_pipe.node_name": { source: node_name, transform: [named_pipe_path], on_empty: null }
       "named_pipe.operation_name": { source: operation_name }
       "named_pipe.type": { source: pipe_type, on_empty: null }
 raw_reference: { id_field: event_id, ordinal_base: 0 }

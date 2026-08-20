@@ -20,7 +20,9 @@
 - `Parent.ProcPid`、`Parent.FilePath`、`Parent.ProcCmdline`；
 - `Common.EventTime`。
 
-创建项要求完整管道名、Actor PID/路径和创建语义。既有打开事件偶尔只导出 `\\`，因此连接项的完整管道名是推荐要求，Actor PID/路径、打开语义和 15 ms 时间是必需要求。两项默认 `Action.Name=NamedPipe` 仅用于可选消歧。
+本地通常记录 `\\.\pipe\Name`，腾讯导出可能记录 `\Name` 或 `\Device\NamedPipe\Name`。映射与 BASELINE 会把这些格式统一为 `\\.\pipe\name` 后比较；单独的 `\` 是信息不完整的占位值，会映射为空而不是一个有效管道名。这样，同一进程、同一时间同时出现占位记录与完整记录时，完整名称命中本地锚点并获得更高排序。
+
+创建项要求完整管道名、Actor PID/路径和创建语义。连接项的完整管道名仍是推荐要求，以兼容只导出占位值的产品版本；Actor PID/路径、打开语义和 15 ms 时间是必需要求。两项默认 `Action.Name=NamedPipe` 仅用于可选消歧。
 
 ## 构建与验证
 
