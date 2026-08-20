@@ -28,6 +28,7 @@ public static class Program
         var failures = new List<string>();
         await RunTest("能力包路径和参数校验", TestManifestValidation, failures);
         await RunTest("协议 JSON 遇到短暂文件独占时可靠重试", TestReliableProtocolFile, failures);
+        await RunTest("同角色多程序实例使用独立序号入库", TestMultipleProgramInstanceIndexes, failures);
         await RunTest("L2/L3 默认风险门禁", TestHighRiskGate, failures);
         await RunTest("同一轮按顺序执行多个能力", TestMultipleCapabilities, failures);
         await RunTest("Runner 与 SQLite 完整保留长日志", TestLongControllerOutput, failures);
@@ -108,6 +109,27 @@ public static class Program
         var updated = ReliableProtocolFile.Read<JsonObject>(path, JsonDefaults.Options);
         Assert(updated["value"]?.GetValue<string>() == "updated", "锁释放后的原子协议替换未生效。");
         Assert(!Directory.EnumerateFiles(fixture.Path, "*.tmp-*", SearchOption.TopDirectoryOnly).Any(), "协议写入遗留临时文件。");
+    }
+
+    private static Task TestMultipleProgramInstanceIndexes()
+    {
+        using var fixture = TestDirectory.Create();
+        var manifestPath = PreparePackage(fixture.Path, "L0", "--fixture-controller");
+        var package = CapabilityCatalog.Load(manifestPath);
+        var runId = Ids.NewUuid7();
+        var caseRunId = Ids.NewUuid7();
+        var observedAt = DateTimeOffset.UtcNow;
+        var executable = Environment.ProcessPath ?? throw new InvalidOperationException("无法取得测试程序路径。");
+        var databasePath = Path.Combine(fixture.Path, "program-instance-indexes.db");
+
+        using var database = RunDatabase.Create(databasePath, new RunSeed(runId, "program-instance-indexes", null, observedAt));
+        database.AddCapability(runId, caseRunId, 1, "instance-indexes", package, JsonSerializer.SerializeToElement(new { }));
+        database.AddProgram(CreateProgram(caseRunId, "actor", 0, executable, 10001, Environment.ProcessId,
+            $"\"{executable}\" --method first", observedAt));
+        database.AddProgram(CreateProgram(caseRunId, "actor", 1, executable, 10002, Environment.ProcessId,
+            $"\"{executable}\" --method second", observedAt.AddMilliseconds(1)));
+
+        return Task.CompletedTask;
     }
 
     private static async Task TestEndToEnd()

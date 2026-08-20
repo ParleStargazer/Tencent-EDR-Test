@@ -823,6 +823,9 @@ test("组策略与命名管道三项能力具备完整样本、BASELINE、映射
   assert.match(groupController, /拒绝覆盖并发策略更新/);
   assert.match(groupController, /RestoreKnownPolicyOriginalState/);
   assert.match(groupController, /DeleteSafeKnownPolicyValue/);
+  assert.match(groupController, /"isolated_policy_key" => 0/);
+  assert.match(groupController, /"known_policy_same_value" => 1/);
+  assert.match(groupController, /InstanceIndex = instanceIndex/);
   assert.match(groupController, /Sequence = 1,\s+Action = "delete_exact_group_policy_test_key"/);
   assert.match(groupController, /Sequence = 2,\s+Action = "no_known_policy_value_selected"/);
   assert.match(groupController, /Sequence = 2,\s+Action = original\.ValueExists \? "verify_known_policy_value_unchanged" : "restore_created_known_policy_value"/);

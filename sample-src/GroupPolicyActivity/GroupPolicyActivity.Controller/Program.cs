@@ -195,7 +195,14 @@ internal static class Program
             activeActor.Kill(entireProcessTree: true);
             throw new TimeoutException($"等待组策略 Actor 退出超时：PID {activeActor.Id}");
         }
-        var actor = Observe(invocation, activeActor, actorPath, actorArguments, result.OccurredAtUtc, "actor", method);
+        var actorInstanceIndex = method switch
+        {
+            "isolated_policy_key" => 0,
+            "known_policy_same_value" => 1,
+            _ => throw new InvalidDataException($"未知组策略测试方法：{method}"),
+        };
+        var actor = Observe(invocation, activeActor, actorPath, actorArguments, result.OccurredAtUtc,
+            "actor", method, actorInstanceIndex);
         database.AddProgram(actor);
         var succeeded = result.Applicable && independentCheck(result);
         var artifact = Artifact(invocation, resultPath, method);
@@ -476,7 +483,7 @@ internal static class Program
     }
 
     private static ProgramObservation Observe(ControllerInvocation invocation, Process process, string executable,
-        IEnumerable<string> arguments, DateTimeOffset fallback, string role, string name)
+        IEnumerable<string> arguments, DateTimeOffset fallback, string role, string name, int instanceIndex)
     {
         DateTimeOffset started;
         DateTimeOffset? ended;
@@ -485,7 +492,8 @@ internal static class Program
         try { ended = process.ExitTime.ToUniversalTime(); exit = process.ExitCode; } catch { ended = null; exit = null; }
         return new ProgramObservation
         {
-            CaseRunId = invocation.CaseRunId, Role = role, InstanceName = name, ExecutablePath = executable,
+            CaseRunId = invocation.CaseRunId, Role = role, InstanceName = name, InstanceIndex = instanceIndex,
+            ExecutablePath = executable,
             Sha256 = Hashing.FileSha256(executable), Sha1 = Hashing.FileSha1(executable), Md5 = Hashing.FileMd5(executable),
             Pid = process.Id, ParentPid = Environment.ProcessId, SessionId = TrySessionId(process), Architecture = Architecture(),
             CommandLine = FormatCommandLine(executable, arguments), WorkingDirectory = invocation.WorkDir,
