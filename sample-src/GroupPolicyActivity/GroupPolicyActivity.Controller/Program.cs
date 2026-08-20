@@ -79,7 +79,8 @@ internal static class Program
                 AddFact(database, invocation, "group_policy.known_policy_same_value.not_applicable_reason", JsonValue.Create(notApplicableReason), null);
                 database.AddCleanup(new CleanupObservation
                 {
-                    CaseRunId = invocation.CaseRunId, Action = "no_known_policy_value_selected", Status = "succeeded",
+                    CaseRunId = invocation.CaseRunId, Sequence = 2,
+                    Action = "no_known_policy_value_selected", Status = "succeeded",
                     StartedAtUtc = DateTimeOffset.UtcNow, EndedAtUtc = DateTimeOffset.UtcNow,
                     Before = new JsonObject { ["requested_target"] = targetSelection },
                     After = new JsonObject { ["registry_modified"] = false }, ErrorMessage = null,
@@ -287,7 +288,8 @@ internal static class Program
         var alive = actor is not null && IsAlive(actor);
         return new CleanupObservation
         {
-            CaseRunId = invocation.CaseRunId, Action = "verify_known_policy_value_unchanged",
+            CaseRunId = invocation.CaseRunId, Sequence = 2,
+            Action = "verify_known_policy_value_unchanged",
             Status = errors.Count == 0 && !alive ? "succeeded" : "failed", StartedAtUtc = started, EndedAtUtc = DateTimeOffset.UtcNow,
             Before = new JsonObject
             {
@@ -310,7 +312,8 @@ internal static class Program
         var alive = actor is not null && IsAlive(actor);
         return new CleanupObservation
         {
-            CaseRunId = invocation.CaseRunId, Action = "delete_exact_group_policy_test_key",
+            CaseRunId = invocation.CaseRunId, Sequence = 1,
+            Action = "delete_exact_group_policy_test_key",
             Status = errors.Count == 0 && !after.KeyExists && !alive ? "succeeded" : "failed", StartedAtUtc = started, EndedAtUtc = DateTimeOffset.UtcNow,
             Before = new JsonObject { ["key_path"] = $"HKEY_LOCAL_MACHINE\\{keyPath}", ["snapshot"] = SnapshotJson(before) },
             After = new JsonObject { ["snapshot"] = SnapshotJson(after), ["actor_alive"] = alive },

@@ -139,7 +139,9 @@ public static class Program
         Assert(targetProgram?["md5"]?.GetValue<string>().Length == 32, "Actor/Target 程序应采集 MD5，供 EDR 哈希字段比较。");
         Assert(local["execution_logs"]?.AsArray().Count >= 1, "本地导出应保存运行日志，供历史轮次按能力查看。");
         Assert(local["local_events"]?.AsArray().Count == 1, "应记录一个进程创建事件。");
-        Assert(local["cleanup_results"]?.AsArray().Count == 1, "应记录清理结果。");
+        Assert(local["cleanup_results"]?.AsArray().Count == 2
+            && local["cleanup_results"]?.AsArray().Select(value => value?["sequence"]?.GetValue<int>()).SequenceEqual([1, 2]) == true,
+            "同一能力的多条清理结果应使用独立递增序号。");
         var completedProgress = progress.Single(value => value.Kind == "capability_completed");
         var progressEvidence = completedProgress.LocalEvidence ?? throw new InvalidOperationException("能力完成进度应携带本地证据。");
         Assert(progressEvidence["capability"]?["started_at_utc"]?.GetValue<string>() is { Length: > 0 }
@@ -2056,6 +2058,17 @@ public static class Program
                 StartedAtUtc = observedAt.AddMilliseconds(20),
                 EndedAtUtc = observedAt.AddMilliseconds(21),
                 Before = new JsonObject { ["exists"] = true },
+                After = new JsonObject { ["exists"] = false },
+            });
+            database.AddCleanup(new CleanupObservation
+            {
+                CaseRunId = invocation.CaseRunId,
+                Sequence = 2,
+                Action = "verify_fixture_artifact_absent",
+                Status = "succeeded",
+                StartedAtUtc = observedAt.AddMilliseconds(22),
+                EndedAtUtc = observedAt.AddMilliseconds(23),
+                Before = new JsonObject { ["exists"] = false },
                 After = new JsonObject { ["exists"] = false },
             });
             database.CompleteCapability(invocation.CaseRunId, "LOCAL_PASS", observedAt.AddMilliseconds(25), 25);

@@ -801,6 +801,7 @@ test("组策略与命名管道三项能力具备完整样本、BASELINE、映射
   }
 
   const groupBehavior = await readFile(new URL("sample-src/GroupPolicyActivity/GroupPolicyActivity.Behavior/Program.cs", root), "utf8");
+  const groupController = await readFile(new URL("sample-src/GroupPolicyActivity/GroupPolicyActivity.Controller/Program.cs", root), "utf8");
   const groupProtocol = await readFile(new URL("sample-src/GroupPolicyActivity/GroupPolicyActivity.Protocol/Protocol.cs", root), "utf8");
   const groupManifest = await readJson("sample-src/GroupPolicyActivity/manifests/win.group_policy.modify/capability.json");
   const groupBaseline = await readFile(new URL("baselines/windows/group_policy_modify.yaml", root), "utf8");
@@ -816,6 +817,9 @@ test("组策略与命名管道三项能力具备完整样本、BASELINE、映射
   assert.match(groupProtocol, /SHA256\.HashData/);
   assert.match(groupProtocol, /class KnownPolicyTargetCatalog/);
   assert.match(groupProtocol, /ResolveCandidates/);
+  assert.match(groupController, /Sequence = 1,\s+Action = "delete_exact_group_policy_test_key"/);
+  assert.match(groupController, /Sequence = 2,\s+Action = "no_known_policy_value_selected"/);
+  assert.match(groupController, /Sequence = 2,\s+Action = "verify_known_policy_value_unchanged"/);
   assert.ok(groupManifest.parameters.known_policy_target.allowed_values.includes("auto"));
   assert.match(groupBaseline, /method: \{ id: isolated_policy_key/);
   assert.match(groupBaseline, /method: \{ id: known_policy_same_value/);
