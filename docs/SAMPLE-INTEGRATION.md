@@ -220,6 +220,18 @@ L2/L3 默认由 Runner 跳过，只能显式允许高风险后执行。构建/�
 
 真实日志校准时只调整已有设计能够解释的字段、时间选点和格式归一化。不得仅因为某次导出中出现 `Action.Name` 就让它成为唯一候选入口；可将其保存为前端默认消歧值。
 
+### 9.1 强制字段基准
+
+`docs/reference/tencent-edr-field-catalog.json` 是设计后续腾讯 EDR BASELINE 时唯一允许引用的厂商字段基准，替代旧的 260808 field-catalog；`reference/EDR日志-字段表.txt` 是不追踪的人工阅读镜像。每个字段均保存中文含义、脱敏示例、实际出现的表/动作、是否已观测和 `baseline_role`。
+
+新增 BASELINE 前必须执行：
+
+1. 在字段基准中确认原字段存在，并阅读 `meaning_zh` 和实际 `action_names`；
+2. `observed=false` 时先取得包含该字段的新 EDR 导出，不能直接写 `required`；
+3. 按 `baseline_role` 判断它适合时间锚点、候选过滤、关联锚点、能力断言还是仅诊断；
+4. 在 Mapping Profile 中映射到 Canonical 字段，BASELINE 不直接引用腾讯原字段；
+5. 新 run 出现类型、枚举或语义变化时，先运行 `scripts/Export-TencentEdrFieldCatalog.ps1` 更新基准，再调整 mapping 和 BASELINE。
+
 ## 10. 前后端接入
 
 后端应保持通用的清单发现、SQLite 导出和 BASELINE 比较。只有出现新的事件类型、操作、字段规范化或多事件关系时，才扩展 Schema、mapping 和比较器。

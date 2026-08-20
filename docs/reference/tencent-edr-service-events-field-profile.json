@@ -43,7 +43,7 @@
   },
   "notes": [
     "确认字段只证明 ServiceEvents 能表达服务启动，不证明目标三项一定使用相同字段。",
-    "完整 260808 导出字段目录另见 tencent-edr-260808-field-catalog.json。",
+    "统一的腾讯 EDR BASELINE 字段基准另见 tencent-edr-field-catalog.json。",
     "首版路由必须保留 ServiceEvents 候选发现，避免目标动作名不同就完全丢失低置信候选。"
   ]
 }

@@ -33,7 +33,7 @@
 | `ProcessHandleObject` | 13 条 |
 | `RemoteThread` | 3 条 |
 
-上述早期参考文件只证明“进程活动”格式。后续 `reference/260808210300run` 新增 834 条全字段导出，覆盖 228 个唯一字段，其中包含 `FileWriteClose`、`FileRename` 和 `FileDelete`，已经可以直接设计五类文件操作映射和 BASELINE。脱敏、可追踪目录见 `docs/reference/tencent-edr-260808-field-catalog.json`；生成规则与字段解释见 `docs/TENCENT-EDR-FIELD-CATALOG.md`。注册表等尚未出现的能力域仍不得猜测腾讯字段。
+上述早期参考文件只证明“进程活动”格式。当前以 `reference/EDR日志-字段表.txt` 的厂商字段集合为范围，并结合全部已知 run 生成统一的脱敏、可追踪基准 `docs/reference/tencent-edr-field-catalog.json`；字段含义、样例、出现表/动作和 BASELINE 使用规则见 `docs/TENCENT-EDR-FIELD-CATALOG.md`。后续能力必须先查该基准；未观测字段在获得真实导出前不得直接设为必需断言。
 
 ### 2.1 云端字段组
 

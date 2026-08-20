@@ -657,40 +657,48 @@ test("哈希算法三项使用 JSON/EXE 真实样本并接入 BASELINE 与字段
   assert.match(startScript, /Build-HashAlgorithmsSamples\.ps1/);
 });
 
-test("260808 腾讯 EDR 全字段目录完整、脱敏且可复现", async () => {
-  const catalog = await readJson(
-    "docs/reference/tencent-edr-260808-field-catalog.json",
-  );
-  assert.equal(catalog.schema_version, "1.0");
-  assert.equal(catalog.source.event_count, 834);
-  assert.equal(catalog.all_fields.length, 228);
+test("腾讯 EDR BASELINE 字段基准包含含义、观测示例和使用约束", async () => {
+  const catalog = await readJson("docs/reference/tencent-edr-field-catalog.json");
+  const exporter = await readFile(new URL("scripts/Export-TencentEdrFieldCatalog.ps1", root), "utf8");
+  assert.equal(catalog.schema_version, "2.0");
+  assert.equal(catalog.catalog_id, "tencent-edr-baseline-field-reference");
+  assert.equal(catalog.field_count, 133);
+  assert.equal(catalog.fields.length, 133);
+  assert.ok(catalog.source.reference_export_count >= 14);
+  assert.ok(catalog.source.unique_event_count >= 10906);
   assert.equal(catalog.sanitization.applied, true);
-  assert.match(catalog.source.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(catalog.baseline_policy.local_run_is_absolute_baseline, true);
+  assert.equal(catalog.baseline_policy.event_time_field, "Common.EventTime");
+  assert.equal(catalog.baseline_policy.action_name_is_optional_edr_filter_only, true);
+  assert.ok(catalog.source.exports.every((item) => /^[a-f0-9]{64}$/.test(item.sha256)));
+  assert.ok(catalog.fields.every((item) => item.meaning_zh.length > 0 && item.baseline_note_zh.length > 0));
 
-  const allFields = new Map(catalog.all_fields.map((item) => [item.field, item]));
+  const allFields = new Map(catalog.fields.map((item) => [item.field, item]));
   [
+    "Action.Name",
     "Common.EventTime",
     "Common.EventUUId",
     "Parent.ProcPid",
     "Parent.ProcCmdline",
-    "Child.FilePath",
-    "Child.OldFilePath",
-    "Child.FileCreateOpName",
-    "Child.FileTotalRead",
-    "Child.FileTotalWrite",
+    "PParent.ProcPid",
+    "Child.AccountExpires",
+    "Child.UserAccountControl",
+    "Child.TargetUserSid",
   ].forEach((field) => assert.ok(allFields.has(field), `字段目录缺少 ${field}`));
-  assert.deepEqual(allFields.get("Child.DstIp").examples, ["203.0.113.10"]);
+  assert.equal(allFields.get("Common.EventTime").baseline_role, "time_anchor");
+  assert.equal(allFields.get("Action.Name").baseline_role, "candidate_filter");
+  assert.match(allFields.get("Action.Name").baseline_note_zh, /不影响本地规则/);
+  assert.equal(allFields.get("Child.AccountExpires").observed, true);
+  assert.ok(allFields.get("Child.AccountExpires").action_names.includes("AccountCreate"));
   assert.ok(
-    allFields.get("Child.FilePath").examples.every((value) =>
+    allFields.get("Parent.FilePath").examples.every((value) =>
       value.startsWith("C:\\EDR-Test\\example\\"),
     ),
   );
-
-  const fileWriteClose = catalog.event_kinds.find(
-    (item) => item.action_type === "File" && item.action_name === "FileWriteClose",
-  );
-  assert.equal(fileWriteClose.event_count, 465);
-  assert.ok(fileWriteClose.field_names.includes("Child.FileCreateOpName"));
+  assert.deepEqual(allFields.get("Common.EventUUId").examples, ["<redacted-id>"]);
+  assert.equal(allFields.get("Child.DisabledPrivilegeList").observed, false);
+  assert.match(exporter, /Get-ChildItem -LiteralPath \$ReferenceRoot -Recurse/);
+  assert.match(exporter, /TextOutputPath/);
 });
 
 test("进程创建示例的引用、时间、nonce、计数和进程身份一致", async () => {
