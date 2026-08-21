@@ -648,6 +648,8 @@ Scheduled Task Activity 三项能力操作本轮唯一的 `\EdrTest_<nonce>_<ope
 
 WMI Activity 三项能力使用 C# `System.Management` 在 `ROOT\subscription` 创建本轮唯一 `__EventFilter`、`LogFileEventConsumer` 和 `__FilterToConsumerBinding`。Filter 查询指向永不出现的 nonce 进程名，Consumer 不执行命令；Actor 与 Controller 分别查询 repository 形成绝对本地基准，清理严格按 Binding、Consumer、Filter 顺序并复核不存在。腾讯现有 `WmiOperation/ExecMethod` 和 ScriptScan 不属于三项直接事件，规划映射只接受未来精确动作，故当前产品预期为本地通过、云端未匹配。完整约束见 `docs/WMI-ACTIVITY-SAMPLES.md`。
 
+Virtual Disk Mount 使用两个独立子测试：Windows PowerShell `Mount-DiskImage` 与 VirtDisk `OpenVirtualDisk + AttachVirtualDisk`。Controller 为各方法创建独立的 16 MiB 动态 VHD；镜像保持未初始化、只读、无盘符，Actor 和 Controller 通过不同句柄取得同一 PhysicalDrive 路径后才认定本地挂载成立。正常与异常路径均按完整镜像路径卸载并删除。腾讯现有字段中没有虚拟磁盘直接 telemetry，规划映射不接受进程、脚本或文件侧面事件替代。完整约束见 `docs/VIRTUAL-DISK-ACTIVITY-SAMPLES.md`。
+
 Service Activity 三项能力使用原生 SCM API 操作本轮唯一的 `EdrTestSvc_<nonce>_<operation>` 临时服务。创建使用 `CreateServiceW`，修改使用 `ChangeServiceConfigW` 同时改变显示名、Binary Path 标记和手动→禁用启动类型，删除使用 `DeleteService`；Controller 以独立 `QueryServiceConfigW`/`QueryServiceStatusEx` 查询作为绝对本地基准。服务 Binary Path 只允许系统 `cmd.exe` 的无害命令，服务始终停止且测试过程从不启动，清理仅删除本轮精确名称。三项均输出具名方法结果：创建和修改分别比较 SCM API Hook 与 System 7045/7040 两条候选方法，删除比较 DeleteService API Hook；各能力采用最佳方法形成结论。腾讯 CreateService 路径已按参考轮次校准，修改与删除保留兼容路由。完整约束见 `docs/SERVICE-ACTIVITY-SAMPLES.md`。
 
 Hash Algorithms 三项能力使用 Controller + Actor 创建本轮唯一文件。MD5 与 SHA 使用合法 `.json`，分别保存 MD5 和 SHA-1/SHA-256/SHA-512；IMPHASH 使用 Actor EXE 的真实 `.exe` 字节级副本，验证 PE 导入表、导入项数量、源/目标 SHA-256 和 IMPHASH，复制后的文件从不执行。三项以本地路径、大小、摘要、Actor PID/路径和紧邻创建时间为绝对基准，映射到 `file/create` 候选；腾讯已确认 `Child.FileMd5`、`Child.FileSha`、`Child.FileShaType`，IMPHASH 别名仍是假设字段，缺失时保持失败而不降级。完整约束见 `docs/HASH-ALGORITHMS-SAMPLES.md`。

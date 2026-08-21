@@ -1001,8 +1001,67 @@ test("WMI 三项能力通过 permanent subscription 对象建立完整本地基�
   assert.ok(localData.$defs.wmi.properties.binding_path);
 });
 
+test("虚拟磁盘挂载通过 Mount-DiskImage 与 VirtDisk API 建立完整本地基准和规划映射", async () => {
+  const manifest = await readJson("sample-src/VirtualDiskActivity/manifests/win.device.virtual_disk.mount/capability.json");
+  const baseline = await readFile(new URL("baselines/windows/device_virtual_disk_mount.yaml", root), "utf8");
+  const protocol = await readFile(new URL("sample-src/VirtualDiskActivity/VirtualDiskActivity.Protocol/Protocol.cs", root), "utf8");
+  const behavior = await readFile(new URL("sample-src/VirtualDiskActivity/VirtualDiskActivity.Behavior/Program.cs", root), "utf8");
+  const controller = await readFile(new URL("sample-src/VirtualDiskActivity/VirtualDiskActivity.Controller/Program.cs", root), "utf8");
+  const genericMapping = await readFile(new URL("mappings/generic-virtual-disk-activity-v1.yaml", root), "utf8");
+  const tencentMapping = await readFile(new URL("mappings/tencent-edr-proc-events-v1.yaml", root), "utf8");
+  const start = await readFile(new URL("scripts/Start-EdrTest.ps1", root), "utf8");
+  const e2e = await readFile(new URL("scripts/Test-VirtualDiskActivitySamples.ps1", root), "utf8");
+  const design = await readFile(new URL("docs/VIRTUAL-DISK-ACTIVITY-SAMPLES.md", root), "utf8");
+  const front = await readFile(new URL("web/app/control-plane.tsx", root), "utf8");
+  const normalized = await readJson("schemas/normalized-event.schema.json");
+  const localData = await readJson("schemas/local-event-data.schema.json");
+
+  assert.equal(manifest.capability_id, "win.device.virtual_disk.mount");
+  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.risk_level, "L2");
+  assert.equal(manifest.required_privilege, "administrator");
+  assert.equal(manifest.network.required, false);
+  assert.equal(manifest.participants.length, 1);
+  assert.ok(manifest.expected_fact_keys.includes("virtual_disk.vdisk_powershell.physical_path"));
+  assert.ok(manifest.expected_fact_keys.includes("virtual_disk.vdisk_native_api.physical_path"));
+  assert.match(protocol, /PowerShell = "VDISK_POWERSHELL"/);
+  assert.match(protocol, /NativeApi = "VDISK_NATIVE_API"/);
+  assert.match(protocol, /CreateVirtualDisk/);
+  assert.match(protocol, /OpenVirtualDisk/);
+  assert.match(protocol, /AttachVirtualDisk/);
+  assert.match(protocol, /GetVirtualDiskPhysicalPath/);
+  assert.match(protocol, /DetachVirtualDisk/);
+  assert.match(behavior, /Mount-DiskImage/);
+  assert.match(behavior, /VirtualDiskNative\.AttachReadOnlyWithoutDriveLetter/);
+  assert.match(behavior, /WaitForGate/);
+  assert.match(controller, /VirtualDiskNative\.Inspect\(imagePath\)/);
+  assert.match(controller, /VirtualDiskPlans\.Methods\.Select\(\(value, index\)/);
+  assert.ok([...controller.matchAll(/InstanceIndex = state\.InstanceIndex/g)].length >= 2);
+  assert.match(controller, /Sequence = state\.InstanceIndex \+ 1/);
+  assert.match(controller, /detach_and_delete_virtual_disk_/);
+  assert.match(baseline, /method: \{ id: VDISK_POWERSHELL/);
+  assert.match(baseline, /method: \{ id: VDISK_NATIVE_API/);
+  assert.match(baseline, /method_selection: \{ strategy: best \}/);
+  assert.match(baseline, /max_time_difference_ms: 15/);
+  assert.match(baseline, /status: draft/);
+  assert.match(genericMapping, /"device\.image_path": \{ source: image_path/);
+  assert.match(tencentMapping, /route_id: virtual-disk-mount-planned-telemetry/);
+  assert.match(tencentMapping, /"@table": \[DeviceEvents, VirtualDiskEvents, VDiskEvents\]/);
+  assert.match(tencentMapping, /"device\.physical_path": \{ sources:/);
+  assert.match(start, /Build-VirtualDiskActivitySamples\.ps1/);
+  assert.match(start, /虚拟磁盘挂载测试需要管理员权限/);
+  assert.match(e2e, /current-product-no-virtual-disk-event\.json/);
+  assert.match(e2e, /普通 ScriptScan\/FileWriteClose 不应使虚拟磁盘挂载能力通过/);
+  assert.match(design, /不创建分区、不初始化、不格式化、不分配盘符/);
+  assert.match(front, /"win\.device\.virtual_disk\.mount", "虚拟磁盘挂载", "Virtual Disk Mount", "L2"/);
+  assert.ok(normalized.properties.device.properties.image_path);
+  assert.ok(normalized.properties.device.properties.physical_path);
+  assert.ok(localData.$defs.device.properties.method);
+  assert.ok(localData.$defs.device.properties.device.properties.no_drive_letter);
+});
+
 test("既有多子测试 Controller 显式分配 SQLite 唯一序号", async () => {
-  const [file, registry, network, scheduledTask, groupPolicy, process, powershell, bits] = await Promise.all([
+  const [file, registry, network, scheduledTask, groupPolicy, process, powershell, bits, virtualDisk] = await Promise.all([
     "FileManipulation",
     "RegistryActivity",
     "NetworkActivity",
@@ -1011,6 +1070,7 @@ test("既有多子测试 Controller 显式分配 SQLite 唯一序号", async () 
     "ProcessActivity",
     "PowerShellActivity",
     "BitsActivity",
+    "VirtualDiskActivity",
   ].map((domain) => readFile(new URL(`sample-src/${domain}/${domain}.Controller/Program.cs`, root), "utf8")));
 
   assert.match(file, /foreach \(var \(subtest, instanceIndex\) in Subtests\.Select/);
@@ -1045,4 +1105,8 @@ test("既有多子测试 Controller 显式分配 SQLite 唯一序号", async () 
   assert.match(bits, /BitsPlans\.Methods\.Select\(\(value, index\)/);
   assert.ok([...bits.matchAll(/InstanceIndex = state\.InstanceIndex/g)].length >= 2);
   assert.ok([...bits.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
+
+  assert.match(virtualDisk, /VirtualDiskPlans\.Methods\.Select\(\(value, index\)/);
+  assert.ok([...virtualDisk.matchAll(/InstanceIndex = state\.InstanceIndex/g)].length >= 2);
+  assert.match(virtualDisk, /Sequence = state\.InstanceIndex \+ 1/);
 });

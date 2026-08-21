@@ -164,6 +164,24 @@
       },
       "additionalProperties": false
     },
+    "device": {
+      "type": ["object", "null"],
+      "properties": {
+        "type": { "type": ["string", "null"] },
+        "instance_id": { "type": ["string", "null"] },
+        "image_path": { "type": ["string", "null"] },
+        "physical_path": { "type": ["string", "null"] },
+        "image_sha256": { "type": ["string", "null"] },
+        "virtual_size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "read_only": { "type": ["boolean", "null"] },
+        "no_drive_letter": { "type": ["boolean", "null"] },
+        "drive_letter": { "type": ["string", "null"] },
+        "mount_point": { "type": ["string", "null"] },
+        "method": { "type": ["string", "null"] },
+        "provider": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
     "network": {
       "type": ["object", "null"],
       "properties": {

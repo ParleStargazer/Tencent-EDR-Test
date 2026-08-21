@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.device.virtual_disk.mount",
+  "version": "0.1.0",
+  "display_name_zh": "虚拟磁盘挂载",
+  "display_name_en": "Virtual Disk Mount",
+  "description": "分别通过 Windows PowerShell Mount-DiskImage 与 VirtDisk 原生 OpenVirtualDisk + AttachVirtualDisk 附加独立的只读、无盘符 VHD；Actor 和 Controller 使用不同句柄核验物理磁盘路径，随后精确卸载并删除本轮镜像。",
+  "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
+  "risk_level": "L2",
+  "required_privilege": "administrator",
+  "controller": { "executable": "VirtualDiskMount.Controller.exe" },
+  "participants": [
+    { "role": "actor", "executable": "VirtualDiskMount.Actor.exe" }
+  ],
+  "parameters": {
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1000, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 120, "cleanup_seconds": 30 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "virtual_disk.mount_succeeded",
+    "virtual_disk.vdisk_powershell.succeeded", "virtual_disk.vdisk_powershell.occurred_at_utc",
+    "virtual_disk.vdisk_powershell.method", "virtual_disk.vdisk_powershell.invocation_kind",
+    "virtual_disk.vdisk_powershell.image_path", "virtual_disk.vdisk_powershell.image_sha256",
+    "virtual_disk.vdisk_powershell.virtual_size_bytes", "virtual_disk.vdisk_powershell.physical_path",
+    "virtual_disk.vdisk_powershell.read_only", "virtual_disk.vdisk_powershell.no_drive_letter",
+    "virtual_disk.vdisk_powershell.actor_attach_verified", "virtual_disk.vdisk_powershell.controller_attach_verified",
+    "virtual_disk.vdisk_powershell.actor_detach_verified", "virtual_disk.vdisk_powershell.controller_detach_verified",
+    "virtual_disk.vdisk_powershell.initiator_pid", "virtual_disk.vdisk_powershell.initiator_executable",
+    "virtual_disk.vdisk_powershell.initiator_command_line",
+    "virtual_disk.vdisk_native_api.succeeded", "virtual_disk.vdisk_native_api.occurred_at_utc",
+    "virtual_disk.vdisk_native_api.method", "virtual_disk.vdisk_native_api.invocation_kind",
+    "virtual_disk.vdisk_native_api.image_path", "virtual_disk.vdisk_native_api.image_sha256",
+    "virtual_disk.vdisk_native_api.virtual_size_bytes", "virtual_disk.vdisk_native_api.physical_path",
+    "virtual_disk.vdisk_native_api.read_only", "virtual_disk.vdisk_native_api.no_drive_letter",
+    "virtual_disk.vdisk_native_api.actor_attach_verified", "virtual_disk.vdisk_native_api.controller_attach_verified",
+    "virtual_disk.vdisk_native_api.actor_detach_verified", "virtual_disk.vdisk_native_api.controller_detach_verified",
+    "virtual_disk.vdisk_native_api.initiator_pid", "virtual_disk.vdisk_native_api.initiator_executable",
+    "virtual_disk.vdisk_native_api.initiator_command_line", "correlation.nonce"
+  ]
+}

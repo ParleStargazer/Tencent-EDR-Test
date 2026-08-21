@@ -1,0 +1,45 @@
+schema_version: "1.0"
+profile_id: generic-virtual-disk-activity-v1
+vendor: Generic
+product: Virtual Disk Activity Self-Test Fixture
+description: 用于验证虚拟磁盘双方法 BASELINE 与比较器的扁平 JSON 适配；不是任何 EDR 厂商的生产映射。
+
+input:
+  containers: [json-array, jsonl]
+  encoding: utf-8
+  record_selector:
+    all: { table: VirtualDiskActivity }
+  event_id_field: event_id
+  host_id_field: host_id
+  event_time: { field: event_time, format: iso8601 }
+
+routes:
+  - route_id: virtual-disk-mount-activity
+    when: { table: VirtualDiskActivity }
+    canonical:
+      "event.type": { constant: device }
+      "event.action": { constant: virtual_disk_mount }
+      "event.category": { constant: configuration }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "host.hostname": { source: host_name, on_empty: null }
+      "process.pid": { source: actor_pid, on_zero: null }
+      "process.name": { source: actor_name, on_empty: null }
+      "process.executable": { source: actor_executable, transform: [windows_path], on_empty: null }
+      "process.command_line": { source: actor_command_line, on_empty: null }
+      "device.type": { constant: virtual_disk }
+      "device.instance_id": { source: instance_id, on_empty: null }
+      "device.image_path": { source: image_path, transform: [windows_path] }
+      "device.physical_path": { source: physical_path, transform: [windows_path] }
+      "device.image_sha256": { source: image_sha256, transform: [lowercase], on_empty: null }
+      "device.virtual_size_bytes": { source: virtual_size_bytes }
+      "device.read_only": { source: read_only }
+      "device.no_drive_letter": { source: no_drive_letter }
+      "device.drive_letter": { source: drive_letter, on_empty: null }
+      "device.mount_point": { source: mount_point, transform: [windows_path], on_empty: null }
+      "device.method": { source: method }
+      "device.provider": { source: provider, on_empty: null }
+
+raw_reference: { id_field: event_id, ordinal_base: 0 }
+unmapped_fields: { policy: count-and-ignore, preserve_in_report: false }

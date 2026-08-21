@@ -67,7 +67,7 @@ try {
     Write-Warning "无法确认当前 PowerShell 的管理员权限：$($_.Exception.Message)"
 }
 if (-not $isAdministrator) {
-    Write-Warning "当前平台未以管理员身份运行。建议关闭后使用管理员权限重新运行 scripts\Start-EdrTest.ps1；五项用户账号活动、三项服务活动、组策略修改和三项 WMI permanent subscription 测试需要管理员权限，否则会被跳过或不可用。"
+    Write-Warning "当前平台未以管理员身份运行。建议关闭后使用管理员权限重新运行 scripts\Start-EdrTest.ps1；五项用户账号活动、三项服务活动、组策略修改、三项 WMI permanent subscription 和虚拟磁盘挂载测试需要管理员权限，否则会被跳过或不可用。"
 }
 
 [System.IO.Directory]::CreateDirectory($logRoot) | Out-Null
@@ -79,7 +79,7 @@ if (-not $SkipBuild) {
     & $dotnet.Source build (Join-Path $repositoryRoot "EdrTest.sln") --configuration Release --no-restore
     if ($LASTEXITCODE -ne 0) { throw "dotnet build 失败。" }
 
-    Write-Host "[2/5] 构建 Process、File、Hash、User Account、Network、Registry、Scheduled Task、Service、Group Policy、Named Pipe、PowerShell 与 BITS Activity 能力包…" -ForegroundColor Cyan
+    Write-Host "[2/5] 构建 Process、File、Hash、User Account、Network、Registry、Scheduled Task、Service、Group Policy、Named Pipe、PowerShell、BITS、WMI 与 Virtual Disk Activity 能力包…" -ForegroundColor Cyan
     & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-ProcessActivitySamples.ps1") -Configuration Release
     if ($LASTEXITCODE -ne 0) { throw "能力样本构建失败。" }
     & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-FileManipulationSamples.ps1") -Configuration Release
@@ -106,6 +106,8 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "BITS 活动能力样本构建失败。" }
     & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-WmiActivitySamples.ps1") -Configuration Release -SuppressPrivilegeWarning
     if ($LASTEXITCODE -ne 0) { throw "WMI 活动能力样本构建失败。" }
+    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-VirtualDiskActivitySamples.ps1") -Configuration Release -SuppressPrivilegeWarning
+    if ($LASTEXITCODE -ne 0) { throw "虚拟磁盘挂载能力样本构建失败。" }
 }
 
 if (-not (Test-Path $runnerDll)) { throw "找不到 Runner：$runnerDll。请移除 -SkipBuild 后重试。" }

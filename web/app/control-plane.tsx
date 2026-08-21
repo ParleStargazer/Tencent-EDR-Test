@@ -177,7 +177,7 @@ export const capabilityCatalog: CapabilityCategory[] = [
     nameZh: "设备操作",
     nameEn: "Device Operations",
     capabilities: [
-      defineCapability("win.device.virtual_disk.mount", "虚拟磁盘挂载", "Virtual Disk Mount", "L1", "Controller · Actor · Helper"),
+      defineCapability("win.device.virtual_disk.mount", "虚拟磁盘挂载", "Virtual Disk Mount", "L2", "Controller · Actor · Mount-DiskImage / VirtDisk API"),
       defineCapability("win.device.usb.unmount", "USB 设备卸载", "USB Device Unmount", "L1", "Controller · Actor · Helper"),
       defineCapability("win.device.usb.mount", "USB 设备挂载", "USB Device Mount", "L1", "Controller · Actor · Helper"),
     ],

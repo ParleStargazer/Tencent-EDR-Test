@@ -613,6 +613,7 @@
       "properties": {
         "kind": { "const": "device" },
         "operation": { "enum": ["virtual_disk_mount", "usb_unmount", "usb_mount"] },
+        "method": { "type": ["string", "null"] },
         "actor": { "$ref": "#/$defs/process_ref" },
         "device": {
           "type": "object",
@@ -627,7 +628,13 @@
             "volume_guid": { "type": ["string", "null"] },
             "drive_letter": { "type": ["string", "null"] },
             "mount_point": { "type": ["string", "null"] },
-            "image_path": { "type": ["string", "null"] }
+            "image_path": { "type": ["string", "null"] },
+            "physical_path": { "type": ["string", "null"] },
+            "device_type": { "type": ["string", "null"] },
+            "virtual_size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "read_only": { "type": ["boolean", "null"] },
+            "no_drive_letter": { "type": ["boolean", "null"] },
+            "provider": { "type": ["string", "null"] }
           }
         },
         "before": { "$ref": "#/$defs/state_snapshot" },

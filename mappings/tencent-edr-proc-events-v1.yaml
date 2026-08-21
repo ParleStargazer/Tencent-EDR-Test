@@ -20,6 +20,45 @@ input:
     format: unix_ms
 
 routes:
+  # 规划路由：当前腾讯 EDR 字段全集与已知 run 中没有虚拟磁盘专属表、动作或对象字段。
+  # 只接受未来可能出现的专属 Device/VirtualDisk 表和精确挂载动作；普通 PowerShell、
+  # ProcEvents、FileEvents 或磁盘文件写入不能进入本能力，以免用侧面行为冒充直接观测。
+  - route_id: virtual-disk-mount-planned-telemetry
+    when:
+      "@table": [DeviceEvents, VirtualDiskEvents, VDiskEvents]
+      "Action.Name": [VirtualDiskMount, VDiskMount]
+    canonical:
+      "event.type": { constant: device }
+      "event.action": { constant: virtual_disk_mount }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "host.os": { source: "Environment.OsVersion", on_empty: null }
+      "host.agent_id": { source: "Common.Guid", on_empty: null }
+      "host.agent_version": { source: "Common.ClientVer", on_empty: null }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Parent.ProcUserName", on_empty: null }
+      "user.domain": { source: "Parent.ProcDomainName", on_empty: null }
+      "device.type": { constant: virtual_disk }
+      "device.instance_id": { sources: ["Child.VirtualDiskInstanceId", "Child.DeviceInstanceId", "Child.InstanceId"], on_empty: null }
+      "device.image_path": { sources: ["Child.VirtualDiskImagePath", "Child.DiskImagePath", "Child.ImagePath", "Child.FilePath"], transform: [windows_path], on_empty: null }
+      "device.physical_path": { sources: ["Child.VirtualDiskPhysicalPath", "Child.PhysicalDiskPath", "Child.PhysicalPath"], transform: [windows_path], on_empty: null }
+      "device.image_sha256": { sources: ["Child.VirtualDiskImageSha256", "Child.ImageSha256", "Child.FileSha256"], transform: [lowercase], on_empty: null }
+      "device.virtual_size_bytes": { sources: ["Child.VirtualDiskSize", "Child.VirtualSizeBytes", "Child.DiskSize"], on_zero: 0 }
+      "device.read_only": { sources: ["Child.VirtualDiskReadOnly", "Child.ReadOnly"], on_empty: null }
+      "device.no_drive_letter": { sources: ["Child.VirtualDiskNoDriveLetter", "Child.NoDriveLetter"], on_empty: null }
+      "device.drive_letter": { sources: ["Child.VirtualDiskDriveLetter", "Child.DriveLetter"], on_empty: null }
+      "device.mount_point": { sources: ["Child.VirtualDiskMountPoint", "Child.MountPoint"], transform: [windows_path], on_empty: null }
+      "device.method": { sources: ["Child.VirtualDiskMethod", "Child.AttachMethod", "Child.Method"], on_empty: null }
+      "device.provider": { sources: ["Child.VirtualDiskProvider", "Child.Provider"], on_empty: null }
+
   # reference/script 实测：腾讯把 Windows PowerShell 5.1 与 PowerShell 7 的 AMSI 扫描统一导出为
   # ScriptEvents/ScriptScan。Action.Name 只表达宽泛“脚本执行”，具体命令或脚本块必须通过
   # Parent PowerShell 进程与 Child.ContentData 精确关联。路由不硬编码 Action.Name，保留前端
