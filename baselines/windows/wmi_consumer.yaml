@@ -1,0 +1,64 @@
+schema_version: "1.1"
+baseline_id: win.wmi.consumer
+version: "0.1.0"
+title: Windows WMI 事件消费者遥测
+description: 在 ROOT\subscription 创建无命令副作用的唯一 LogFileEventConsumer，并以本地 repository 双重查询结果作为绝对基准。腾讯 EDR 当前没有 permanent WMI consumer 直接事件，云端要求仍保持 cardinality.min=1。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L1
+capability:
+  id: win.wmi.consumer
+  version: "0.1.0"
+  parameters: { post_operation_hold_ms: 1000 }
+local_requirements:
+  - { field: facts.wmi.operation_succeeded, operator: equals, expected: true }
+  - { field: facts.wmi.operation, operator: equals, expected: consumer }
+  - { field: facts.wmi.namespace, operator: equals, expected: ROOT\subscription, normalizers: [lowercase, trim] }
+  - { field: facts.wmi.object_class, operator: equals, expected: LogFileEventConsumer }
+  - { field: facts.wmi.consumer_name, operator: present }
+  - { field: facts.wmi.consumer_path, operator: present }
+  - { field: facts.wmi.consumer_class, operator: equals, expected: LogFileEventConsumer }
+  - { field: facts.wmi.log_file_path, operator: present }
+  - { field: facts.wmi.text_template, operator: present }
+  - { field: facts.wmi.controller_verified, operator: equals, expected: true }
+  - { field: facts.wmi.actor_verified, operator: equals, expected: true }
+  - { field: facts.wmi.cleanup_succeeded, operator: equals, expected: true }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.wmi.consumer_name, cloud_field: wmi.consumer_name, strength: strong }
+    - { local_field: facts.wmi.log_file_path, cloud_field: wmi.log_file_path, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.wmi.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+cloud_expectations:
+  - id: wmi-event-consumer-direct-event
+    event_type: wmi
+    event_actions: [consumer]
+    cardinality: { min: 1, max: 20 }
+    correlation:
+      time_from_local: facts.wmi.occurred_at_utc
+      max_time_difference_ms: 15
+      anchors:
+        - { local_field: facts.wmi.consumer_name, cloud_field: wmi.consumer_name, strength: strong }
+        - { local_field: facts.wmi.log_file_path, cloud_field: wmi.log_file_path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.wmi.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+    assertions:
+      - { field: wmi.object_class, operator: equals, expected: LogFileEventConsumer, severity: required }
+      - { field: wmi.consumer_name, operator: equals, expected_from_local: facts.wmi.consumer_name, severity: required }
+      - { field: wmi.consumer_class, operator: equals, expected_from_local: facts.wmi.consumer_class, severity: required }
+      - { field: wmi.namespace, operator: equals, expected_from_local: facts.wmi.namespace, severity: required, normalizers: [lowercase, trim] }
+      - { field: wmi.log_file_path, operator: equals, expected_from_local: facts.wmi.log_file_path, severity: required, normalizers: [windows_path] }
+      - { field: wmi.text_template, operator: equals, expected_from_local: facts.wmi.text_template, severity: recommended }
+      - { field: wmi.consumer_path, operator: equals, expected_from_local: facts.wmi.consumer_path, severity: recommended, normalizers: [lowercase, trim] }
+      - { field: process.executable, operator: equals, expected_from_local: facts.wmi.actor_executable, severity: recommended, normalizers: [windows_path] }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: draft
+  change_reason: 使用 LogFileEventConsumer 避免启动命令和 ScriptScan 噪声；当前腾讯导出未提供对象级 consumer 字段，故无直接事件时应保持未匹配。
+  references:
+    - reference/WMI三项能力实现可行性评估.md
+    - reference/EDR日志-字段表.txt

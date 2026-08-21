@@ -1,0 +1,64 @@
+schema_version: "1.1"
+baseline_id: win.wmi.filter
+version: "0.1.0"
+title: Windows WMI 事件过滤器遥测
+description: 在 ROOT\subscription 创建唯一 __EventFilter，并以本地 repository 双重查询结果作为绝对基准。腾讯 EDR 当前没有 permanent WMI subscription 的直接事件，因此保留完整强制云端要求，当前实测允许得到未匹配结论。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L1
+capability:
+  id: win.wmi.filter
+  version: "0.1.0"
+  parameters: { post_operation_hold_ms: 1000 }
+local_requirements:
+  - { field: facts.wmi.operation_succeeded, operator: equals, expected: true }
+  - { field: facts.wmi.operation, operator: equals, expected: filter }
+  - { field: facts.wmi.namespace, operator: equals, expected: ROOT\subscription, normalizers: [lowercase, trim] }
+  - { field: facts.wmi.object_class, operator: equals, expected: __EventFilter }
+  - { field: facts.wmi.filter_name, operator: present }
+  - { field: facts.wmi.filter_path, operator: present }
+  - { field: facts.wmi.query, operator: present }
+  - { field: facts.wmi.query_language, operator: equals, expected: WQL, normalizers: [lowercase, trim] }
+  - { field: facts.wmi.event_namespace, operator: equals, expected: root\cimv2, normalizers: [lowercase, trim] }
+  - { field: facts.wmi.controller_verified, operator: equals, expected: true }
+  - { field: facts.wmi.actor_verified, operator: equals, expected: true }
+  - { field: facts.wmi.cleanup_succeeded, operator: equals, expected: true }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.wmi.filter_name, cloud_field: wmi.filter_name, strength: strong }
+    - { local_field: facts.wmi.namespace, cloud_field: wmi.namespace, strength: strong, normalizers: [lowercase, trim] }
+    - { local_field: facts.wmi.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+cloud_expectations:
+  - id: wmi-event-filter-direct-event
+    event_type: wmi
+    event_actions: [filter]
+    cardinality: { min: 1, max: 20 }
+    correlation:
+      time_from_local: facts.wmi.occurred_at_utc
+      max_time_difference_ms: 15
+      anchors:
+        - { local_field: facts.wmi.filter_name, cloud_field: wmi.filter_name, strength: strong }
+        - { local_field: facts.wmi.namespace, cloud_field: wmi.namespace, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.wmi.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+    assertions:
+      - { field: wmi.object_class, operator: equals, expected: __EventFilter, severity: required }
+      - { field: wmi.filter_name, operator: equals, expected_from_local: facts.wmi.filter_name, severity: required }
+      - { field: wmi.namespace, operator: equals, expected_from_local: facts.wmi.namespace, severity: required, normalizers: [lowercase, trim] }
+      - { field: wmi.query, operator: equals, expected_from_local: facts.wmi.query, severity: required }
+      - { field: wmi.query_language, operator: equals, expected_from_local: facts.wmi.query_language, severity: recommended, normalizers: [lowercase, trim] }
+      - { field: wmi.event_namespace, operator: equals, expected_from_local: facts.wmi.event_namespace, severity: recommended, normalizers: [lowercase, trim] }
+      - { field: wmi.filter_path, operator: equals, expected_from_local: facts.wmi.filter_path, severity: recommended, normalizers: [lowercase, trim] }
+      - { field: process.executable, operator: equals, expected_from_local: facts.wmi.actor_executable, severity: recommended, normalizers: [windows_path] }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: draft
+  change_reason: 历史 WmiOperation 只体现 ExecMethod，不含 ROOT\subscription、__EventFilter 或 PutInstance；不得用 PowerShell/ScriptScan 或普通 WMI 方法调用冒充本能力直接事件。
+  references:
+    - reference/WMI三项能力实现可行性评估.md
+    - reference/EDR日志-字段表.txt

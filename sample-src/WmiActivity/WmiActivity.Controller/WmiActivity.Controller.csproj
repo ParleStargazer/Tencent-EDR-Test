@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>WmiActivity.Controller</AssemblyName>
+    <RootNamespace>WmiActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\EdrTest\EdrTest.csproj" />
+    <ProjectReference Include="..\WmiActivity.Protocol\WmiActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

@@ -944,6 +944,63 @@ test("BITS 任务能力通过 bitsadmin 与 COM API 建立完整本地基准和�
   assert.ok(normalized.properties.bits.properties.notification_command);
 });
 
+test("WMI 三项能力通过 permanent subscription 对象建立完整本地基准和规划映射", async () => {
+  const capabilityIds = ["win.wmi.filter", "win.wmi.consumer", "win.wmi.consumer_filter.bind"];
+  const manifests = await Promise.all(capabilityIds.map((id) => readJson(`sample-src/WmiActivity/manifests/${id}/capability.json`)));
+  const baselines = await Promise.all([
+    "wmi_filter.yaml", "wmi_consumer.yaml", "wmi_consumer_filter_bind.yaml",
+  ].map((name) => readFile(new URL(`baselines/windows/${name}`, root), "utf8")));
+  const protocol = await readFile(new URL("sample-src/WmiActivity/WmiActivity.Protocol/Protocol.cs", root), "utf8");
+  const behavior = await readFile(new URL("sample-src/WmiActivity/WmiActivity.Behavior/Program.cs", root), "utf8");
+  const controller = await readFile(new URL("sample-src/WmiActivity/WmiActivity.Controller/Program.cs", root), "utf8");
+  const genericMapping = await readFile(new URL("mappings/generic-wmi-activity-v1.yaml", root), "utf8");
+  const tencentMapping = await readFile(new URL("mappings/tencent-edr-proc-events-v1.yaml", root), "utf8");
+  const start = await readFile(new URL("scripts/Start-EdrTest.ps1", root), "utf8");
+  const e2e = await readFile(new URL("scripts/Test-WmiActivitySamples.ps1", root), "utf8");
+  const design = await readFile(new URL("docs/WMI-ACTIVITY-SAMPLES.md", root), "utf8");
+  const normalized = await readJson("schemas/normalized-event.schema.json");
+  const localData = await readJson("schemas/local-event-data.schema.json");
+
+  assert.deepEqual(manifests.map((value) => value.capability_id), capabilityIds);
+  manifests.forEach((manifest) => {
+    assert.equal(manifest.version, "0.1.0");
+    assert.equal(manifest.risk_level, "L1");
+    assert.equal(manifest.required_privilege, "administrator");
+    assert.equal(manifest.network.required, false);
+    assert.equal(manifest.participants.length, 1);
+    assert.ok(manifest.expected_fact_keys.includes("wmi.cleanup_succeeded"));
+  });
+  assert.match(protocol, /ConsumerClass = "LogFileEventConsumer"/);
+  assert.match(protocol, /PutType\.CreateOnly/);
+  assert.match(protocol, /DeleteBindings[\s\S]*DeleteNamed\(scope, WmiPlans\.ConsumerClass[\s\S]*DeleteNamed\(scope, WmiPlans\.FilterClass/);
+  assert.doesNotMatch(protocol, /CommandLineEventConsumer/);
+  assert.match(behavior, /WmiRepository\.Create\(plan\)/);
+  assert.match(behavior, /WmiRepository\.CaptureTarget\(plan\)/);
+  assert.match(controller, /system_management_root_subscription_dual_repository_query/);
+  assert.match(controller, /WmiRepository\.MatchesPlan\(plan, independentSnapshot\)/);
+  assert.match(controller, /delete_wmi_binding_consumer_filter_and_stop_actor/);
+  baselines.forEach((baseline) => {
+    assert.match(baseline, /cardinality: \{ min: 1, max: 20 \}/);
+    assert.match(baseline, /max_time_difference_ms: 15/);
+    assert.match(baseline, /status: draft/);
+  });
+  assert.match(genericMapping, /route_id: wmi-event-filter/);
+  assert.match(genericMapping, /route_id: wmi-event-consumer/);
+  assert.match(genericMapping, /route_id: wmi-consumer-filter-binding/);
+  assert.match(tencentMapping, /route_id: wmi-event-filter-planned-telemetry/);
+  assert.match(tencentMapping, /"Action.Name": WmiEventConsumerToFilter/);
+  assert.match(tencentMapping, /"wmi\.filter_reference": \{ sources:/);
+  assert.match(start, /Build-WmiActivitySamples\.ps1/);
+  assert.match(start, /WMI permanent subscription/);
+  assert.match(e2e, /current-product-wmi-operation-only\.json/);
+  assert.match(e2e, /WmiOperation\/ExecMethod 不应使 permanent WMI subscription 能力通过/);
+  assert.match(design, /当前产品版本及策略环境下，未观察到该行为的直接 EDR telemetry/);
+  assert.ok(normalized.properties.wmi.properties.filter_name);
+  assert.ok(normalized.properties.wmi.properties.consumer_reference);
+  assert.ok(localData.$defs.wmi.properties.log_file_path);
+  assert.ok(localData.$defs.wmi.properties.binding_path);
+});
+
 test("既有多子测试 Controller 显式分配 SQLite 唯一序号", async () => {
   const [file, registry, network, scheduledTask, groupPolicy, process, powershell, bits] = await Promise.all([
     "FileManipulation",

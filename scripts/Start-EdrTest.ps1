@@ -67,7 +67,7 @@ try {
     Write-Warning "无法确认当前 PowerShell 的管理员权限：$($_.Exception.Message)"
 }
 if (-not $isAdministrator) {
-    Write-Warning "当前平台未以管理员身份运行。建议关闭后使用管理员权限重新运行 scripts\Start-EdrTest.ps1；五项用户账号活动、三项服务活动和组策略修改测试需要管理员权限，否则会被跳过或不可用。"
+    Write-Warning "当前平台未以管理员身份运行。建议关闭后使用管理员权限重新运行 scripts\Start-EdrTest.ps1；五项用户账号活动、三项服务活动、组策略修改和三项 WMI permanent subscription 测试需要管理员权限，否则会被跳过或不可用。"
 }
 
 [System.IO.Directory]::CreateDirectory($logRoot) | Out-Null
@@ -104,6 +104,8 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "PowerShell 活动能力样本构建失败。" }
     & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-BitsActivitySamples.ps1") -Configuration Release
     if ($LASTEXITCODE -ne 0) { throw "BITS 活动能力样本构建失败。" }
+    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-WmiActivitySamples.ps1") -Configuration Release -SuppressPrivilegeWarning
+    if ($LASTEXITCODE -ne 0) { throw "WMI 活动能力样本构建失败。" }
 }
 
 if (-not (Test-Path $runnerDll)) { throw "找不到 Runner：$runnerDll。请移除 -SkipBuild 后重试。" }

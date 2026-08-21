@@ -330,9 +330,11 @@ EDR SysOps 不等于对腾讯后台进行 API 接入。L3 变更必须使用隔�
 
 | 能力 | `event_type/action` | 必须收集 |
 | --- | --- | --- |
-| WMI 事件消费者与过滤器绑定（WmiEventConsumerToFilter） | `wmi/consumer_filter_bind` | Actor；Namespace；Binding、Filter、Consumer 路径；前后状态 |
-| WMI 事件消费者（WmiEventConsumer） | `wmi/consumer` | Namespace、对象名/类；命令模板或脚本 hash；前后状态 |
-| WMI 事件过滤器（WmiEventFilter） | `wmi/filter` | Namespace、Filter 名、WQL Query；前后状态 |
+| WMI 事件消费者与过滤器绑定（WmiEventConsumerToFilter） | `wmi/consumer_filter_bind` | Actor；Namespace；Binding、Filter、Consumer 路径与两端引用；前后状态 |
+| WMI 事件消费者（WmiEventConsumer） | `wmi/consumer` | Namespace、对象名/类；LogFile 路径与文本模板，或命令模板/脚本 hash；前后状态 |
+| WMI 事件过滤器（WmiEventFilter） | `wmi/filter` | Namespace、Filter 名/路径、WQL Query、查询语言、事件 Namespace；前后状态 |
+
+官方安全样本使用 `LogFileEventConsumer`，不设置命令或脚本；Actor 与 Controller 必须分别查询 `ROOT\subscription`，清理固定为 Binding、Consumer、Filter。三项要求管理员权限，现有 `WmiOperation/ExecMethod` 和 ScriptScan 不能作为直接通过证据。
 
 ### 5.15 BITS 后台传输任务活动（BIT JOBS Activity）
 

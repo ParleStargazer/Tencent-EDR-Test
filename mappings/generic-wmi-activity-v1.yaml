@@ -1,0 +1,96 @@
+schema_version: "1.0"
+profile_id: generic-wmi-activity-v1
+vendor: Generic
+product: WMI Activity Self-Test Fixture
+description: 用于验证三项 permanent WMI subscription BASELINE 与比较器的扁平 JSON 适配；不是任何 EDR 厂商的生产映射。
+
+input:
+  containers: [json-array, jsonl]
+  encoding: utf-8
+  record_selector:
+    all: { table: WmiActivity }
+  event_id_field: event_id
+  host_id_field: host_id
+  event_time: { field: event_time, format: iso8601 }
+
+routes:
+  - route_id: wmi-event-filter
+    when: { table: WmiActivity, operation: filter }
+    canonical:
+      "event.type": { constant: wmi }
+      "event.action": { constant: filter }
+      "event.category": { constant: configuration }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "host.hostname": { source: host_name, on_empty: null }
+      "process.pid": { source: actor_pid, on_zero: null }
+      "process.name": { source: actor_name, on_empty: null }
+      "process.executable": { source: actor_executable, transform: [windows_path], on_empty: null }
+      "process.command_line": { source: actor_command_line, on_empty: null }
+      "wmi.namespace": { source: namespace }
+      "wmi.operation": { source: operation }
+      "wmi.object_class": { source: object_class }
+      "wmi.object_name": { source: object_name }
+      "wmi.object_path": { source: object_path, on_empty: null }
+      "wmi.filter_name": { source: filter_name }
+      "wmi.filter_path": { source: filter_path, on_empty: null }
+      "wmi.query": { source: query }
+      "wmi.query_language": { source: query_language, on_empty: null }
+      "wmi.event_namespace": { source: event_namespace, on_empty: null }
+
+  - route_id: wmi-event-consumer
+    when: { table: WmiActivity, operation: consumer }
+    canonical:
+      "event.type": { constant: wmi }
+      "event.action": { constant: consumer }
+      "event.category": { constant: configuration }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "host.hostname": { source: host_name, on_empty: null }
+      "process.pid": { source: actor_pid, on_zero: null }
+      "process.name": { source: actor_name, on_empty: null }
+      "process.executable": { source: actor_executable, transform: [windows_path], on_empty: null }
+      "process.command_line": { source: actor_command_line, on_empty: null }
+      "wmi.namespace": { source: namespace }
+      "wmi.operation": { source: operation }
+      "wmi.object_class": { source: object_class }
+      "wmi.object_name": { source: object_name }
+      "wmi.object_path": { source: object_path, on_empty: null }
+      "wmi.consumer_name": { source: consumer_name }
+      "wmi.consumer_path": { source: consumer_path, on_empty: null }
+      "wmi.consumer_class": { source: consumer_class }
+      "wmi.log_file_path": { source: log_file_path, transform: [windows_path], on_empty: null }
+      "wmi.text_template": { source: text_template, on_empty: null }
+
+  - route_id: wmi-consumer-filter-binding
+    when: { table: WmiActivity, operation: consumer_filter_bind }
+    canonical:
+      "event.type": { constant: wmi }
+      "event.action": { constant: consumer_filter_bind }
+      "event.category": { constant: configuration }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "host.hostname": { source: host_name, on_empty: null }
+      "process.pid": { source: actor_pid, on_zero: null }
+      "process.name": { source: actor_name, on_empty: null }
+      "process.executable": { source: actor_executable, transform: [windows_path], on_empty: null }
+      "process.command_line": { source: actor_command_line, on_empty: null }
+      "wmi.namespace": { source: namespace }
+      "wmi.operation": { source: operation }
+      "wmi.object_class": { source: object_class }
+      "wmi.object_name": { source: object_name }
+      "wmi.object_path": { source: object_path, on_empty: null }
+      "wmi.filter_name": { source: filter_name }
+      "wmi.filter_path": { source: filter_path, on_empty: null }
+      "wmi.consumer_name": { source: consumer_name }
+      "wmi.consumer_path": { source: consumer_path, on_empty: null }
+      "wmi.consumer_class": { source: consumer_class }
+      "wmi.binding_path": { source: binding_path, on_empty: null }
+      "wmi.filter_reference": { source: filter_reference }
+      "wmi.consumer_reference": { source: consumer_reference }
+
+raw_reference: { id_field: event_id, ordinal_base: 0 }
+unmapped_fields: { policy: count-and-ignore, preserve_in_report: false }

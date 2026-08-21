@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>WmiActivity.Behavior</AssemblyName>
+    <RootNamespace>WmiActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\WmiActivity.Protocol\WmiActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

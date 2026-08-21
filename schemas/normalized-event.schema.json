@@ -242,6 +242,30 @@
       },
       "additionalProperties": false
     },
+    "wmi": {
+      "type": ["object", "null"],
+      "properties": {
+        "namespace": { "type": ["string", "null"] },
+        "operation": { "type": ["string", "null"] },
+        "object_class": { "type": ["string", "null"] },
+        "object_name": { "type": ["string", "null"] },
+        "object_path": { "type": ["string", "null"] },
+        "filter_name": { "type": ["string", "null"] },
+        "filter_path": { "type": ["string", "null"] },
+        "query": { "type": ["string", "null"] },
+        "query_language": { "type": ["string", "null"] },
+        "event_namespace": { "type": ["string", "null"] },
+        "consumer_name": { "type": ["string", "null"] },
+        "consumer_path": { "type": ["string", "null"] },
+        "consumer_class": { "type": ["string", "null"] },
+        "log_file_path": { "type": ["string", "null"] },
+        "text_template": { "type": ["string", "null"] },
+        "binding_path": { "type": ["string", "null"] },
+        "filter_reference": { "type": ["string", "null"] },
+        "consumer_reference": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
     "correlation": {
       "type": ["object", "null"],
       "properties": {

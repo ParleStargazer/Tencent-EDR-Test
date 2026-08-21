@@ -60,6 +60,108 @@ routes:
       "file.size": { source: "Child.FileSize", on_zero: 0 }
       "file.hash.md5": { source: "Child.FileMd5", transform: [lowercase], on_empty: null }
 
+  # 规划路由：当前腾讯导出的 WmiOperation 只记录 IWbemServices::ExecMethod，不包含
+  # permanent WMI subscription 的 PutInstance/DeleteInstance 或对象级字段。以下三条路由
+  # 只接受未来出现的精确订阅动作；普通 WmiOperation 与 ScriptScan 不会进入 WMI 三能力。
+  - route_id: wmi-event-filter-planned-telemetry
+    when:
+      "@table": [WMIEvents, WmiEvents, WmiSubscriptionEvents]
+      "Action.Name": WmiEventFilter
+    canonical:
+      "event.type": { constant: wmi }
+      "event.action": { constant: filter }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "host.os": { source: "Environment.OsVersion", on_empty: null }
+      "host.agent_id": { source: "Common.Guid", on_empty: null }
+      "host.agent_version": { source: "Common.ClientVer", on_empty: null }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "wmi.namespace": { sources: ["Child.WmiNamespace", "Child.Namespace", "Child.NameSpace"], on_empty: null }
+      "wmi.operation": { constant: filter }
+      "wmi.object_class": { sources: ["Child.WmiObjectClass", "Child.ObjectClass", "Child.ClassName"], on_empty: null }
+      "wmi.object_name": { sources: ["Child.WmiObjectName", "Child.ObjectName", "Child.Name"], on_empty: null }
+      "wmi.object_path": { sources: ["Child.WmiObjectPath", "Child.ObjectPath"], on_empty: null }
+      "wmi.filter_name": { sources: ["Child.WmiFilterName", "Child.FilterName", "Child.ObjectName"], on_empty: null }
+      "wmi.filter_path": { sources: ["Child.WmiFilterPath", "Child.FilterPath", "Child.ObjectPath"], on_empty: null }
+      "wmi.query": { sources: ["Child.WmiQuery", "Child.Query"], on_empty: null }
+      "wmi.query_language": { sources: ["Child.WmiQueryLanguage", "Child.QueryLanguage"], on_empty: null }
+      "wmi.event_namespace": { sources: ["Child.WmiEventNamespace", "Child.EventNamespace"], on_empty: null }
+
+  - route_id: wmi-event-consumer-planned-telemetry
+    when:
+      "@table": [WMIEvents, WmiEvents, WmiSubscriptionEvents]
+      "Action.Name": WmiEventConsumer
+    canonical:
+      "event.type": { constant: wmi }
+      "event.action": { constant: consumer }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "host.os": { source: "Environment.OsVersion", on_empty: null }
+      "host.agent_id": { source: "Common.Guid", on_empty: null }
+      "host.agent_version": { source: "Common.ClientVer", on_empty: null }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "wmi.namespace": { sources: ["Child.WmiNamespace", "Child.Namespace", "Child.NameSpace"], on_empty: null }
+      "wmi.operation": { constant: consumer }
+      "wmi.object_class": { sources: ["Child.WmiObjectClass", "Child.ObjectClass", "Child.ClassName"], on_empty: null }
+      "wmi.object_name": { sources: ["Child.WmiObjectName", "Child.ObjectName", "Child.Name"], on_empty: null }
+      "wmi.object_path": { sources: ["Child.WmiObjectPath", "Child.ObjectPath"], on_empty: null }
+      "wmi.consumer_name": { sources: ["Child.WmiConsumerName", "Child.ConsumerName", "Child.ObjectName"], on_empty: null }
+      "wmi.consumer_path": { sources: ["Child.WmiConsumerPath", "Child.ConsumerPath", "Child.ObjectPath"], on_empty: null }
+      "wmi.consumer_class": { sources: ["Child.WmiConsumerClass", "Child.ConsumerClass", "Child.ObjectClass"], on_empty: null }
+      "wmi.log_file_path": { sources: ["Child.WmiLogFilePath", "Child.LogFilePath", "Child.FileName"], transform: [windows_path], on_empty: null }
+      "wmi.text_template": { sources: ["Child.WmiTextTemplate", "Child.TextTemplate", "Child.Text"], on_empty: null }
+
+  - route_id: wmi-consumer-filter-binding-planned-telemetry
+    when:
+      "@table": [WMIEvents, WmiEvents, WmiSubscriptionEvents]
+      "Action.Name": WmiEventConsumerToFilter
+    canonical:
+      "event.type": { constant: wmi }
+      "event.action": { constant: consumer_filter_bind }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "host.os": { source: "Environment.OsVersion", on_empty: null }
+      "host.agent_id": { source: "Common.Guid", on_empty: null }
+      "host.agent_version": { source: "Common.ClientVer", on_empty: null }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "wmi.namespace": { sources: ["Child.WmiNamespace", "Child.Namespace", "Child.NameSpace"], on_empty: null }
+      "wmi.operation": { constant: consumer_filter_bind }
+      "wmi.object_class": { sources: ["Child.WmiObjectClass", "Child.ObjectClass", "Child.ClassName"], on_empty: null }
+      "wmi.object_name": { sources: ["Child.WmiObjectName", "Child.ObjectName", "Child.Name"], on_empty: null }
+      "wmi.object_path": { sources: ["Child.WmiObjectPath", "Child.ObjectPath"], on_empty: null }
+      "wmi.filter_name": { sources: ["Child.WmiFilterName", "Child.FilterName"], on_empty: null }
+      "wmi.filter_path": { sources: ["Child.WmiFilterPath", "Child.FilterPath"], on_empty: null }
+      "wmi.consumer_name": { sources: ["Child.WmiConsumerName", "Child.ConsumerName"], on_empty: null }
+      "wmi.consumer_path": { sources: ["Child.WmiConsumerPath", "Child.ConsumerPath"], on_empty: null }
+      "wmi.consumer_class": { sources: ["Child.WmiConsumerClass", "Child.ConsumerClass"], on_empty: null }
+      "wmi.binding_path": { sources: ["Child.WmiBindingPath", "Child.BindingPath", "Child.ObjectPath"], on_empty: null }
+      "wmi.filter_reference": { sources: ["Child.WmiFilterReference", "Child.FilterReference", "Child.Filter"], on_empty: null }
+      "wmi.consumer_reference": { sources: ["Child.WmiConsumerReference", "Child.ConsumerReference", "Child.Consumer"], on_empty: null }
+
   # 规划路由：当前腾讯 EDR 字段全集与已知 run 中没有 BITS 专属表或动作，不能用普通
   # NetworkEvents/FileEvents 冒充 BITS 任务观测。本路由只接受未来可能出现的专属表，
   # 字段优先采用 BitsJob 前缀并兼容通用 Job 前缀；没有专属记录时能力应保持未匹配。

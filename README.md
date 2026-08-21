@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目已实现可运行的首版 Windows 框架：能力包发现与校验、Controller 串行调度、每轮独立 SQLite、确定性本地 JSON 导出、云端日志映射和 BASELINE 离线比较已经形成闭环。Process Activity 六项、File Manipulation 五项、User Account Activity 五项、Network Activity 五项、Hash Algorithms 三项、Registry Activity 三项、Scheduled Task Activity 三项、Service Activity 三项、Group Policy Modification 一项、Named Pipe Activity 两项、PowerShell Activity 一项和 BITS Job Activity 一项真实能力样本均已实现；中文前端通过本机回环 API 直接编排 Runner、查看轮次并提交离线比较。
+项目已实现可运行的首版 Windows 框架：能力包发现与校验、Controller 串行调度、每轮独立 SQLite、确定性本地 JSON 导出、云端日志映射和 BASELINE 离线比较已经形成闭环。Process Activity 六项、File Manipulation 五项、User Account Activity 五项、Network Activity 五项、Hash Algorithms 三项、Registry Activity 三项、Scheduled Task Activity 三项、Service Activity 三项、Group Policy Modification 一项、Named Pipe Activity 两项、PowerShell Activity 一项、BITS Job Activity 一项和 WMI Activity 三项真实能力样本均已实现；中文前端通过本机回环 API 直接编排 Runner、查看轮次并提交离线比较。
 
 - 中文前端控制面：[web/README.md](web/README.md)
 - 详细设计：[docs/DESIGN.md](docs/DESIGN.md)
@@ -27,6 +27,7 @@
 - Group Policy Modification 能力样本：[docs/GROUP-POLICY-ACTIVITY-SAMPLES.md](docs/GROUP-POLICY-ACTIVITY-SAMPLES.md)
 - Named Pipe Activity 两项能力样本：[docs/NAMED-PIPE-ACTIVITY-SAMPLES.md](docs/NAMED-PIPE-ACTIVITY-SAMPLES.md)
 - BITS Job Activity 双方法能力样本：[docs/BITS-ACTIVITY-SAMPLES.md](docs/BITS-ACTIVITY-SAMPLES.md)
+- WMI Activity 三项能力样本：[docs/WMI-ACTIVITY-SAMPLES.md](docs/WMI-ACTIVITY-SAMPLES.md)
 - 腾讯 EDR BASELINE 字段基准说明：[docs/TENCENT-EDR-FIELD-CATALOG.md](docs/TENCENT-EDR-FIELD-CATALOG.md)
 - 腾讯 EDR 字段含义与脱敏示例：[docs/reference/tencent-edr-field-catalog.json](docs/reference/tencent-edr-field-catalog.json)
 - 本地前后端与一键启动说明：[docs/LOCAL-CONTROL-PLANE.md](docs/LOCAL-CONTROL-PLANE.md)
@@ -48,7 +49,7 @@
 
 准备好 .NET 8 SDK（或更高版本）、PowerShell 7、Node.js 22.13+ 和 pnpm 11.9+ 后，双击仓库根目录的 `启动平台.cmd`。脚本会构建框架与能力包、构建前端、启动本地服务并打开 `http://127.0.0.1:3000/`。
 
-五项用户账号活动、三项服务活动和组策略修改需要管理员权限。组策略修改包含 L2 真实策略同值回写，还必须在前端确认高风险或向 CLI 传入 `--allow-high-risk`。启动脚本及对应能力包构建脚本会检测当前 PowerShell 权限；非管理员仍可构建并使用其他能力，但会收到推荐以管理员身份重启的提示，Runner 会将这些高权限能力标记为 `SKIPPED / ADMINISTRATOR_REQUIRED`，不会尝试修改本机账号、服务或 HKLM 策略键。
+五项用户账号活动、三项服务活动、组策略修改和三项 permanent WMI subscription 活动需要管理员权限。组策略修改包含 L2 真实策略同值回写，还必须在前端确认高风险或向 CLI 传入 `--allow-high-risk`。启动脚本及对应能力包构建脚本会检测当前 PowerShell 权限；非管理员仍可构建并使用其他能力，但会收到推荐以管理员身份重启的提示，Runner 会将这些高权限能力标记为 `SKIPPED / ADMINISTRATOR_REQUIRED`，不会尝试修改本机账号、服务、HKLM 策略键或 WMI repository。
 
 ```powershell
 pwsh -NoProfile -File scripts/Start-EdrTest.ps1
@@ -84,6 +85,7 @@ pwsh -NoProfile -File scripts/Build-GroupPolicyActivitySamples.ps1
 pwsh -NoProfile -File scripts/Build-NamedPipeActivitySamples.ps1
 pwsh -NoProfile -File scripts/Build-PowerShellActivitySamples.ps1
 pwsh -NoProfile -File scripts/Build-BitsActivitySamples.ps1
+pwsh -NoProfile -File scripts/Build-WmiActivitySamples.ps1
 
 pwsh -NoProfile -File scripts/Test-ProcessActivitySamples.ps1
 pwsh -NoProfile -File scripts/Test-FileManipulationSamples.ps1
@@ -97,6 +99,7 @@ pwsh -NoProfile -File scripts/Test-GroupPolicyActivitySamples.ps1
 pwsh -NoProfile -File scripts/Test-NamedPipeActivitySamples.ps1
 pwsh -NoProfile -File scripts/Test-PowerShellActivitySamples.ps1
 pwsh -NoProfile -File scripts/Test-BitsActivitySamples.ps1
+pwsh -NoProfile -File scripts/Test-WmiActivitySamples.ps1
 
 dotnet run --project src/EdrTest -- run `
   --capability win.process.create `
@@ -115,7 +118,7 @@ dotnet run --project src/EdrTest -- compare `
   --conclusion-out .\validation-conclusion.md
 ```
 
-这些活动构建会直接清理并覆盖 `samples/` 下的同名旧能力包。哈希能力中 MD5、SHA 创建合法 `.json` 文件，IMPHASH 创建真实 `.exe` PE 副本且不会执行；三项都只操作本轮工作目录并立即精确清理。注册表三项只操作 `HKCU\Software\EdrTest\Runs` 下的本轮临时键。组策略修改先执行 `HKLM\SOFTWARE\Policies\EdrTest\Runs\<nonce>` 隔离控制组，再对真实白名单策略值执行同类型、同原始字节回写；若没有现存值，临时预置安全增强值 `EnableSmartScreen=1`，由 Actor 采证后精确恢复原状态。命名管道两项只创建 `\\.\pipe\EdrTest_<nonce>_<operation>` 短生命周期管道，由 Actor/Helper 完成双向 nonce 握手。BITS 双方法只从进程内回环 HTTP 服务下载 nonce JSON，完成或按精确 Job ID 取消任务，不使用通知命令和系统范围重置。计划任务和服务样本同样只操作本轮唯一资源且不会执行任务或启动服务。网络五项只使用本机回环端点；`win.process.image_load@0.3.0` 包含三个原生 DLL 加载子项和一个托管程序集加载子项。比较器仅使用与本地能力版本完全匹配的 BASELINE。
+这些活动构建会直接清理并覆盖 `samples/` 下的同名旧能力包。哈希能力中 MD5、SHA 创建合法 `.json` 文件，IMPHASH 创建真实 `.exe` PE 副本且不会执行；三项都只操作本轮工作目录并立即精确清理。注册表三项只操作 `HKCU\Software\EdrTest\Runs` 下的本轮临时键。组策略修改先执行 `HKLM\SOFTWARE\Policies\EdrTest\Runs\<nonce>` 隔离控制组，再对真实白名单策略值执行同类型、同原始字节回写；若没有现存值，临时预置安全增强值 `EnableSmartScreen=1`，由 Actor 采证后精确恢复原状态。命名管道两项只创建 `\\.\pipe\EdrTest_<nonce>_<operation>` 短生命周期管道，由 Actor/Helper 完成双向 nonce 握手。BITS 双方法只从进程内回环 HTTP 服务下载 nonce JSON，完成或按精确 Job ID 取消任务，不使用通知命令和系统范围重置。WMI 三项只创建本轮唯一 `__EventFilter`、`LogFileEventConsumer` 和 Binding，并严格按 Binding、Consumer、Filter 顺序清理，不使用命令型 Consumer。计划任务和服务样本同样只操作本轮唯一资源且不会执行任务或启动服务。网络五项只使用本机回环端点；`win.process.image_load@0.3.0` 包含三个原生 DLL 加载子项和一个托管程序集加载子项。比较器仅使用与本地能力版本完全匹配的 BASELINE。
 
 比较命令会同时生成结构化 `validation-result.json` 和中文 `validation-conclusion.md`；未指定 `--conclusion-out` 时，Markdown 结论自动写入 JSON 同目录。同一个 `EdrTest.exe` 还提供 `export` 和 `inspect` 子命令。运行 `dotnet run --project src/EdrTest -- help` 可查看完整参数。
 

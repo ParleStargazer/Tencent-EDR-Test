@@ -1,0 +1,68 @@
+schema_version: "1.1"
+baseline_id: win.wmi.consumer_filter.bind
+version: "0.1.0"
+title: Windows WMI 事件消费者与过滤器绑定遥测
+description: 为同轮唯一 Filter 与 Consumer 建立 __FilterToConsumerBinding，必须同时关联两个本地对象；普通 WMI ExecMethod 或脚本内容不构成直接能力证据。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L1
+capability:
+  id: win.wmi.consumer_filter.bind
+  version: "0.1.0"
+  parameters: { post_operation_hold_ms: 1000 }
+local_requirements:
+  - { field: facts.wmi.operation_succeeded, operator: equals, expected: true }
+  - { field: facts.wmi.operation, operator: equals, expected: consumer_filter_bind }
+  - { field: facts.wmi.namespace, operator: equals, expected: ROOT\subscription, normalizers: [lowercase, trim] }
+  - { field: facts.wmi.object_class, operator: equals, expected: __FilterToConsumerBinding }
+  - { field: facts.wmi.filter_name, operator: present }
+  - { field: facts.wmi.consumer_name, operator: present }
+  - { field: facts.wmi.filter_path, operator: present }
+  - { field: facts.wmi.consumer_path, operator: present }
+  - { field: facts.wmi.binding_path, operator: present }
+  - { field: facts.wmi.filter_reference, operator: present }
+  - { field: facts.wmi.consumer_reference, operator: present }
+  - { field: facts.wmi.controller_verified, operator: equals, expected: true }
+  - { field: facts.wmi.actor_verified, operator: equals, expected: true }
+  - { field: facts.wmi.cleanup_succeeded, operator: equals, expected: true }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.wmi.filter_name, cloud_field: wmi.filter_name, strength: strong }
+    - { local_field: facts.wmi.consumer_name, cloud_field: wmi.consumer_name, strength: strong }
+    - { local_field: facts.wmi.namespace, cloud_field: wmi.namespace, strength: strong, normalizers: [lowercase, trim] }
+    - { local_field: facts.wmi.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+cloud_expectations:
+  - id: wmi-consumer-filter-binding-direct-event
+    event_type: wmi
+    event_actions: [consumer_filter_bind]
+    cardinality: { min: 1, max: 20 }
+    correlation:
+      time_from_local: facts.wmi.occurred_at_utc
+      max_time_difference_ms: 15
+      anchors:
+        - { local_field: facts.wmi.filter_name, cloud_field: wmi.filter_name, strength: strong }
+        - { local_field: facts.wmi.consumer_name, cloud_field: wmi.consumer_name, strength: strong }
+        - { local_field: facts.wmi.namespace, cloud_field: wmi.namespace, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.wmi.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+    assertions:
+      - { field: wmi.object_class, operator: equals, expected: __FilterToConsumerBinding, severity: required }
+      - { field: wmi.filter_name, operator: equals, expected_from_local: facts.wmi.filter_name, severity: required }
+      - { field: wmi.consumer_name, operator: equals, expected_from_local: facts.wmi.consumer_name, severity: required }
+      - { field: wmi.namespace, operator: equals, expected_from_local: facts.wmi.namespace, severity: required, normalizers: [lowercase, trim] }
+      - { field: wmi.filter_reference, operator: contains, expected_from_local: facts.wmi.filter_name, severity: required }
+      - { field: wmi.consumer_reference, operator: contains, expected_from_local: facts.wmi.consumer_name, severity: required }
+      - { field: wmi.binding_path, operator: equals, expected_from_local: facts.wmi.binding_path, severity: recommended, normalizers: [lowercase, trim] }
+      - { field: process.executable, operator: equals, expected_from_local: facts.wmi.actor_executable, severity: recommended, normalizers: [windows_path] }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: draft
+  change_reason: 当前腾讯 EDR 对 WMI 的已知 WmiOperation 仅覆盖 ExecMethod，没有 __FilterToConsumerBinding/PutInstance 直接遥测；云端最小基数继续保持 1，以便未来产品实现后自然转为通过。
+  references:
+    - reference/WMI三项能力实现可行性评估.md
+    - reference/EDR日志-字段表.txt

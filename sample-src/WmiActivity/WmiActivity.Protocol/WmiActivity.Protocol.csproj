@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>WmiActivity.Protocol</AssemblyName>
+    <RootNamespace>WmiActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Management" Version="8.0.0" />
+    <Compile Include="..\..\Common\ReliableProtocolFile.cs" Link="ReliableProtocolFile.cs" />
+  </ItemGroup>
+</Project>

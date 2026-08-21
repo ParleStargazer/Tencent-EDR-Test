@@ -741,19 +741,26 @@
     "wmi": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "operation", "actor", "namespace", "object_name", "before", "after", "result"],
+      "required": ["kind", "operation", "actor", "namespace", "object_name", "object_class", "object_path", "before", "after", "result"],
       "properties": {
         "kind": { "const": "wmi" },
         "operation": { "enum": ["consumer_filter_bind", "consumer", "filter"] },
         "actor": { "$ref": "#/$defs/process_ref" },
         "namespace": { "type": "string", "minLength": 1 },
         "object_name": { "type": "string", "minLength": 1 },
+        "object_class": { "type": "string", "minLength": 1 },
+        "object_path": { "type": ["string", "null"] },
         "consumer_class": { "type": ["string", "null"] },
         "query": { "type": ["string", "null"] },
+        "query_language": { "type": ["string", "null"] },
+        "event_namespace": { "type": ["string", "null"] },
+        "log_file_path": { "type": ["string", "null"] },
+        "text_template": { "type": ["string", "null"] },
         "command_line_template": { "type": ["string", "null"] },
         "script_text_sha256": { "type": ["string", "null"], "pattern": "^[A-Fa-f0-9]{64}$" },
         "filter_path": { "type": ["string", "null"] },
         "consumer_path": { "type": ["string", "null"] },
+        "binding_path": { "type": ["string", "null"] },
         "before": { "$ref": "#/$defs/state_snapshot" },
         "after": { "$ref": "#/$defs/state_snapshot" },
         "result": { "$ref": "#/$defs/operation_result" }
@@ -761,15 +768,15 @@
       "allOf": [
         {
           "if": { "type": "object", "properties": { "operation": { "const": "consumer_filter_bind" } }, "required": ["operation"] },
-          "then": { "type": "object", "properties": { "filter_path": true, "consumer_path": true }, "required": ["filter_path", "consumer_path"] }
+          "then": { "type": "object", "properties": { "filter_path": true, "consumer_path": true, "binding_path": true }, "required": ["filter_path", "consumer_path", "binding_path"] }
         },
         {
           "if": { "type": "object", "properties": { "operation": { "const": "consumer" } }, "required": ["operation"] },
-          "then": { "type": "object", "properties": { "consumer_class": true, "command_line_template": true, "script_text_sha256": true }, "required": ["consumer_class", "command_line_template", "script_text_sha256"] }
+          "then": { "type": "object", "properties": { "consumer_class": true, "log_file_path": true, "text_template": true }, "required": ["consumer_class", "log_file_path", "text_template"] }
         },
         {
           "if": { "type": "object", "properties": { "operation": { "const": "filter" } }, "required": ["operation"] },
-          "then": { "type": "object", "properties": { "query": true }, "required": ["query"] }
+          "then": { "type": "object", "properties": { "query": true, "query_language": true, "event_namespace": true, "filter_path": true }, "required": ["query", "query_language", "event_namespace", "filter_path"] }
         }
       ]
     },
