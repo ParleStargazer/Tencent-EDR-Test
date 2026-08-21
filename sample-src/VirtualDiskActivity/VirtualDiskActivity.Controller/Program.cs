@@ -1,5 +1,7 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json.Nodes;
 using EdrTest;
 
@@ -11,6 +13,7 @@ internal static class Program
 
     public static int Main(string[] args)
     {
+        Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         ControllerInvocation? invocation = null;
         RunDatabase? database = null;
         var states = new List<ExecutionState>();
@@ -32,7 +35,7 @@ internal static class Program
             string? firstError = null;
             foreach (var (method, instanceIndex) in VirtualDiskPlans.Methods.Select((value, index) => (value, index)))
             {
-                var state = Execute(invocation, package, parameters, method, instanceIndex, plannedImages);
+                var state = Execute(database, invocation, package, parameters, method, instanceIndex, plannedImages);
                 states.Add(state);
                 var actor = CreateActorProgram(invocation, state);
                 var initiator = CreateInitiatorProgram(invocation, state, actor);
@@ -92,7 +95,7 @@ internal static class Program
         }
     }
 
-    private static ExecutionState Execute(ControllerInvocation invocation, CapabilityPackage package, JsonObject parameters,
+    private static ExecutionState Execute(RunDatabase database, ControllerInvocation invocation, CapabilityPackage package, JsonObject parameters,
         string method, int instanceIndex, ICollection<string> plannedImages)
     {
         var plan = VirtualDiskPlans.Create(method, invocation.Nonce);
@@ -100,10 +103,8 @@ internal static class Program
         var actorPath = package.ResolveProgram(actorDefinition.Executable);
         var methodWorkDir = Path.GetFullPath(Path.Combine(invocation.WorkDir, $"virtual-disk-{plan.FactKey}"));
         Directory.CreateDirectory(methodWorkDir);
-        var imagePath = Path.GetFullPath(Path.Combine(methodWorkDir, plan.ImageFileName));
-        EnsureScopedPath(invocation.WorkDir, imagePath);
-        plannedImages.Add(imagePath);
-        VirtualDiskNative.CreateDynamicVhd(imagePath, VirtualDiskPlans.VirtualSizeBytes);
+        var imageCreation = CreateImage(database, invocation, plan, methodWorkDir, plannedImages);
+        var imagePath = imageCreation.ImagePath;
         var imageSha256 = Hashing.FileSha256(imagePath);
         var before = VirtualDiskNative.Inspect(imagePath);
         if (!before.ImageExists || before.Attached) throw new InvalidDataException("Controller 创建后的 VHD 初始状态不正确。");
@@ -118,6 +119,7 @@ internal static class Program
             "--method", method,
             "--nonce", invocation.Nonce,
             "--image-path", imagePath,
+            "--image-root", imageCreation.ImageDirectory,
             "--image-sha256", imageSha256,
             "--ready", readyPath,
             "--gate", gatePath,
@@ -144,7 +146,7 @@ internal static class Program
             var result = WaitAndRead<VirtualDiskBehaviorResult>(resultPath, invocation.TimeoutMs, actor, "虚拟磁盘 Actor 结果");
             WaitForExit(actor, invocation.TimeoutMs, "虚拟磁盘 Actor");
             var finalIndependent = VirtualDiskNative.Inspect(imagePath);
-            return new ExecutionState(instanceIndex, plan, actorPath, arguments, methodWorkDir, imagePath, imageSha256,
+            return new ExecutionState(instanceIndex, plan, actorPath, arguments, methodWorkDir, imageCreation, imagePath, imageSha256,
                 readyPath, gatePath, resultPath, actor, before, ready, independent, result, finalIndependent);
         }
         catch
@@ -154,6 +156,111 @@ internal static class Program
             try { VirtualDiskNative.DetachIfAttached(imagePath); } catch { }
             throw;
         }
+    }
+
+    private static ImageCreation CreateImage(RunDatabase database, ControllerInvocation invocation, VirtualDiskPlan plan,
+        string methodWorkDir, ICollection<string> plannedImages)
+    {
+        var primary = InspectImageDirectory(methodWorkDir);
+        LogImageDirectory(database, invocation, plan, "run_work_directory", primary, "info", null,
+            "检查运行目录中的 VHD 创建条件。");
+        if (primary.SupportsVirtualDiskImage)
+        {
+            var primaryPath = Path.GetFullPath(Path.Combine(primary.Path, plan.ImageFileName));
+            EnsureScopedPath(invocation, primaryPath);
+            plannedImages.Add(primaryPath);
+            try
+            {
+                VirtualDiskNative.CreateDynamicVhd(primaryPath, VirtualDiskPlans.VirtualSizeBytes);
+                return new ImageCreation(primaryPath, primary.Path, "run_work_directory", primary, primary, false, null);
+            }
+            catch (Win32Exception exception) when (exception.NativeErrorCode == 5)
+            {
+                database.AddLog(invocation.CaseRunId, "warning", "virtual_disk.image_create",
+                    "运行目录中的 CreateVirtualDisk 返回 Win32 5，改用 CommonApplicationData 下的非压缩暂存目录重试。",
+                    "CREATE_VIRTUAL_DISK_ACCESS_DENIED_RETRY", new JsonObject
+                    {
+                        ["method"] = plan.Method,
+                        ["image_path"] = primaryPath,
+                        ["win32_error"] = exception.NativeErrorCode,
+                        ["directory"] = primary.ToJson(),
+                    });
+                if (File.Exists(primaryPath)) DeleteImageWithRetry(primaryPath, 5_000);
+                return CreateFallbackImage(database, invocation, plan, plannedImages, primary, exception.NativeErrorCode);
+            }
+        }
+
+        database.AddLog(invocation.CaseRunId, "warning", "virtual_disk.image_preflight",
+            "运行目录带有 NTFS 压缩或 EFS 加密属性；CreateVirtualDisk 不支持该宿主位置，改用 CommonApplicationData 暂存目录。",
+            "VIRTUAL_DISK_UNSUPPORTED_IMAGE_DIRECTORY", new JsonObject
+            {
+                ["method"] = plan.Method,
+                ["directory"] = primary.ToJson(),
+            });
+        return CreateFallbackImage(database, invocation, plan, plannedImages, primary, null);
+    }
+
+    private static ImageCreation CreateFallbackImage(RunDatabase database, ControllerInvocation invocation,
+        VirtualDiskPlan plan, ICollection<string> plannedImages, ImageDirectoryDiagnostics primary, int? initialError)
+    {
+        var fallbackDirectory = Path.Combine(FallbackCaseRoot(invocation), plan.FactKey);
+        var fallback = InspectImageDirectory(fallbackDirectory);
+        LogImageDirectory(database, invocation, plan, "common_application_data_fallback", fallback, "info", initialError,
+            "检查系统级 VHD 暂存目录中的创建条件。");
+        if (!fallback.SupportsVirtualDiskImage)
+        {
+            throw new InvalidOperationException(
+                $"VHD 主目录和备用目录均不满足 CreateVirtualDisk 要求。主目录：{primary.Summary()}；备用目录：{fallback.Summary()}。");
+        }
+
+        var fallbackPath = Path.GetFullPath(Path.Combine(fallback.Path, plan.ImageFileName));
+        EnsureScopedPath(invocation, fallbackPath);
+        plannedImages.Add(fallbackPath);
+        try
+        {
+            VirtualDiskNative.CreateDynamicVhd(fallbackPath, VirtualDiskPlans.VirtualSizeBytes);
+        }
+        catch (Win32Exception exception)
+        {
+            throw new InvalidOperationException(
+                $"备用目录中的 CreateVirtualDisk 仍然失败。主目录：{primary.Summary()}；备用目录：{fallback.Summary()}；"
+                + $"Win32 {exception.NativeErrorCode}: {exception.Message}", exception);
+        }
+        return new ImageCreation(fallbackPath, fallback.Path, "common_application_data_fallback", primary, fallback,
+            initialError.HasValue, initialError);
+    }
+
+    private static ImageDirectoryDiagnostics InspectImageDirectory(string path)
+    {
+        path = Path.GetFullPath(path);
+        Directory.CreateDirectory(path);
+        var attributes = new DirectoryInfo(path).Attributes;
+        var volumeRoot = Path.GetPathRoot(path) ?? string.Empty;
+        string? fileSystem = null;
+        string? driveType = null;
+        string? driveError = null;
+        try
+        {
+            var drive = new DriveInfo(volumeRoot);
+            driveType = drive.DriveType.ToString();
+            if (drive.IsReady) fileSystem = drive.DriveFormat;
+        }
+        catch (Exception exception)
+        {
+            driveError = exception.Message;
+        }
+        return new ImageDirectoryDiagnostics(path, volumeRoot, fileSystem, driveType, attributes,
+            attributes.HasFlag(FileAttributes.Compressed), attributes.HasFlag(FileAttributes.Encrypted), driveError);
+    }
+
+    private static void LogImageDirectory(RunDatabase database, ControllerInvocation invocation, VirtualDiskPlan plan,
+        string strategy, ImageDirectoryDiagnostics diagnostics, string level, int? initialError, string message)
+    {
+        var properties = diagnostics.ToJson();
+        properties["method"] = plan.Method;
+        properties["strategy"] = strategy;
+        properties["initial_create_win32_error"] = initialError;
+        database.AddLog(invocation.CaseRunId, level, "virtual_disk.image_preflight", message, null, properties);
     }
 
     private static void ValidateReady(VirtualDiskPlan plan, string imagePath, string imageSha256,
@@ -367,6 +474,11 @@ internal static class Program
             [$"{prefix}.invocation_kind"] = JsonValue.Create(state.Plan.InvocationKind),
             [$"{prefix}.image_path"] = JsonValue.Create(state.ImagePath),
             [$"{prefix}.image_sha256"] = JsonValue.Create(state.ImageSha256),
+            [$"{prefix}.image_location_strategy"] = JsonValue.Create(state.ImageCreation.Strategy),
+            [$"{prefix}.image_directory_compressed"] = JsonValue.Create(state.ImageCreation.ActiveDirectory.Compressed),
+            [$"{prefix}.image_directory_encrypted"] = JsonValue.Create(state.ImageCreation.ActiveDirectory.Encrypted),
+            [$"{prefix}.create_retry_used"] = JsonValue.Create(state.ImageCreation.RetryUsed),
+            [$"{prefix}.initial_create_win32_error"] = JsonValue.Create(state.ImageCreation.InitialWin32Error),
             [$"{prefix}.virtual_size_bytes"] = JsonValue.Create(state.Result.VirtualSizeBytes),
             [$"{prefix}.physical_path"] = JsonValue.Create(state.Result.After.PhysicalPath),
             [$"{prefix}.read_only"] = JsonValue.Create(state.Result.ReadOnly),
@@ -404,7 +516,7 @@ internal static class Program
         var attachedBefore = false;
         try
         {
-            EnsureScopedPath(invocation.WorkDir, imagePath);
+            EnsureScopedPath(invocation, imagePath);
             if (File.Exists(imagePath))
             {
                 try
@@ -428,6 +540,7 @@ internal static class Program
                 if (canDelete) DeleteImageWithRetry(imagePath, 5_000);
                 else errors.Add("VHD 仍处于附加状态，拒绝删除镜像。");
             }
+            RemoveEmptyFallbackDirectories(invocation, imagePath);
         }
         catch (Exception exception) { errors.Add(exception.Message); }
         return new CleanupObservation
@@ -485,11 +598,44 @@ internal static class Program
         catch (Exception exception) { errors.Add(exception.Message); }
     }
 
-    private static void EnsureScopedPath(string workDir, string path)
+    private static void EnsureScopedPath(ControllerInvocation invocation, string path)
     {
-        var root = Path.GetFullPath(workDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (!Path.GetFullPath(path).StartsWith(root, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("虚拟磁盘路径越出本轮工作目录。");
+        var fullPath = Path.GetFullPath(path);
+        if (!IsWithin(fullPath, invocation.WorkDir) && !IsWithin(fullPath, FallbackCaseRoot(invocation)))
+            throw new InvalidDataException("虚拟磁盘路径越出本轮工作目录与专用备用暂存目录。");
+    }
+
+    private static bool IsWithin(string path, string root)
+    {
+        var relative = Path.GetRelativePath(Path.GetFullPath(root), Path.GetFullPath(path));
+        return !Path.IsPathRooted(relative)
+            && !string.Equals(relative, "..", StringComparison.Ordinal)
+            && !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal);
+    }
+
+    private static string FallbackCaseRoot(ControllerInvocation invocation)
+    {
+        var commonData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        if (string.IsNullOrWhiteSpace(commonData))
+            throw new DirectoryNotFoundException("无法解析 CommonApplicationData 目录。");
+        return Path.GetFullPath(Path.Combine(commonData, "Tencent-EDR-Test", "VirtualDiskImages",
+            invocation.RunId, invocation.CaseRunId));
+    }
+
+    private static void RemoveEmptyFallbackDirectories(ControllerInvocation invocation, string imagePath)
+    {
+        var caseRoot = FallbackCaseRoot(invocation);
+        var imageDirectory = Path.GetDirectoryName(Path.GetFullPath(imagePath))!;
+        if (!IsWithin(imageDirectory, caseRoot)) return;
+        var runRoot = Directory.GetParent(caseRoot)?.FullName;
+        foreach (var directory in new[] { imageDirectory, caseRoot, runRoot })
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) continue;
+            if (!IsWithin(directory, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                    "Tencent-EDR-Test", "VirtualDiskImages")))
+                throw new InvalidDataException("拒绝清理专用虚拟磁盘暂存根之外的目录。");
+            if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory, recursive: false);
+        }
     }
 
     private static void DeleteImageWithRetry(string imagePath, int timeoutMs)
@@ -559,9 +705,33 @@ internal static class Program
     private static void AddFact(RunDatabase database, ControllerInvocation invocation, string key, JsonNode? value, string? eventId) => database.AddFact(new LocalFactObservation { CaseRunId = invocation.CaseRunId, LocalEventId = eventId, Key = key, Value = value, ObservedAtUtc = DateTimeOffset.UtcNow, Source = "virtual_disk_activity_controller", Confidence = "high" });
     private static void WriteStatus(string status, string? error) => Console.WriteLine(new JsonObject { ["schema_version"] = "1.0", ["status"] = status, ["capability_id"] = CapabilityId, ["operation"] = "virtual_disk_mount", ["methods"] = 2, ["error"] = error }.ToJsonString(JsonDefaults.Options));
 
+    private sealed record ImageDirectoryDiagnostics(string Path, string VolumeRoot, string? FileSystem,
+        string? DriveType, FileAttributes Attributes, bool Compressed, bool Encrypted, string? DriveError)
+    {
+        public bool SupportsVirtualDiskImage => !Compressed && !Encrypted;
+        public string Summary() => $"path={Path}, volume={VolumeRoot}, fs={FileSystem ?? "unknown"}, "
+            + $"attributes={Attributes}, compressed={Compressed}, encrypted={Encrypted}, drive_error={DriveError ?? "none"}";
+        public JsonObject ToJson() => new()
+        {
+            ["path"] = Path,
+            ["volume_root"] = VolumeRoot,
+            ["file_system"] = FileSystem,
+            ["drive_type"] = DriveType,
+            ["attributes"] = Attributes.ToString(),
+            ["compressed"] = Compressed,
+            ["encrypted"] = Encrypted,
+            ["supports_virtual_disk_image"] = SupportsVirtualDiskImage,
+            ["drive_error"] = DriveError,
+        };
+    }
+
+    private sealed record ImageCreation(string ImagePath, string ImageDirectory, string Strategy,
+        ImageDirectoryDiagnostics PrimaryDirectory, ImageDirectoryDiagnostics ActiveDirectory,
+        bool RetryUsed, int? InitialWin32Error);
+
     private sealed class ExecutionState(
         int instanceIndex, VirtualDiskPlan plan, string actorPath, IReadOnlyList<string> actorArguments,
-        string methodWorkDir, string imagePath, string imageSha256, string readyPath, string gatePath,
+        string methodWorkDir, ImageCreation imageCreation, string imagePath, string imageSha256, string readyPath, string gatePath,
         string resultPath, Process actor, VirtualDiskSnapshot before, VirtualDiskReady ready,
         VirtualDiskSnapshot independent, VirtualDiskBehaviorResult result, VirtualDiskSnapshot finalIndependent) : IDisposable
     {
@@ -570,6 +740,7 @@ internal static class Program
         public string ActorPath { get; } = actorPath;
         public IReadOnlyList<string> ActorArguments { get; } = actorArguments;
         public string MethodWorkDir { get; } = methodWorkDir;
+        public ImageCreation ImageCreation { get; } = imageCreation;
         public string ImagePath { get; } = imagePath;
         public string ImageSha256 { get; } = imageSha256;
         public string ReadyPath { get; } = readyPath;

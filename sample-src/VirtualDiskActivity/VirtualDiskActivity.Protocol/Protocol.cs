@@ -145,6 +145,7 @@ public static class VirtualDiskNative
     private const uint VirtualDiskAccessAttachReadOnly = 0x00010000;
     private const uint VirtualDiskAccessDetach = 0x00040000;
     private const uint VirtualDiskAccessGetInfo = 0x00080000;
+    private const uint VirtualDiskAccessCreate = 0x00100000;
     private const uint AttachReadOnly = 0x00000001;
     private const uint AttachNoDriveLetter = 0x00000002;
     private const uint OpenFlagNone = 0;
@@ -172,11 +173,16 @@ public static class VirtualDiskNative
                 SourcePath = null,
             },
         };
-        var error = CreateVirtualDisk(ref storageType, imagePath, 0, IntPtr.Zero, CreateFlagNone, 0, ref parameters, IntPtr.Zero, out var handle);
+        // Version 1 VHD 显式请求 CREATE 访问权；VIRTUAL_DISK_ACCESS_NONE 是 Version 2 的强制值，
+        // 但不应直接套用到本 Version 1 创建路径。
+        var error = CreateVirtualDisk(ref storageType, imagePath, VirtualDiskAccessCreate, IntPtr.Zero,
+            CreateFlagNone, 0, ref parameters, IntPtr.Zero, out var handle);
         if (error != ErrorSuccess)
         {
             handle?.Dispose();
-            throw new Win32Exception((int)error, $"CreateVirtualDisk 失败：{error}");
+            var systemMessage = new Win32Exception((int)error).Message;
+            throw new Win32Exception((int)error,
+                $"CreateVirtualDisk 失败（Win32 {error}: {systemMessage}），镜像路径：{imagePath}");
         }
         handle.Dispose();
     }

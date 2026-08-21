@@ -1017,16 +1017,19 @@ test("虚拟磁盘挂载通过 Mount-DiskImage 与 VirtDisk API 建立完整本�
   const localData = await readJson("schemas/local-event-data.schema.json");
 
   assert.equal(manifest.capability_id, "win.device.virtual_disk.mount");
-  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.version, "0.1.1");
   assert.equal(manifest.risk_level, "L2");
   assert.equal(manifest.required_privilege, "administrator");
   assert.equal(manifest.network.required, false);
   assert.equal(manifest.participants.length, 1);
   assert.ok(manifest.expected_fact_keys.includes("virtual_disk.vdisk_powershell.physical_path"));
   assert.ok(manifest.expected_fact_keys.includes("virtual_disk.vdisk_native_api.physical_path"));
+  assert.ok(manifest.expected_fact_keys.includes("virtual_disk.vdisk_powershell.image_location_strategy"));
+  assert.ok(manifest.expected_fact_keys.includes("virtual_disk.vdisk_native_api.create_retry_used"));
   assert.match(protocol, /PowerShell = "VDISK_POWERSHELL"/);
   assert.match(protocol, /NativeApi = "VDISK_NATIVE_API"/);
   assert.match(protocol, /CreateVirtualDisk/);
+  assert.match(protocol, /VirtualDiskAccessCreate/);
   assert.match(protocol, /OpenVirtualDisk/);
   assert.match(protocol, /AttachVirtualDisk/);
   assert.match(protocol, /GetVirtualDiskPhysicalPath/);
@@ -1034,11 +1037,17 @@ test("虚拟磁盘挂载通过 Mount-DiskImage 与 VirtDisk API 建立完整本�
   assert.match(behavior, /Mount-DiskImage/);
   assert.match(behavior, /VirtualDiskNative\.AttachReadOnlyWithoutDriveLetter/);
   assert.match(behavior, /WaitForGate/);
+  assert.match(behavior, /options\.Require\("image-root"\)/);
   assert.match(controller, /VirtualDiskNative\.Inspect\(imagePath\)/);
   assert.match(controller, /VirtualDiskPlans\.Methods\.Select\(\(value, index\)/);
   assert.ok([...controller.matchAll(/InstanceIndex = state\.InstanceIndex/g)].length >= 2);
   assert.match(controller, /Sequence = state\.InstanceIndex \+ 1/);
   assert.match(controller, /detach_and_delete_virtual_disk_/);
+  assert.match(controller, /common_application_data_fallback/);
+  assert.match(controller, /CREATE_VIRTUAL_DISK_ACCESS_DENIED_RETRY/);
+  assert.match(controller, /FileAttributes\.Compressed/);
+  assert.match(controller, /FileAttributes\.Encrypted/);
+  assert.match(controller, /RemoveEmptyFallbackDirectories/);
   assert.match(baseline, /method: \{ id: VDISK_POWERSHELL/);
   assert.match(baseline, /method: \{ id: VDISK_NATIVE_API/);
   assert.match(baseline, /method_selection: \{ strategy: best \}/);
@@ -1053,6 +1062,8 @@ test("虚拟磁盘挂载通过 Mount-DiskImage 与 VirtDisk API 建立完整本�
   assert.match(e2e, /current-product-no-virtual-disk-event\.json/);
   assert.match(e2e, /普通 ScriptScan\/FileWriteClose 不应使虚拟磁盘挂载能力通过/);
   assert.match(design, /不创建分区、不初始化、不格式化、不分配盘符/);
+  assert.match(design, /VIRTUAL_DISK_ACCESS_CREATE/);
+  assert.match(design, /%ProgramData%\\Tencent-EDR-Test\\VirtualDiskImages/);
   assert.match(front, /"win\.device\.virtual_disk\.mount", "虚拟磁盘挂载", "Virtual Disk Mount", "L2"/);
   assert.ok(normalized.properties.device.properties.image_path);
   assert.ok(normalized.properties.device.properties.physical_path);

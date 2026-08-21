@@ -1,6 +1,6 @@
 schema_version: "1.1"
 baseline_id: win.device.virtual_disk.mount
-version: "0.1.0"
+version: "0.1.1"
 title: Windows 虚拟磁盘挂载遥测
 description: 同轮分别通过 Mount-DiskImage 和 VirtDisk 原生 API 挂载两个唯一、只读且不分配盘符的动态 VHD。当前腾讯 EDR 没有已知虚拟磁盘专属字段或动作，因此本地绝对基准必须完整通过，云端比较允许保持未匹配，但普通进程、PowerShell 或文件事件不能冒充虚拟磁盘挂载能力。
 platform:
@@ -10,7 +10,7 @@ platform:
 risk_level: L2
 capability:
   id: win.device.virtual_disk.mount
-  version: "0.1.0"
+  version: "0.1.1"
   parameters: { post_operation_hold_ms: 1000 }
 local_requirements:
   - { field: facts.virtual_disk.mount_succeeded, operator: equals, expected: true }
@@ -20,6 +20,10 @@ local_requirements:
   - { field: facts.virtual_disk.vdisk_powershell.occurred_at_utc, operator: present }
   - { field: facts.virtual_disk.vdisk_powershell.image_path, operator: present }
   - { field: facts.virtual_disk.vdisk_powershell.image_sha256, operator: regex, expected: "^[0-9a-f]{64}$" }
+  - { field: facts.virtual_disk.vdisk_powershell.image_location_strategy, operator: present }
+  - { field: facts.virtual_disk.vdisk_powershell.image_directory_compressed, operator: equals, expected: false }
+  - { field: facts.virtual_disk.vdisk_powershell.image_directory_encrypted, operator: equals, expected: false }
+  - { field: facts.virtual_disk.vdisk_powershell.create_retry_used, operator: present }
   - { field: facts.virtual_disk.vdisk_powershell.virtual_size_bytes, operator: equals, expected: 16777216 }
   - { field: facts.virtual_disk.vdisk_powershell.physical_path, operator: present }
   - { field: facts.virtual_disk.vdisk_powershell.read_only, operator: equals, expected: true }
@@ -37,6 +41,10 @@ local_requirements:
   - { field: facts.virtual_disk.vdisk_native_api.occurred_at_utc, operator: present }
   - { field: facts.virtual_disk.vdisk_native_api.image_path, operator: present }
   - { field: facts.virtual_disk.vdisk_native_api.image_sha256, operator: regex, expected: "^[0-9a-f]{64}$" }
+  - { field: facts.virtual_disk.vdisk_native_api.image_location_strategy, operator: present }
+  - { field: facts.virtual_disk.vdisk_native_api.image_directory_compressed, operator: equals, expected: false }
+  - { field: facts.virtual_disk.vdisk_native_api.image_directory_encrypted, operator: equals, expected: false }
+  - { field: facts.virtual_disk.vdisk_native_api.create_retry_used, operator: present }
   - { field: facts.virtual_disk.vdisk_native_api.virtual_size_bytes, operator: equals, expected: 16777216 }
   - { field: facts.virtual_disk.vdisk_native_api.physical_path, operator: present }
   - { field: facts.virtual_disk.vdisk_native_api.read_only, operator: equals, expected: true }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace VirtualDiskActivity;
 
@@ -8,6 +9,7 @@ internal static class Program
 
     public static async Task<int> Main(string[] args)
     {
+        Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         string? resultPath = null;
         string? imagePath = null;
         VirtualDiskPlan? plan = null;
@@ -23,6 +25,7 @@ internal static class Program
             var method = options.Require("method");
             var nonce = options.Require("nonce");
             var workDir = Path.GetFullPath(options.Require("work-dir"));
+            var imageRoot = Path.GetFullPath(options.Require("image-root"));
             var readyPath = Path.GetFullPath(options.Require("ready"));
             var gatePath = Path.GetFullPath(options.Require("gate"));
             resultPath = Path.GetFullPath(options.Require("result"));
@@ -31,7 +34,7 @@ internal static class Program
             var timeoutMs = options.GetInt("timeout-ms", 90_000, 5_000, 180_000);
             var holdMs = options.GetInt("hold-ms", 1_000, 0, 30_000);
             plan = VirtualDiskPlans.Create(method, nonce);
-            ValidateScopedImage(workDir, imagePath, plan.ImageFileName);
+            ValidateScopedImage(imageRoot, imagePath, plan.ImageFileName);
             if (!File.Exists(imagePath)) throw new FileNotFoundException("Controller 预创建的 VHD 不存在。", imagePath);
             if (!string.Equals(ComputeSha256(imagePath), expectedSha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("VHD 在 Actor 启动前已发生变化。");
@@ -241,11 +244,11 @@ internal static class Program
         return value;
     }
 
-    private static void ValidateScopedImage(string workDir, string imagePath, string expectedFileName)
+    private static void ValidateScopedImage(string imageRoot, string imagePath, string expectedFileName)
     {
-        var expected = Path.GetFullPath(Path.Combine(workDir, expectedFileName));
+        var expected = Path.GetFullPath(Path.Combine(imageRoot, expectedFileName));
         if (!string.Equals(expected, imagePath, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("VHD 路径必须是本子测试工作目录中的唯一计划文件。");
+            throw new InvalidDataException("VHD 路径必须是 Controller 声明的镜像目录中的唯一计划文件。");
     }
 
     private static VirtualDiskSnapshot SafeInspect(string imagePath)

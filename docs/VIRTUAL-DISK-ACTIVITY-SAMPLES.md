@@ -13,9 +13,11 @@
 
 ## 2. 安全模型
 
-该能力标记为 `L2` 且要求管理员权限。Controller 为每个方法在其独立工作目录创建一个 16 MiB 动态 VHD，拒绝覆盖已有文件。镜像不创建分区、不初始化、不格式化、不分配盘符；两种方法都以只读和无盘符方式附加。
+该能力标记为 `L2` 且要求管理员权限。Controller 为每个方法创建一个 16 MiB 动态 VHD，拒绝覆盖已有文件。镜像不创建分区、不初始化、不格式化、不分配盘符；两种方法都以只读和无盘符方式附加。
 
-正常和错误路径共用精确清理：先停止本轮 Actor，再只对清单计划出的完整 VHD 路径执行对应卸载（PowerShell 方法使用 `Dismount-DiskImage`，原生方法使用 `DetachVirtualDisk`），确认物理路径消失后删除该镜像。路径必须位于本轮 `work` 目录，清理不使用通配符，也不枚举或修改系统已有磁盘。
+本样本使用 Version 1 VHD 创建参数，因此显式向 `CreateVirtualDisk` 请求 `VIRTUAL_DISK_ACCESS_CREATE`；Version 2 要求的 `VIRTUAL_DISK_ACCESS_NONE` 不再被误用于该 Version 1 路径。`CreateVirtualDisk` 不支持压缩或 EFS 加密的宿主位置。Controller 会先记录运行目录的卷、文件系统和目录属性；若该目录不适合，或首次创建返回 Win32 5，则在 `%ProgramData%\Tencent-EDR-Test\VirtualDiskImages\<run-id>\<case-run-id>` 下的当轮专用目录重试。选中的目录必须明确为非压缩、非 EFS 加密。
+
+正常和错误路径共用精确清理：先停止本轮 Actor，再只对清单计划出的完整 VHD 路径执行对应卸载（PowerShell 方法使用 `Dismount-DiskImage`，原生方法使用 `DetachVirtualDisk`），确认物理路径消失后删除该镜像。路径必须位于本轮 `work` 目录或本轮专用备用目录；清理不使用通配符，也不枚举或修改系统已有磁盘，备用空目录会逐级删除到本轮 run 层。
 
 ## 3. 本地绝对基准
 
@@ -26,7 +28,7 @@ Controller 先创建并哈希 VHD，确认其“存在但未附加”，再启�
 3. Controller 重新 `OpenVirtualDisk`，通过自己的句柄取得同一物理路径；只有一致才放行。
 4. Actor 卸载并确认物理路径消失，退出并写结果协议。
 5. Controller 再次独立确认未附加，核对镜像 SHA-256 未变化。
-6. Controller 写入两个独立的 `device/virtual_disk_mount` 事件、事实和清理结果。
+6. Controller 写入两个独立的 `device/virtual_disk_mount` 事件、事实和清理结果；事实同时保留镜像位置策略、压缩/EFS 属性、是否重试及首次 Win32 错误。
 
 方法分别使用 `InstanceIndex=0/1`、`Sequence=1/2` 和不同的工作目录、协议文件、VHD 文件，避免多子测试共享进程角色序号或文件句柄。
 
