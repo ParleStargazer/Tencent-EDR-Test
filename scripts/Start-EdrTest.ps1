@@ -79,7 +79,7 @@ if (-not $SkipBuild) {
     & $dotnet.Source build (Join-Path $repositoryRoot "EdrTest.sln") --configuration Release --no-restore
     if ($LASTEXITCODE -ne 0) { throw "dotnet build 失败。" }
 
-    Write-Host "[2/5] 构建 Process、File、Hash、User Account、Network、Registry、Scheduled Task、Service、Group Policy、Named Pipe 与 PowerShell Activity 能力包…" -ForegroundColor Cyan
+    Write-Host "[2/5] 构建 Process、File、Hash、User Account、Network、Registry、Scheduled Task、Service、Group Policy、Named Pipe、PowerShell 与 BITS Activity 能力包…" -ForegroundColor Cyan
     & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-ProcessActivitySamples.ps1") -Configuration Release
     if ($LASTEXITCODE -ne 0) { throw "能力样本构建失败。" }
     & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-FileManipulationSamples.ps1") -Configuration Release
@@ -102,6 +102,8 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "命名管道活动能力样本构建失败。" }
     & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-PowerShellActivitySamples.ps1") -Configuration Release
     if ($LASTEXITCODE -ne 0) { throw "PowerShell 活动能力样本构建失败。" }
+    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-BitsActivitySamples.ps1") -Configuration Release
+    if ($LASTEXITCODE -ne 0) { throw "BITS 活动能力样本构建失败。" }
 }
 
 if (-not (Test-Path $runnerDll)) { throw "找不到 Runner：$runnerDll。请移除 -SkipBuild 后重试。" }

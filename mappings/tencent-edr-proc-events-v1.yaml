@@ -60,6 +60,42 @@ routes:
       "file.size": { source: "Child.FileSize", on_zero: 0 }
       "file.hash.md5": { source: "Child.FileMd5", transform: [lowercase], on_empty: null }
 
+  # 规划路由：当前腾讯 EDR 字段全集与已知 run 中没有 BITS 专属表或动作，不能用普通
+  # NetworkEvents/FileEvents 冒充 BITS 任务观测。本路由只接受未来可能出现的专属表，
+  # 字段优先采用 BitsJob 前缀并兼容通用 Job 前缀；没有专属记录时能力应保持未匹配。
+  - route_id: bits-job-planned-telemetry
+    when:
+      "@table": [BitsEvents, BITSEvents, BackgroundTransferEvents]
+    canonical:
+      "event.type": { constant: bits }
+      "event.action": { constant: job }
+      "event.category": { constant: network }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "host.os": { source: "Environment.OsVersion", on_empty: null }
+      "host.agent_id": { source: "Common.Guid", on_empty: null }
+      "host.agent_version": { source: "Common.ClientVer", on_empty: null }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "user.name": { source: "Parent.ProcUserName", on_empty: null }
+      "user.domain": { source: "Parent.ProcDomainName", on_empty: null }
+      "bits.job_id": { sources: ["Child.BitsJobId", "Child.JobId"], on_empty: null }
+      "bits.display_name": { sources: ["Child.BitsJobName", "Child.JobName", "Child.DisplayName"], on_empty: null }
+      "bits.job_type": { sources: ["Child.BitsJobType", "Child.JobType"], on_empty: null }
+      "bits.state": { sources: ["Child.BitsJobState", "Child.JobState", "Child.State"], on_empty: null }
+      "bits.owner_sid": { sources: ["Child.BitsOwnerSid", "Child.OwnerSid", "Child.SubjectUserSid"], on_empty: null }
+      "bits.remote_url": { sources: ["Child.BitsRemoteUrl", "Child.RemoteUrl", "Child.SourceUrl"], on_empty: null }
+      "bits.local_path": { sources: ["Child.BitsLocalPath", "Child.LocalPath", "Child.FilePath"], transform: [windows_path], on_empty: null }
+      "bits.bytes_total": { sources: ["Child.BitsBytesTotal", "Child.BytesTotal"], on_zero: 0 }
+      "bits.bytes_transferred": { sources: ["Child.BitsBytesTransferred", "Child.BytesTransferred"], on_zero: 0 }
+      "bits.notification_command": { sources: ["Child.BitsNotificationCommand", "Child.NotificationCommand"], on_empty: null }
+
   # 腾讯导出的命名管道事件位于 FileEvents；Child.PipeOpName 是创建/打开的直接语义。
   # 本地名通常为 \\.\pipe\Name，腾讯导出为 \Name；named_pipe_path 将二者统一。
   # 仅为 "\" 的占位值会归一化为 null，避免压过同进程、同时间的完整名称记录。

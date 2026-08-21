@@ -226,6 +226,22 @@
       },
       "additionalProperties": false
     },
+    "bits": {
+      "type": ["object", "null"],
+      "properties": {
+        "job_id": { "type": ["string", "null"] },
+        "display_name": { "type": ["string", "null"] },
+        "job_type": { "type": ["string", "integer", "null"] },
+        "state": { "type": ["string", "integer", "null"] },
+        "owner_sid": { "type": ["string", "null"] },
+        "remote_url": { "type": ["string", "null"] },
+        "local_path": { "type": ["string", "null"] },
+        "bytes_total": { "type": ["integer", "null"], "minimum": 0 },
+        "bytes_transferred": { "type": ["integer", "null"], "minimum": 0 },
+        "notification_command": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
     "correlation": {
       "type": ["object", "null"],
       "properties": {

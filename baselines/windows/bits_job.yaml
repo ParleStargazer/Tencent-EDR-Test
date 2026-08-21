@@ -1,0 +1,107 @@
+schema_version: "1.1"
+baseline_id: win.bits.job
+version: "0.1.0"
+title: Windows BITS 后台传输任务活动遥测
+description: 同轮分别使用 bitsadmin.exe 与 BackgroundCopyManager COM API 创建真实 BITS 下载任务。腾讯 EDR 当前没有已知 BITS 专属事件，因此云端要求按未来可能实现的专属 BitsEvents 字段设计，当前实测允许保持未匹配结论，但本地绝对基准必须完整通过。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L1
+capability:
+  id: win.bits.job
+  version: "0.1.0"
+  parameters: { post_operation_hold_ms: 1000 }
+local_requirements:
+  - { field: facts.bits.job_succeeded, operator: equals, expected: true }
+  - { field: facts.bits.bitsadmin.succeeded, operator: equals, expected: true }
+  - { field: facts.bits.bitsadmin.invocation_kind, operator: equals, expected: bitsadmin_exe }
+  - { field: facts.bits.bitsadmin.job_id, operator: present }
+  - { field: facts.bits.bitsadmin.display_name, operator: present }
+  - { field: facts.bits.bitsadmin.remote_url, operator: present }
+  - { field: facts.bits.bitsadmin.local_path, operator: present }
+  - { field: facts.bits.bitsadmin.controller_job_verified, operator: equals, expected: true }
+  - { field: facts.bits.bitsadmin.download_verified, operator: equals, expected: true }
+  - { field: facts.bits.bitsadmin.job_removed_after_complete, operator: equals, expected: true }
+  - { field: facts.bits.com_api.succeeded, operator: equals, expected: true }
+  - { field: facts.bits.com_api.invocation_kind, operator: equals, expected: background_copy_manager_com }
+  - { field: facts.bits.com_api.job_id, operator: present }
+  - { field: facts.bits.com_api.display_name, operator: present }
+  - { field: facts.bits.com_api.remote_url, operator: present }
+  - { field: facts.bits.com_api.local_path, operator: present }
+  - { field: facts.bits.com_api.controller_job_verified, operator: equals, expected: true }
+  - { field: facts.bits.com_api.download_verified, operator: equals, expected: true }
+  - { field: facts.bits.com_api.job_removed_after_complete, operator: equals, expected: true }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.bits.com_api.job_id, cloud_field: bits.job_id, strength: strong, normalizers: [lowercase, trim] }
+    - { local_field: facts.bits.com_api.display_name, cloud_field: bits.display_name, strength: strong }
+    - { local_field: facts.bits.com_api.remote_url, cloud_field: bits.remote_url, strength: strong }
+    - { local_field: facts.bits.com_api.local_path, cloud_field: bits.local_path, strength: strong, normalizers: [windows_path] }
+method_selection: { strategy: best }
+cloud_expectations:
+  - id: bits-job-via-bitsadmin
+    method: { id: bitsadmin, title: bitsadmin.exe 命令行 }
+    event_type: bits
+    event_actions: [job]
+    cardinality: { min: 1, max: 20 }
+    correlation:
+      time_from_local: facts.bits.bitsadmin.occurred_at_utc
+      max_time_difference_ms: 15
+      anchors:
+        - { local_field: facts.bits.bitsadmin.job_id, cloud_field: bits.job_id, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.bits.bitsadmin.display_name, cloud_field: bits.display_name, strength: strong }
+        - { local_field: facts.bits.bitsadmin.remote_url, cloud_field: bits.remote_url, strength: strong }
+        - { local_field: facts.bits.bitsadmin.local_path, cloud_field: bits.local_path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.bits.bitsadmin.initiator_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+    assertions:
+      - { field: bits.job_id, operator: equals, expected_from_local: facts.bits.bitsadmin.job_id, severity: required, normalizers: [lowercase, trim] }
+      - { field: bits.display_name, operator: equals, expected_from_local: facts.bits.bitsadmin.display_name, severity: required }
+      - { field: bits.job_type, operator: equals, expected: DOWNLOAD, severity: required, normalizers: [trim] }
+      - { field: bits.remote_url, operator: equals, expected_from_local: facts.bits.bitsadmin.remote_url, severity: required }
+      - { field: bits.local_path, operator: equals, expected_from_local: facts.bits.bitsadmin.local_path, severity: required, normalizers: [windows_path] }
+      - { field: bits.owner_sid, operator: equals, expected_from_local: facts.bits.bitsadmin.owner_sid, severity: recommended, normalizers: [sid] }
+      - { field: bits.bytes_total, operator: equals, expected_from_local: facts.bits.bitsadmin.bytes_total, severity: recommended }
+      - { field: bits.bytes_transferred, operator: equals, expected_from_local: facts.bits.bitsadmin.bytes_transferred, severity: recommended }
+      - { field: bits.state, operator: one_of, expected: [SUSPENDED, QUEUED, CONNECTING, TRANSFERRING, TRANSFERRED, ACKNOWLEDGED], severity: recommended }
+      - { field: bits.notification_command, operator: absent, severity: recommended }
+      - { field: process.executable, operator: equals, expected_from_local: facts.bits.bitsadmin.initiator_executable, severity: recommended, normalizers: [windows_path] }
+      - { field: process.command_line, operator: contains, expected_from_local: facts.bits.bitsadmin.display_name, severity: informational }
+  - id: bits-job-via-com-api
+    method: { id: com_api, title: BITS COM API }
+    event_type: bits
+    event_actions: [job]
+    cardinality: { min: 1, max: 20 }
+    correlation:
+      time_from_local: facts.bits.com_api.occurred_at_utc
+      max_time_difference_ms: 15
+      anchors:
+        - { local_field: facts.bits.com_api.job_id, cloud_field: bits.job_id, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.bits.com_api.display_name, cloud_field: bits.display_name, strength: strong }
+        - { local_field: facts.bits.com_api.remote_url, cloud_field: bits.remote_url, strength: strong }
+        - { local_field: facts.bits.com_api.local_path, cloud_field: bits.local_path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.bits.com_api.initiator_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+    assertions:
+      - { field: bits.job_id, operator: equals, expected_from_local: facts.bits.com_api.job_id, severity: required, normalizers: [lowercase, trim] }
+      - { field: bits.display_name, operator: equals, expected_from_local: facts.bits.com_api.display_name, severity: required }
+      - { field: bits.job_type, operator: equals, expected: DOWNLOAD, severity: required, normalizers: [trim] }
+      - { field: bits.remote_url, operator: equals, expected_from_local: facts.bits.com_api.remote_url, severity: required }
+      - { field: bits.local_path, operator: equals, expected_from_local: facts.bits.com_api.local_path, severity: required, normalizers: [windows_path] }
+      - { field: bits.owner_sid, operator: equals, expected_from_local: facts.bits.com_api.owner_sid, severity: recommended, normalizers: [sid] }
+      - { field: bits.bytes_total, operator: equals, expected_from_local: facts.bits.com_api.bytes_total, severity: recommended }
+      - { field: bits.bytes_transferred, operator: equals, expected_from_local: facts.bits.com_api.bytes_transferred, severity: recommended }
+      - { field: bits.state, operator: one_of, expected: [SUSPENDED, QUEUED, CONNECTING, TRANSFERRING, TRANSFERRED, ACKNOWLEDGED], severity: recommended }
+      - { field: bits.notification_command, operator: absent, severity: recommended }
+      - { field: process.executable, operator: equals, expected_from_local: facts.bits.com_api.initiator_executable, severity: recommended, normalizers: [windows_path] }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: draft
+  change_reason: 当前腾讯 EDR 字段全集和已知运行日志中均没有 BITS 专属表或动作；本基准完整定义未来专属遥测应具备的 Job ID、名称、类型、状态、所有者、远端 URL、本地路径、进度与发起进程字段。当前产品比较预期保持未匹配，不以普通网络或文件侧证据冒充 BITS 任务能力。
+  references:
+    - reference/EDR日志-字段表.txt
+    - https://learn.microsoft.com/windows/win32/api/bits/nn-bits-ibackgroundcopyjob
+    - https://learn.microsoft.com/windows-server/administration/windows-commands/bitsadmin

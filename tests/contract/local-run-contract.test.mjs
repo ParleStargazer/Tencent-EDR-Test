@@ -898,8 +898,54 @@ test("PowerShell 脚本块能力区分一般命令与显式脚本块并接入腾
   assert.ok(normalized.properties.powershell.properties.hook_module);
 });
 
+test("BITS 任务能力通过 bitsadmin 与 COM API 建立完整本地基准和规划映射", async () => {
+  const manifest = await readJson("sample-src/BitsActivity/manifests/win.bits.job/capability.json");
+  const baseline = await readFile(new URL("baselines/windows/bits_job.yaml", root), "utf8");
+  const protocol = await readFile(new URL("sample-src/BitsActivity/BitsActivity.Protocol/Protocol.cs", root), "utf8");
+  const behavior = await readFile(new URL("sample-src/BitsActivity/BitsActivity.Behavior/Program.cs", root), "utf8");
+  const controller = await readFile(new URL("sample-src/BitsActivity/BitsActivity.Controller/Program.cs", root), "utf8");
+  const genericMapping = await readFile(new URL("mappings/generic-bits-activity-v1.yaml", root), "utf8");
+  const tencentMapping = await readFile(new URL("mappings/tencent-edr-proc-events-v1.yaml", root), "utf8");
+  const start = await readFile(new URL("scripts/Start-EdrTest.ps1", root), "utf8");
+  const e2e = await readFile(new URL("scripts/Test-BitsActivitySamples.ps1", root), "utf8");
+  const design = await readFile(new URL("docs/BITS-ACTIVITY-SAMPLES.md", root), "utf8");
+  const normalized = await readJson("schemas/normalized-event.schema.json");
+
+  assert.equal(manifest.capability_id, "win.bits.job");
+  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.risk_level, "L1");
+  assert.equal(manifest.required_privilege, "standard_user");
+  assert.equal(manifest.network.required, false);
+  assert.ok(manifest.expected_fact_keys.includes("bits.bitsadmin.job_id"));
+  assert.ok(manifest.expected_fact_keys.includes("bits.com_api.job_id"));
+  assert.match(protocol, /"bitsadmin", "com_api"/);
+  assert.match(protocol, /IBackgroundCopyManager/);
+  assert.match(protocol, /IEnumBackgroundCopyFiles/);
+  assert.match(behavior, /RunBitsAdminAsync/);
+  assert.match(behavior, /CreateComJob/);
+  assert.match(behavior, /LoopbackHttpServer/);
+  assert.match(controller, /BitsCom\.Inspect\(ready\.JobId\)/);
+  assert.match(controller, /BitsPlans\.Methods\.Select\(\(value, index\)/);
+  assert.ok([...controller.matchAll(/InstanceIndex = state\.InstanceIndex/g)].length >= 2);
+  assert.ok([...controller.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
+  assert.match(baseline, /method: \{ id: bitsadmin/);
+  assert.match(baseline, /method: \{ id: com_api/);
+  assert.match(baseline, /max_time_difference_ms: 15/);
+  assert.match(baseline, /status: draft/);
+  assert.match(genericMapping, /"bits\.job_id": \{ source: job_id/);
+  assert.match(tencentMapping, /route_id: bits-job-planned-telemetry/);
+  assert.match(tencentMapping, /"@table": \[BitsEvents, BITSEvents, BackgroundTransferEvents\]/);
+  assert.match(tencentMapping, /"bits\.job_id": \{ sources: \["Child\.BitsJobId", "Child\.JobId"\]/);
+  assert.match(start, /Build-BitsActivitySamples\.ps1/);
+  assert.match(e2e, /current-product-no-bits-event\.json/);
+  assert.match(e2e, /methodResults\.Count -ne 2/);
+  assert.match(design, /不能使本能力通过/);
+  assert.ok(normalized.properties.bits.properties.job_id);
+  assert.ok(normalized.properties.bits.properties.notification_command);
+});
+
 test("既有多子测试 Controller 显式分配 SQLite 唯一序号", async () => {
-  const [file, registry, network, scheduledTask, groupPolicy, process, powershell] = await Promise.all([
+  const [file, registry, network, scheduledTask, groupPolicy, process, powershell, bits] = await Promise.all([
     "FileManipulation",
     "RegistryActivity",
     "NetworkActivity",
@@ -907,6 +953,7 @@ test("既有多子测试 Controller 显式分配 SQLite 唯一序号", async () 
     "GroupPolicyActivity",
     "ProcessActivity",
     "PowerShellActivity",
+    "BitsActivity",
   ].map((domain) => readFile(new URL(`sample-src/${domain}/${domain}.Controller/Program.cs`, root), "utf8")));
 
   assert.match(file, /foreach \(var \(subtest, instanceIndex\) in Subtests\.Select/);
@@ -937,4 +984,8 @@ test("既有多子测试 Controller 显式分配 SQLite 唯一序号", async () 
   assert.match(powershell, /PowerShellScriptPlans\.Methods\.Select\(\(value, index\)/);
   assert.ok([...powershell.matchAll(/InstanceIndex = state\.InstanceIndex/g)].length >= 2);
   assert.ok([...powershell.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
+
+  assert.match(bits, /BitsPlans\.Methods\.Select\(\(value, index\)/);
+  assert.ok([...bits.matchAll(/InstanceIndex = state\.InstanceIndex/g)].length >= 2);
+  assert.ok([...bits.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
 });

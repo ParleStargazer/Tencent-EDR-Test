@@ -1,0 +1,43 @@
+schema_version: "1.0"
+profile_id: generic-bits-activity-v1
+vendor: Generic
+product: BITS Activity Self-Test Fixture
+description: 用于验证 BITS 双方法 BASELINE 与比较器的扁平 JSON 适配；不是任何 EDR 厂商的生产映射。
+
+input:
+  containers: [json-array, jsonl]
+  encoding: utf-8
+  record_selector:
+    all: { table: BitsActivity }
+  event_id_field: event_id
+  host_id_field: host_id
+  event_time: { field: event_time, format: iso8601 }
+
+routes:
+  - route_id: bits-job-activity
+    when: { table: BitsActivity }
+    canonical:
+      "event.type": { constant: bits }
+      "event.action": { constant: job }
+      "event.category": { constant: network }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "host.hostname": { source: host_name, on_empty: null }
+      "process.pid": { source: actor_pid, on_zero: null }
+      "process.name": { source: actor_name, on_empty: null }
+      "process.executable": { source: actor_executable, transform: [windows_path], on_empty: null }
+      "process.command_line": { source: actor_command_line, on_empty: null }
+      "bits.job_id": { source: job_id }
+      "bits.display_name": { source: display_name }
+      "bits.job_type": { source: job_type, on_empty: null }
+      "bits.state": { source: state, on_empty: null }
+      "bits.owner_sid": { source: owner_sid, on_empty: null }
+      "bits.remote_url": { source: remote_url, on_empty: null }
+      "bits.local_path": { source: local_path, transform: [windows_path], on_empty: null }
+      "bits.bytes_total": { source: bytes_total, on_zero: 0 }
+      "bits.bytes_transferred": { source: bytes_transferred, on_zero: 0 }
+      "bits.notification_command": { source: notification_command, on_empty: null }
+
+raw_reference: { id_field: event_id, ordinal_base: 0 }
+unmapped_fields: { policy: count-and-ignore, preserve_in_report: false }

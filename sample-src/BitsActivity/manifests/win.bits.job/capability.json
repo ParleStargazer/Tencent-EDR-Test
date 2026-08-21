@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.bits.job",
+  "version": "0.1.0",
+  "display_name_zh": "BITS 任务活动",
+  "display_name_en": "BITS Job Activity",
+  "description": "分别通过 bitsadmin.exe 与 BackgroundCopyManager COM API 创建下载任务；从进程内回环 HTTP 服务传输唯一 JSON，Controller 独立重新打开 Job 并核验文件集合、状态、进度和最终哈希。",
+  "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
+  "risk_level": "L1",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "BitsJob.Controller.exe" },
+  "participants": [
+    { "role": "actor", "executable": "BitsJob.Actor.exe" }
+  ],
+  "parameters": {
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1000, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 120, "cleanup_seconds": 20 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "bits.job_succeeded",
+    "bits.bitsadmin.succeeded", "bits.bitsadmin.occurred_at_utc", "bits.bitsadmin.invocation_kind",
+    "bits.bitsadmin.job_id", "bits.bitsadmin.display_name", "bits.bitsadmin.job_type",
+    "bits.bitsadmin.owner_sid", "bits.bitsadmin.remote_url", "bits.bitsadmin.local_path",
+    "bits.bitsadmin.bytes_total", "bits.bitsadmin.bytes_transferred", "bits.bitsadmin.payload_sha256",
+    "bits.bitsadmin.download_verified", "bits.bitsadmin.job_removed_after_complete",
+    "bits.bitsadmin.controller_job_verified", "bits.bitsadmin.initiator_pid",
+    "bits.bitsadmin.initiator_executable", "bits.bitsadmin.initiator_command_line",
+    "bits.com_api.succeeded", "bits.com_api.occurred_at_utc", "bits.com_api.invocation_kind",
+    "bits.com_api.job_id", "bits.com_api.display_name", "bits.com_api.job_type",
+    "bits.com_api.owner_sid", "bits.com_api.remote_url", "bits.com_api.local_path",
+    "bits.com_api.bytes_total", "bits.com_api.bytes_transferred", "bits.com_api.payload_sha256",
+    "bits.com_api.download_verified", "bits.com_api.job_removed_after_complete",
+    "bits.com_api.controller_job_verified", "bits.com_api.initiator_pid",
+    "bits.com_api.initiator_executable", "bits.com_api.initiator_command_line",
+    "correlation.nonce"
+  ]
+}
