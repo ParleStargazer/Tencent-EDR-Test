@@ -20,6 +20,46 @@ input:
     format: unix_ms
 
 routes:
+  # reference/script 实测：腾讯把 Windows PowerShell 5.1 与 PowerShell 7 的 AMSI 扫描统一导出为
+  # ScriptEvents/ScriptScan。Action.Name 只表达宽泛“脚本执行”，具体命令或脚本块必须通过
+  # Parent PowerShell 进程与 Child.ContentData 精确关联。路由不硬编码 Action.Name，保留前端
+  # 自定义规则对新版厂商动作进行消歧；默认规则仍为 ScriptScan。
+  - route_id: powershell-script-candidate-discovery
+    when:
+      "@table": ScriptEvents
+      "Action.Type": Script
+    canonical:
+      "event.type": { constant: powershell }
+      "event.action": { constant: script_block }
+      "event.category": { constant: script }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "host.os": { source: "Environment.OsVersion", on_empty: null }
+      "host.agent_id": { source: "Common.Guid", on_empty: null }
+      "host.agent_version": { source: "Common.ClientVer", on_empty: null }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "process.name": { source: "Parent.FileName", on_empty: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "process.start": { source: "Parent.ProcCreateTime", transform: [unix_ms_to_utc], on_zero: null }
+      "process.hash.md5": { source: "Parent.FileMd5", transform: [lowercase], on_empty: null }
+      "user.name": { source: "Parent.ProcUserName", on_empty: null }
+      "user.domain": { source: "Parent.ProcDomainName", on_empty: null }
+      "powershell.content": { source: "Child.ContentData", on_empty: null }
+      "powershell.content_name": { source: "Child.ContentName", on_empty: null }
+      "powershell.content_type": { source: "Child.Type", on_empty: null }
+      "powershell.hook_module": { source: "Child.HookModule", on_empty: null }
+      "powershell.app_version": { source: "Child.AppVersion", on_empty: null }
+      "powershell.monitor_name": { source: "Common.MonitorName", on_empty: null }
+      "file.path": { source: "Child.FilePath", transform: [windows_path], on_empty: null }
+      "file.name": { source: "Child.FileName", on_empty: null }
+      "file.size": { source: "Child.FileSize", on_zero: 0 }
+      "file.hash.md5": { source: "Child.FileMd5", transform: [lowercase], on_empty: null }
+
   # 腾讯导出的命名管道事件位于 FileEvents；Child.PipeOpName 是创建/打开的直接语义。
   # 本地名通常为 \\.\pipe\Name，腾讯导出为 \Name；named_pipe_path 将二者统一。
   # 仅为 "\" 的占位值会归一化为 null，避免压过同进程、同时间的完整名称记录。

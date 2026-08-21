@@ -214,6 +214,18 @@
       },
       "additionalProperties": false
     },
+    "powershell": {
+      "type": ["object", "null"],
+      "properties": {
+        "content": { "type": ["string", "null"] },
+        "content_name": { "type": ["string", "null"] },
+        "content_type": { "type": ["string", "null"] },
+        "hook_module": { "type": ["string", "null"] },
+        "app_version": { "type": ["string", "integer", "null"] },
+        "monitor_name": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
     "correlation": {
       "type": ["object", "null"],
       "properties": {

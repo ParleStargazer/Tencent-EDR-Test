@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.powershell.script_block",
+  "version": "0.1.0",
+  "display_name_zh": "脚本块活动",
+  "display_name_en": "Script-Block Activity",
+  "description": "分别执行一般 PowerShell 命令与显式 ScriptBlock.Create 脚本块；使用预热标准输入会话记录精确提交时间，并以唯一文本标记和输出回执完成本地自验证。",
+  "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
+  "risk_level": "L0",
+  "required_privilege": "standard_user",
+  "controller": { "executable": "PowerShellScriptBlock.Controller.exe" },
+  "participants": [
+    { "role": "actor", "executable": "PowerShellScriptBlock.Actor.exe" }
+  ],
+  "parameters": {
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1000, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 45, "cleanup_seconds": 10 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "powershell.script_block_succeeded",
+    "powershell.direct_command.succeeded", "powershell.direct_command.occurred_at_utc",
+    "powershell.direct_command.invocation_kind", "powershell.direct_command.marker",
+    "powershell.direct_command.submitted_command", "powershell.direct_command.expected_content",
+    "powershell.direct_command.command_form_token", "powershell.direct_command.target_pid",
+    "powershell.direct_command.target_executable", "powershell.direct_command.target_command_line",
+    "powershell.direct_command.warmup_succeeded", "powershell.direct_command.output_verified",
+    "powershell.explicit_script_block.succeeded", "powershell.explicit_script_block.occurred_at_utc",
+    "powershell.explicit_script_block.invocation_kind", "powershell.explicit_script_block.marker",
+    "powershell.explicit_script_block.submitted_command", "powershell.explicit_script_block.expected_content",
+    "powershell.explicit_script_block.command_form_token", "powershell.explicit_script_block.target_pid",
+    "powershell.explicit_script_block.target_executable", "powershell.explicit_script_block.target_command_line",
+    "powershell.explicit_script_block.warmup_succeeded", "powershell.explicit_script_block.output_verified",
+    "correlation.nonce"
+  ]
+}

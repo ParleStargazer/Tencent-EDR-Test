@@ -1,0 +1,86 @@
+schema_version: "1.1"
+baseline_id: win.powershell.script_block
+version: "0.1.0"
+title: Windows PowerShell 脚本块活动遥测
+description: 同轮区分一般命令执行与显式 ScriptBlock.Create 执行；腾讯 EDR 的 ScriptScan 是宽泛 AMSI 脚本扫描事件，因此必须同时匹配精确脚本文本、PowerShell 目标 PID、可执行路径和固定命令形式。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L0
+capability:
+  id: win.powershell.script_block
+  version: "0.1.0"
+  parameters: { post_operation_hold_ms: 1000 }
+local_requirements:
+  - { field: facts.powershell.script_block_succeeded, operator: equals, expected: true }
+  - { field: facts.powershell.direct_command.succeeded, operator: equals, expected: true }
+  - { field: facts.powershell.direct_command.invocation_kind, operator: equals, expected: direct_command }
+  - { field: facts.powershell.direct_command.warmup_succeeded, operator: equals, expected: true }
+  - { field: facts.powershell.direct_command.output_verified, operator: equals, expected: true }
+  - { field: facts.powershell.direct_command.expected_content, operator: present }
+  - { field: facts.powershell.direct_command.target_pid, operator: present }
+  - { field: facts.powershell.explicit_script_block.succeeded, operator: equals, expected: true }
+  - { field: facts.powershell.explicit_script_block.invocation_kind, operator: equals, expected: scriptblock_create }
+  - { field: facts.powershell.explicit_script_block.warmup_succeeded, operator: equals, expected: true }
+  - { field: facts.powershell.explicit_script_block.output_verified, operator: equals, expected: true }
+  - { field: facts.powershell.explicit_script_block.expected_content, operator: present }
+  - { field: facts.powershell.explicit_script_block.target_pid, operator: present }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.powershell.explicit_script_block.expected_content, cloud_field: powershell.content, strength: strong, normalizers: [trim] }
+    - { local_field: facts.powershell.explicit_script_block.target_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.powershell.explicit_script_block.target_pid, cloud_field: process.pid, strength: medium }
+method_selection: { strategy: best }
+cloud_expectations:
+  - id: powershell-direct-command-scan
+    method: { id: direct_command, title: 一般命令执行（-Command stdin） }
+    event_type: powershell
+    event_actions: [script_block]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.powershell.direct_command.occurred_at_utc
+      max_time_difference_ms: 15
+      anchors:
+        - { local_field: facts.powershell.direct_command.expected_content, cloud_field: powershell.content, strength: strong, normalizers: [trim] }
+        - { local_field: facts.powershell.direct_command.target_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.powershell.direct_command.target_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: powershell.content, operator: equals, expected_from_local: facts.powershell.direct_command.expected_content, severity: required, normalizers: [trim] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.powershell.direct_command.target_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.powershell.direct_command.target_executable, severity: required, normalizers: [windows_path] }
+      - { field: process.command_line, operator: contains, expected_from_local: facts.powershell.direct_command.command_form_token, severity: required, normalizers: [lowercase] }
+      - { field: powershell.content_type, operator: equals, expected: 脚本, severity: required }
+      - { field: powershell.hook_module, operator: one_of, expected: [edrcom.AmsiProvider, "edrinjclr.AmsiUtils::ScanContent"], severity: recommended }
+      - { field: powershell.content_name, operator: absent, severity: recommended }
+      - { field: powershell.monitor_name, operator: equals, expected: AmsiHook, severity: informational }
+  - id: powershell-explicit-script-block-scan
+    method: { id: explicit_script_block, title: 显式 ScriptBlock.Create 执行 }
+    event_type: powershell
+    event_actions: [script_block]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.powershell.explicit_script_block.occurred_at_utc
+      max_time_difference_ms: 15
+      anchors:
+        - { local_field: facts.powershell.explicit_script_block.expected_content, cloud_field: powershell.content, strength: strong, normalizers: [trim] }
+        - { local_field: facts.powershell.explicit_script_block.target_executable, cloud_field: process.executable, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.powershell.explicit_script_block.target_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: powershell.content, operator: equals, expected_from_local: facts.powershell.explicit_script_block.expected_content, severity: required, normalizers: [trim] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.powershell.explicit_script_block.target_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.powershell.explicit_script_block.target_executable, severity: required, normalizers: [windows_path] }
+      - { field: process.command_line, operator: contains, expected_from_local: facts.powershell.explicit_script_block.command_form_token, severity: required, normalizers: [lowercase] }
+      - { field: powershell.content_type, operator: equals, expected: 脚本, severity: required }
+      - { field: powershell.hook_module, operator: one_of, expected: [edrcom.AmsiProvider, "edrinjclr.AmsiUtils::ScanContent"], severity: recommended }
+      - { field: powershell.content_name, operator: absent, severity: recommended }
+      - { field: powershell.monitor_name, operator: equals, expected: AmsiHook, severity: informational }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: active
+  change_reason: reference/script 共 382 条均为 ScriptEvents/ScriptScan；Child.ContentData 是脚本内容直接证据，Parent PID/路径/命令行用于精确区分本轮 PowerShell 目标。显式脚本块方法只接受内层 ScriptBlock 文本，外层 Create 调用不能单独通过。
+  references: [reference/script/edr.json, Tencent EDR ScriptEvents / ScriptScan / AmsiHook]

@@ -818,6 +818,7 @@ test("组策略与命名管道三项能力具备完整样本、BASELINE、映射
   const tencentMapping = await readFile(new URL("mappings/tencent-edr-proc-events-v1.yaml", root), "utf8");
   const front = await readFile(new URL("web/app/live-control-plane.tsx", root), "utf8");
   const start = await readFile(new URL("scripts/Start-EdrTest.ps1", root), "utf8");
+  const e2e = await readFile(new URL("scripts/Test-PowerShellActivitySamples.ps1", root), "utf8");
   assert.match(groupBehavior, /RegSetValueExW/);
   assert.match(groupBehavior, /SOFTWARE\\\\Policies\\\\EdrTest\\\\Runs/);
   assert.match(groupBehavior, /known_policy_same_value/);
@@ -853,14 +854,59 @@ test("组策略与命名管道三项能力具备完整样本、BASELINE、映射
   assert.match(start, /Build-NamedPipeActivitySamples\.ps1/);
 });
 
+test("PowerShell 脚本块能力区分一般命令与显式脚本块并接入腾讯 ScriptScan", async () => {
+  const manifest = await readJson("sample-src/PowerShellActivity/manifests/win.powershell.script_block/capability.json");
+  const baseline = await readFile(new URL("baselines/windows/powershell_script_block.yaml", root), "utf8");
+  const protocol = await readFile(new URL("sample-src/PowerShellActivity/PowerShellActivity.Protocol/Protocol.cs", root), "utf8");
+  const behavior = await readFile(new URL("sample-src/PowerShellActivity/PowerShellActivity.Behavior/Program.cs", root), "utf8");
+  const controller = await readFile(new URL("sample-src/PowerShellActivity/PowerShellActivity.Controller/Program.cs", root), "utf8");
+  const mapping = await readFile(new URL("mappings/tencent-edr-proc-events-v1.yaml", root), "utf8");
+  const front = await readFile(new URL("web/app/live-control-plane.tsx", root), "utf8");
+  const start = await readFile(new URL("scripts/Start-EdrTest.ps1", root), "utf8");
+  const e2e = await readFile(new URL("scripts/Test-PowerShellActivitySamples.ps1", root), "utf8");
+  const normalized = await readJson("schemas/normalized-event.schema.json");
+
+  assert.equal(manifest.capability_id, "win.powershell.script_block");
+  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.risk_level, "L0");
+  assert.equal(manifest.required_privilege, "standard_user");
+  assert.equal(manifest.participants.length, 1);
+  assert.ok(manifest.expected_fact_keys.includes("powershell.direct_command.expected_content"));
+  assert.ok(manifest.expected_fact_keys.includes("powershell.explicit_script_block.expected_content"));
+  assert.match(protocol, /"direct_command", "explicit_script_block"/);
+  assert.match(protocol, /ScriptBlock\]::Create/);
+  assert.match(protocol, /CommandFormToken = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -"/);
+  assert.match(behavior, /WaitForGateAsync/);
+  assert.match(behavior, /ReadUntilMarkerAsync/);
+  assert.match(controller, /foreach \(var \(method, instanceIndex\) in PowerShellScriptPlans\.Methods\.Select/);
+  assert.match(controller, /InstanceIndex = state\.InstanceIndex/);
+  assert.match(controller, /Sequence = state\.InstanceIndex \+ 1/);
+  assert.match(baseline, /method_selection: \{ strategy: best \}/);
+  assert.match(baseline, /method: \{ id: direct_command/);
+  assert.match(baseline, /method: \{ id: explicit_script_block/);
+  assert.match(baseline, /expected_from_local: facts\.powershell\.explicit_script_block\.expected_content/);
+  assert.match(baseline, /max_time_difference_ms: 15/);
+  assert.match(mapping, /route_id: powershell-script-candidate-discovery/);
+  assert.match(mapping, /"@table": ScriptEvents/);
+  assert.match(mapping, /"powershell\.content": \{ source: "Child\.ContentData"/);
+  assert.match(mapping, /"process\.pid": \{ source: "Parent\.ProcPid"/);
+  assert.match(front, /"win\.powershell\.script_block": "ScriptScan"/);
+  assert.match(start, /Build-PowerShellActivitySamples\.ps1/);
+  assert.match(e2e, /synthetic-cloud\.tencent-powershell\.json/);
+  assert.match(e2e, /methodResults\.Count -ne 2/);
+  assert.ok(normalized.properties.powershell.properties.content);
+  assert.ok(normalized.properties.powershell.properties.hook_module);
+});
+
 test("既有多子测试 Controller 显式分配 SQLite 唯一序号", async () => {
-  const [file, registry, network, scheduledTask, groupPolicy, process] = await Promise.all([
+  const [file, registry, network, scheduledTask, groupPolicy, process, powershell] = await Promise.all([
     "FileManipulation",
     "RegistryActivity",
     "NetworkActivity",
     "ScheduledTaskActivity",
     "GroupPolicyActivity",
     "ProcessActivity",
+    "PowerShellActivity",
   ].map((domain) => readFile(new URL(`sample-src/${domain}/${domain}.Controller/Program.cs`, root), "utf8")));
 
   assert.match(file, /foreach \(var \(subtest, instanceIndex\) in Subtests\.Select/);
@@ -887,4 +933,8 @@ test("既有多子测试 Controller 显式分配 SQLite 唯一序号", async () 
   assert.match(process, /var imageAttempts = operation == "image_load"/);
   assert.match(process, /imageAttempts\.Select\(\(attempt, index\) => CreateEvent\(/);
   assert.match(process, /evidence\?\.ArtifactId, attempt, index \+ 1/);
+
+  assert.match(powershell, /PowerShellScriptPlans\.Methods\.Select\(\(value, index\)/);
+  assert.ok([...powershell.matchAll(/InstanceIndex = state\.InstanceIndex/g)].length >= 2);
+  assert.ok([...powershell.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
 });

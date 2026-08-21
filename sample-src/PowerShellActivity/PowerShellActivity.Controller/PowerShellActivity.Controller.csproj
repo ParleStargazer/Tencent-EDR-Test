@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>PowerShellActivity.Controller</AssemblyName>
+    <RootNamespace>PowerShellActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\EdrTest\EdrTest.csproj" />
+    <ProjectReference Include="..\PowerShellActivity.Protocol\PowerShellActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>
