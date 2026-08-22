@@ -7,9 +7,9 @@ const LOGIN_URL = "https://cloud.tencent.com/login?s_url=https%3A%2F%2Fconsole.c
 const MAX_REQUEST_BYTES = 32 * 1024;
 const DEFAULT_STEP_TIMEOUT_MS = 60_000;
 const DEFAULT_POST_LOGIN_TIMEOUT_MS = 180_000;
-const DEFAULT_STEP_SETTLE_MS = 800;
-const DEFAULT_DOMAIN_SELECTION_SETTLE_MS = 3_000;
-const DEFAULT_QUERY_RESULT_SETTLE_MS = 3_000;
+const DEFAULT_STEP_SETTLE_MS = 1_600;
+const DEFAULT_DOMAIN_SELECTION_SETTLE_MS = 6_000;
+const DEFAULT_QUERY_RESULT_SETTLE_MS = 6_000;
 
 class AutomationError extends Error {
   constructor(code, message) {
@@ -296,7 +296,7 @@ export function buildLaunchOptions(request, runtime = {}) {
     channel: runtime.channel ?? "msedge",
     headless: runtime.headless ?? !request.debug_mode,
     downloadsPath: dirname(request.download_path),
-    ...(request.debug_mode ? { slowMo: runtime.slowMo ?? 120 } : {}),
+    ...(request.debug_mode ? { slowMo: runtime.slowMo ?? 240 } : {}),
   };
 }
 

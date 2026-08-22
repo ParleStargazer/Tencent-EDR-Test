@@ -21,13 +21,14 @@ test("云端自动化请求只接受受限的本地 JSON 下载目标", () => {
   const debugValue = validateRequest({ ...value, debug_mode: true });
   assert.equal(debugValue.debug_mode, true);
   assert.equal(buildLaunchOptions(debugValue).headless, false);
+  assert.equal(buildLaunchOptions(debugValue).slowMo, 240);
   assert.equal(buildLaunchOptions(debugValue, { headless: true }).headless, true);
   assert.deepEqual(buildAutomationTiming({ ...debugValue, timeout_ms: 300_000 }), {
     stepTimeoutMs: 60_000,
     postLoginTimeoutMs: 180_000,
-    stepSettleMs: 800,
-    domainSelectionSettleMs: 3_000,
-    queryResultSettleMs: 3_000,
+    stepSettleMs: 1_600,
+    domainSelectionSettleMs: 6_000,
+    queryResultSettleMs: 6_000,
   });
   assert.deepEqual(buildAutomationTiming(debugValue, { stepTimeoutMs: 9_000, postLoginTimeoutMs: 12_000, stepSettleMs: 0, domainSelectionSettleMs: 0, queryResultSettleMs: 0 }), {
     stepTimeoutMs: 9_000,
@@ -142,6 +143,7 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
         loginUrl: `http://127.0.0.1:${address.port}/`,
         channel: "msedge",
         headless: true,
+        slowMo: 0,
         stepTimeoutMs: 10_000,
         postLoginTimeoutMs: 10_000,
         stepSettleMs: 0,
