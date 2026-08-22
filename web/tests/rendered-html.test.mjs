@@ -153,6 +153,11 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(cloudAutomation, /headless: runtime\.headless \?\? !request\.debug_mode/);
   assert.match(cloudAutomation, /runtime\.onEvent/);
   assert.match(cloudAutomation, /page\.on\("requestfailed"/);
+  assert.match(cloudAutomation, /DEFAULT_STEP_TIMEOUT_MS = 60_000/);
+  assert.match(cloudAutomation, /DEFAULT_POST_LOGIN_TIMEOUT_MS = 90_000/);
+  assert.match(cloudAutomation, /firstVisibleState/);
+  assert.doesNotMatch(cloudAutomation, /selectDefaultDomain\(page, 30_000\)/);
+  assert.match(cloudService, /TimeSpan\.FromMinutes\(10\)/);
   assert.match(styles, /\.cloud-progress-track \{[^}]*height:/);
   assert.match(styles, /\.cloud-progress-log\.debug \{[^}]*max-height:/);
   assert.match(startScript, /function ConvertTo-NativeArgument/);

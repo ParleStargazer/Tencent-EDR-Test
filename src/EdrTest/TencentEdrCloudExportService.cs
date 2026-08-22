@@ -319,7 +319,7 @@ internal sealed class TencentEdrCloudExportService
         process.StandardInput.Close();
         payload = string.Empty;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromMinutes(6));
+        timeout.CancelAfter(TimeSpan.FromMinutes(10));
         try
         {
             await process.WaitForExitAsync(timeout.Token);
@@ -330,7 +330,7 @@ internal sealed class TencentEdrCloudExportService
             await process.WaitForExitAsync(CancellationToken.None);
             try { await eventTask; } catch (OperationCanceledException) { }
             if (cancellationToken.IsCancellationRequested) throw;
-            throw new CloudAutomationException("BROWSER_AUTOMATION_TIMEOUT", "云端导出自动化超过 6 分钟。");
+            throw new CloudAutomationException("BROWSER_AUTOMATION_TIMEOUT", "云端导出自动化超过 10 分钟。");
         }
         var output = await outputTask;
         await eventTask;

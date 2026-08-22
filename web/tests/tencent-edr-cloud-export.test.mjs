@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { buildLaunchOptions, runTencentEdrExport, validateRequest } from "../automation/tencent-edr-cloud-export.mjs";
+import { buildAutomationTiming, buildLaunchOptions, runTencentEdrExport, validateRequest } from "../automation/tencent-edr-cloud-export.mjs";
 
 test("云端自动化请求只接受受限的本地 JSON 下载目标", () => {
   const target = join(tmpdir(), "edr-cloud.json");
@@ -22,6 +22,16 @@ test("云端自动化请求只接受受限的本地 JSON 下载目标", () => {
   assert.equal(debugValue.debug_mode, true);
   assert.equal(buildLaunchOptions(debugValue).headless, false);
   assert.equal(buildLaunchOptions(debugValue, { headless: true }).headless, true);
+  assert.deepEqual(buildAutomationTiming({ ...debugValue, timeout_ms: 300_000 }), {
+    stepTimeoutMs: 60_000,
+    postLoginTimeoutMs: 90_000,
+    stepSettleMs: 800,
+  });
+  assert.deepEqual(buildAutomationTiming(debugValue, { stepTimeoutMs: 9_000, postLoginTimeoutMs: 12_000, stepSettleMs: 0 }), {
+    stepTimeoutMs: 9_000,
+    postLoginTimeoutMs: 12_000,
+    stepSettleMs: 0,
+  });
   assert.throws(() => validateRequest({ ...value, debug_mode: "true" }), /debug_mode 必须是布尔值/);
   assert.throws(() => validateRequest({ ...value, download_path: "relative.json" }), /绝对 JSON 文件路径/);
   assert.throws(() => validateRequest({ ...value, query_start_local: "2026/08/22" }), /yyyy-MM-dd HH:mm:ss/);
@@ -59,23 +69,31 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
     <button>子用户</button>
     <input aria-label="子用户名 主账号 ID" placeholder="子用户名" />
     <input type="password" placeholder="请输入登录密码" />
-    <button>登录</button>
-    <div>请选择域</div><div role="listitem">默认域</div>
-    <div>进程事件</div><div title="全部">全部事件</div>
-    <div>添加筛选条件</div><button>添加条件</button>
-    <div>选择字段</div><div>选择关系</div><div>请指定</div>
-    <input aria-label="请输入添加内容" placeholder="请输入添加内容" />
-    <input aria-label="选择时间" placeholder="选择时间" />
-    <button id="initial-export">导出</button>
-    <label>全选<input type="checkbox" /></label><span>xlsx</span>
-    <div id="tea-overlay-root">
-      <span>主机名称（系统环境信息）</span>
-      <div role="listitem">等于</div><div role="listitem">其他信息</div>
-      <div role="listitem">采集时间</div><div role="listitem">大于</div>
-      <div role="listitem">json</div>
-      <button>确定</button><button>检索</button><button id="final-export">导出</button>
-    </div>
+    <button id="login">登录</button>
+    <section id="domain-step" hidden>
+      <div>请选择域</div><div id="default-domain" role="listitem">默认域</div><button id="domain-confirm">确定</button>
+    </section>
+    <section id="event-view" hidden>
+      <div>进程事件</div><div title="全部">全部事件</div>
+      <div>添加筛选条件</div><button>添加条件</button>
+      <div>选择字段</div><div>选择关系</div><div>请指定</div>
+      <input aria-label="请输入添加内容" placeholder="请输入添加内容" />
+      <input aria-label="选择时间" placeholder="选择时间" />
+      <button id="initial-export">导出</button>
+      <label>全选<input type="checkbox" /></label><span>xlsx</span>
+      <div id="tea-overlay-root">
+        <span>主机名称（系统环境信息）</span>
+        <div role="listitem">等于</div><div role="listitem">其他信息</div>
+        <div role="listitem">采集时间</div><div role="listitem">大于</div>
+        <div role="listitem">json</div>
+        <button>确定</button><button>检索</button><button id="final-export">导出</button>
+      </div>
+    </section>
     <script>
+      const domainStep = document.getElementById("domain-step");
+      const eventView = document.getElementById("event-view");
+      document.getElementById("login").addEventListener("click", () => setTimeout(() => { domainStep.hidden = false; }, 5_500));
+      document.getElementById("domain-confirm").addEventListener("click", () => { domainStep.hidden = true; eventView.hidden = false; });
       document.getElementById("final-export").addEventListener("click", () => {
         const blob = new Blob([JSON.stringify([{ "Action.Name": "ProcessCreate", "Host.Name": "EDR-TEST-01" }])], { type: "application/json" });
         const link = document.createElement("a");
@@ -106,7 +124,15 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
         download_path: output,
         timeout_ms: 30_000,
         debug_mode: true,
-      }, { loginUrl: `http://127.0.0.1:${address.port}/`, channel: "msedge", headless: true, onEvent: (event) => events.push(event) });
+      }, {
+        loginUrl: `http://127.0.0.1:${address.port}/`,
+        channel: "msedge",
+        headless: true,
+        stepTimeoutMs: 10_000,
+        postLoginTimeoutMs: 10_000,
+        stepSettleMs: 0,
+        onEvent: (event) => events.push(event),
+      });
       assert.equal(result.status, "succeeded");
     } catch (error) {
       if (/Executable doesn.t exist|browserType\.launch|msedge/i.test(String(error))) {
@@ -125,7 +151,8 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
       "prepare_export", "wait_download", "save_download",
     ]);
     assert(progressEvents.every((event, index) => index === 0 || event.progress >= progressEvents[index - 1].progress));
-    assert(events.some((event) => event.type === "debug"));
+    assert(events.some((event) => event.type === "debug" && event.stage === "wait_policy"));
+    assert(events.some((event) => event.type === "debug" && event.stage === "domain_step_completed" && /默认域已选择/.test(event.message)));
     assert.doesNotMatch(JSON.stringify(events), /child-user|secret-value/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
