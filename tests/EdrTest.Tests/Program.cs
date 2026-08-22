@@ -103,6 +103,23 @@ public static class Program
         AssertThrows<InvalidDataException>(() => CloudExportFile.Inspect(invalidPath));
         var persistedFields = typeof(ApiCloudImportRecord).GetProperties().Select(value => value.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         Assert(!persistedFields.Contains("account") && !persistedFields.Contains("password"), "云端导入记录不得包含账号或密码字段。");
+
+        var progressFields = typeof(ApiCloudProgressEntry).GetProperties().Select(value => value.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert(progressFields.IsSupersetOf(["TimestampUtc", "Stage", "Message", "Progress", "Detailed"]), "云端导入进度缺少浏览器诊断所需字段。");
+        var journalType = typeof(ApiCloudImportRecord).Assembly.GetType("EdrTest.CloudAutomationJournal")
+            ?? throw new InvalidOperationException("未找到云端自动化日志组件。");
+        var debugLogPath = Path.Combine(fixture.Path, "cloud-automation-debug.jsonl");
+        var progressEntries = new List<ApiCloudProgressEntry>();
+        Action<ApiCloudProgressEntry> callback = progressEntries.Add;
+        var journal = Activator.CreateInstance(journalType, debugLogPath, callback, new[] { "child-user", "secret-value" })
+            ?? throw new InvalidOperationException("无法创建云端自动化日志组件。");
+        var report = journalType.GetMethod("Report") ?? throw new InvalidOperationException("云端自动化日志组件缺少 Report 方法。");
+        report.Invoke(journal, ["fill_credentials", "账号 child-user，密码 secret-value", 34, "info", false, null]);
+        report.Invoke(journal, ["browser_console", "child-user console secret-value", 12, "debug", true, null]);
+        Assert(progressEntries.Count == 2 && progressEntries[0].Progress == 34 && progressEntries[1].Progress == 34, "云端导入进度必须单调递增，详细事件不能使进度倒退。");
+        Assert(progressEntries.All(value => !value.Message.Contains("child-user", StringComparison.Ordinal) && !value.Message.Contains("secret-value", StringComparison.Ordinal)), "进度回调不得暴露云端账号或密码。");
+        var persistedDebugLog = File.ReadAllText(debugLogPath);
+        Assert(persistedDebugLog.Contains("[REDACTED]", StringComparison.Ordinal) && !persistedDebugLog.Contains("child-user", StringComparison.Ordinal) && !persistedDebugLog.Contains("secret-value", StringComparison.Ordinal), "持久化调试日志必须脱敏账号和密码。");
         return Task.CompletedTask;
     }
 

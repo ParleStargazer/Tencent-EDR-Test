@@ -44,15 +44,31 @@ public sealed class ApiCloudAutomationStartRequest
     public string? DeviceName { get; init; }
     public DateTimeOffset? LogStartTime { get; init; }
     public int DelaySeconds { get; init; } = 30;
+    public bool DebugMode { get; init; }
 }
+
+public sealed record ApiCloudProgressEntry(
+    DateTimeOffset TimestampUtc,
+    string Level,
+    string Stage,
+    string Message,
+    int Progress,
+    bool Detailed);
 
 public sealed record ApiCloudAcquisitionSnapshot(
     bool Requested,
     string Status,
+    bool DebugMode,
     string? DeviceName,
     DateTimeOffset? QueryStartUtc,
     int? DelaySeconds,
     int? WaitRemainingSeconds,
+    int Progress,
+    string? Stage,
+    string? StageMessage,
+    DateTimeOffset? UpdatedAtUtc,
+    IReadOnlyList<ApiCloudProgressEntry> Logs,
+    bool DebugLogAvailable,
     ApiCloudImportRecord? Import,
     string? Error);
 
@@ -221,6 +237,13 @@ public static class LocalApiService
         {
             var imports = coordinator.ListCloudImports(operationId);
             return imports is null ? ApiError(404, "找不到测试轮次。") : Results.Json(imports, ApiJson);
+        });
+        app.MapGet("/api/runs/{operationId}/cloud-imports/{importId}/debug-log", (string operationId, string importId) =>
+        {
+            var path = coordinator.ResolveCloudDebugLog(operationId, importId);
+            return path is null
+                ? ApiError(404, "该云端导入没有可用的调试日志。")
+                : Results.File(path, "application/x-ndjson; charset=utf-8", $"{importId}-cloud-automation-debug.jsonl");
         });
 
         app.MapPost("/api/compare", (Func<HttpContext, Task<IResult>>)(context => CompareAsync(context, options, catalog, coordinator, comparisonCoordinator)));
@@ -780,6 +803,12 @@ internal sealed class ApiRunCoordinator
         return runDirectory is null ? null : cloudImportStore.ResolveSuccessful(runDirectory, importId);
     }
 
+    public string? ResolveCloudDebugLog(string operationId, string importId)
+    {
+        var runDirectory = ResolveRunDirectory(operationId);
+        return runDirectory is null ? null : cloudImportStore.ResolveDebugLog(runDirectory, importId);
+    }
+
     private string? ResolveRunDirectory(string operationId)
     {
         if (states.TryGetValue(operationId, out var state) && state.RunDirectory is { } current && Directory.Exists(current)) return current;
@@ -835,8 +864,8 @@ internal sealed class ApiRunCoordinator
                     await Task.Delay(TimeSpan.FromSeconds(1));
                 }
                 state.BeginCloudAcquisition();
-                var import = await cloudExporter.ExportAndImportAsync(result, cloudConfig, queryStartUtc, CancellationToken.None);
-                state.CompleteCloudAcquisition(import);
+                var import = await cloudExporter.ExportAndImportAsync(result, cloudConfig, queryStartUtc, state.ApplyCloudProgress, CancellationToken.None);
+                state.CompleteCloudAcquisition(import, cloudImportStore.ResolveDebugLog(result.RunDirectory, import.ImportId) is not null);
             }
             catch (Exception exception)
             {
@@ -871,6 +900,7 @@ internal sealed class ApiRunCoordinator
             DeviceName = deviceName,
             RequestedStartTime = request.LogStartTime,
             DelaySeconds = request.DelaySeconds,
+            DebugMode = request.DebugMode,
         };
     }
 
@@ -935,15 +965,29 @@ internal sealed class ApiRunCoordinator
                 var runDirectory = Directory.GetParent(Path.GetDirectoryName(path)!)!.FullName;
                 var databasePath = Path.Combine(runDirectory, $"{runId}.db");
                 var latestCloudImport = cloudImportStore.List(runDirectory).FirstOrDefault();
+                var cloudProgressLogs = latestCloudImport is null
+                    ? []
+                    : cloudImportStore.ReadDebugProgressEntries(runDirectory, latestCloudImport.ImportId);
+                var latestCloudProgress = cloudProgressLogs.LastOrDefault();
+                var debugLogAvailable = latestCloudImport is not null
+                    && cloudImportStore.ResolveDebugLog(runDirectory, latestCloudImport.ImportId) is not null;
                 var cloudAcquisition = latestCloudImport is null
-                    ? new ApiCloudAcquisitionSnapshot(false, "not_requested", null, null, null, null, null, null)
+                    ? new ApiCloudAcquisitionSnapshot(
+                        false, "not_requested", false, null, null, null, null, 0, null, null, null, [], false, null, null)
                     : new ApiCloudAcquisitionSnapshot(
                         true,
                         latestCloudImport.Status,
+                        debugLogAvailable,
                         latestCloudImport.DeviceName,
                         latestCloudImport.QueryStartUtc,
                         null,
                         null,
+                        latestCloudImport.Status == "succeeded" ? 100 : latestCloudProgress?.Progress ?? 0,
+                        latestCloudProgress?.Stage ?? (latestCloudImport.Status == "succeeded" ? "completed" : null),
+                        latestCloudProgress?.Message ?? latestCloudImport.Error,
+                        latestCloudProgress?.TimestampUtc ?? latestCloudImport.ImportedAtUtc ?? latestCloudImport.CreatedAtUtc,
+                        cloudProgressLogs,
+                        debugLogAvailable,
                         latestCloudImport,
                         latestCloudImport.Error);
                 var snapshot = new ApiRunSnapshot(
@@ -1072,6 +1116,13 @@ internal sealed class ApiRunState
     private int? cloudWaitRemainingSeconds;
     private ApiCloudImportRecord? cloudImport;
     private string? cloudError;
+    private readonly bool cloudDebugMode;
+    private int cloudProgress;
+    private string? cloudStage;
+    private string? cloudStageMessage;
+    private DateTimeOffset? cloudUpdatedAtUtc;
+    private readonly List<ApiCloudProgressEntry> cloudProgressLogs = [];
+    private bool cloudDebugLogAvailable;
 
     public ApiRunState(
         string operationId,
@@ -1092,7 +1143,11 @@ internal sealed class ApiRunState
         cloudDeviceName = cloudConfig?.DeviceName;
         cloudDelaySeconds = cloudConfig?.DelaySeconds;
         cloudQueryStartUtc = cloudConfig?.RequestedStartTime;
+        cloudDebugMode = cloudConfig?.DebugMode ?? false;
         cloudStatus = cloudRequested ? "pending" : "not_requested";
+        cloudStage = cloudRequested ? "pending" : null;
+        cloudStageMessage = cloudRequested ? "等待本地测试完成后启动云端日志获取。" : null;
+        cloudUpdatedAtUtc = cloudRequested ? startedAt : null;
         steps = packages.Select((value, index) => new ApiRunCapabilityStep(
             value.Manifest.CapabilityId,
             value.Manifest.DisplayNameZh ?? value.Manifest.DisplayName ?? value.Manifest.CapabilityId,
@@ -1184,7 +1239,13 @@ internal sealed class ApiRunState
             cloudQueryStartUtc = queryStartUtc;
             cloudStatus = "waiting";
             cloudWaitRemainingSeconds = cloudDelaySeconds;
-            AddLog(new ApiRunLogEntry(DateTimeOffset.UtcNow, "info", "cloud_export", $"本地测试已完成，等待 {cloudDelaySeconds ?? 0} 秒后获取云端日志。", null, true));
+            AddCloudProgressCore(new ApiCloudProgressEntry(
+                DateTimeOffset.UtcNow,
+                "info",
+                "waiting_ingestion",
+                $"本地测试已完成，等待 {cloudDelaySeconds ?? 0} 秒后获取云端日志。",
+                0,
+                false));
         }
     }
 
@@ -1192,7 +1253,10 @@ internal sealed class ApiRunState
     {
         lock (sync)
         {
-            if (cloudStatus == "waiting") cloudWaitRemainingSeconds = Math.Max(0, remainingSeconds);
+            if (cloudStatus != "waiting") return;
+            cloudWaitRemainingSeconds = Math.Max(0, remainingSeconds);
+            cloudStageMessage = $"剩余 {cloudWaitRemainingSeconds} 秒后启动浏览器导出。";
+            cloudUpdatedAtUtc = DateTimeOffset.UtcNow;
         }
     }
 
@@ -1203,11 +1267,26 @@ internal sealed class ApiRunState
             if (!cloudRequested) return;
             cloudStatus = "running";
             cloudWaitRemainingSeconds = null;
-            AddLog(new ApiRunLogEntry(DateTimeOffset.UtcNow, "info", "cloud_export", "正在登录 EDR 控制台并导出当前轮次的云端日志。", null, true));
+            AddCloudProgressCore(new ApiCloudProgressEntry(
+                DateTimeOffset.UtcNow,
+                "info",
+                "starting",
+                cloudDebugMode ? "正在启动可见浏览器并准备详细日志。" : "正在启动浏览器自动下载云端日志。",
+                1,
+                false));
         }
     }
 
-    public void CompleteCloudAcquisition(ApiCloudImportRecord import)
+    public void ApplyCloudProgress(ApiCloudProgressEntry update)
+    {
+        lock (sync)
+        {
+            if (!cloudRequested || cloudStatus is "succeeded" or "failed") return;
+            AddCloudProgressCore(update);
+        }
+    }
+
+    public void CompleteCloudAcquisition(ApiCloudImportRecord import, bool debugLogAvailable)
     {
         lock (sync)
         {
@@ -1215,14 +1294,28 @@ internal sealed class ApiRunState
             cloudStatus = import.Status;
             cloudError = import.Error;
             cloudWaitRemainingSeconds = null;
+            cloudDebugLogAvailable = debugLogAvailable;
             var succeeded = import.Status == "succeeded";
-            AddLog(new ApiRunLogEntry(
-                DateTimeOffset.UtcNow,
-                succeeded ? "info" : "warning",
-                "cloud_export",
-                succeeded ? $"云端日志已下载并绑定，共 {import.RecordCount ?? 0} 条事件。" : import.Error ?? "云端日志获取失败，可稍后手动导入。",
-                null,
-                true));
+            if (succeeded && cloudStage != "completed")
+            {
+                AddCloudProgressCore(new ApiCloudProgressEntry(
+                    DateTimeOffset.UtcNow,
+                    "info",
+                    "completed",
+                    $"云端日志已下载并绑定，共 {import.RecordCount ?? 0} 条事件。",
+                    100,
+                    false));
+            }
+            else if (!succeeded && (cloudProgressLogs.Count == 0 || cloudProgressLogs[^1].Level != "error"))
+            {
+                AddCloudProgressCore(new ApiCloudProgressEntry(
+                    DateTimeOffset.UtcNow,
+                    "error",
+                    cloudStage ?? "acquisition_error",
+                    import.Error ?? "云端日志获取失败，可稍后手动导入。",
+                    cloudProgress,
+                    false));
+            }
         }
     }
 
@@ -1234,7 +1327,13 @@ internal sealed class ApiRunState
             cloudStatus = "failed";
             cloudError = message;
             cloudWaitRemainingSeconds = null;
-            AddLog(new ApiRunLogEntry(DateTimeOffset.UtcNow, "warning", "cloud_export", message, null, true));
+            AddCloudProgressCore(new ApiCloudProgressEntry(
+                DateTimeOffset.UtcNow,
+                "error",
+                cloudStage ?? "coordinator_error",
+                message,
+                cloudProgress,
+                false));
         }
     }
 
@@ -1315,13 +1414,44 @@ internal sealed class ApiRunState
                 new ApiCloudAcquisitionSnapshot(
                     cloudRequested,
                     cloudStatus,
+                    cloudDebugMode,
                     cloudDeviceName,
                     cloudQueryStartUtc,
                     cloudDelaySeconds,
                     cloudWaitRemainingSeconds,
+                    cloudProgress,
+                    cloudStage,
+                    cloudStageMessage,
+                    cloudUpdatedAtUtc,
+                    cloudProgressLogs.ToArray(),
+                    cloudDebugLogAvailable,
                     cloudImport,
                     cloudError),
                 error);
+        }
+    }
+
+    private void AddCloudProgressCore(ApiCloudProgressEntry entry)
+    {
+        cloudProgress = Math.Clamp(Math.Max(cloudProgress, entry.Progress), 0, 100);
+        var normalized = entry with { Progress = cloudProgress };
+        if (!normalized.Detailed)
+        {
+            cloudStage = normalized.Stage;
+            cloudStageMessage = normalized.Message;
+        }
+        cloudUpdatedAtUtc = normalized.TimestampUtc;
+        cloudProgressLogs.Add(normalized);
+        if (cloudProgressLogs.Count > 250) cloudProgressLogs.RemoveRange(0, cloudProgressLogs.Count - 250);
+        if (!normalized.Detailed)
+        {
+            AddLog(new ApiRunLogEntry(
+                normalized.TimestampUtc,
+                normalized.Level,
+                $"cloud_export:{normalized.Stage}",
+                normalized.Message,
+                null,
+                true));
         }
     }
 

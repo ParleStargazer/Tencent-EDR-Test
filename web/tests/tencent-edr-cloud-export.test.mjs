@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { runTencentEdrExport, validateRequest } from "../automation/tencent-edr-cloud-export.mjs";
+import { buildLaunchOptions, runTencentEdrExport, validateRequest } from "../automation/tencent-edr-cloud-export.mjs";
 
 test("云端自动化请求只接受受限的本地 JSON 下载目标", () => {
   const target = join(tmpdir(), "edr-cloud.json");
@@ -17,8 +17,39 @@ test("云端自动化请求只接受受限的本地 JSON 下载目标", () => {
     timeout_ms: 30_000,
   });
   assert.equal(value.download_path, target);
+  assert.equal(value.debug_mode, false);
+  const debugValue = validateRequest({ ...value, debug_mode: true });
+  assert.equal(debugValue.debug_mode, true);
+  assert.equal(buildLaunchOptions(debugValue).headless, false);
+  assert.equal(buildLaunchOptions(debugValue, { headless: true }).headless, true);
+  assert.throws(() => validateRequest({ ...value, debug_mode: "true" }), /debug_mode 必须是布尔值/);
   assert.throws(() => validateRequest({ ...value, download_path: "relative.json" }), /绝对 JSON 文件路径/);
   assert.throws(() => validateRequest({ ...value, query_start_local: "2026/08/22" }), /yyyy-MM-dd HH:mm:ss/);
+});
+
+test("调试模式在 Edge 启动失败时保留阶段并脱敏异常", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "edr-cloud-launch-failure-"));
+  const events = [];
+  try {
+    await assert.rejects(runTencentEdrExport({
+      account: "child-user",
+      password: "secret-value",
+      device_name: "EDR-TEST-01",
+      query_start_local: "2026-08-22 09:10:11",
+      download_path: join(directory, "cloud.json"),
+      timeout_ms: 30_000,
+      debug_mode: true,
+    }, {
+      launch: async () => { throw new Error("secret-value launch failure for child-user"); },
+      onEvent: (event) => events.push(event),
+    }), /launch failure/);
+    assert.equal(events[0].stage, "launch_browser");
+    assert(events.some((event) => event.type === "debug" && event.stage === "automation_exception"));
+    assert(events.some((event) => event.type === "progress" && event.stage === "launch_browser" && event.level === "error"));
+    assert.doesNotMatch(JSON.stringify(events), /child-user|secret-value/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", async (context) => {
@@ -64,6 +95,7 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
   });
   const address = server.address();
   assert(address && typeof address === "object");
+  const events = [];
   try {
     try {
       const result = await runTencentEdrExport({
@@ -73,7 +105,8 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
         query_start_local: "2026-08-22 09:10:11",
         download_path: output,
         timeout_ms: 30_000,
-      }, { loginUrl: `http://127.0.0.1:${address.port}/`, channel: "msedge", headless: true });
+        debug_mode: true,
+      }, { loginUrl: `http://127.0.0.1:${address.port}/`, channel: "msedge", headless: true, onEvent: (event) => events.push(event) });
       assert.equal(result.status, "succeeded");
     } catch (error) {
       if (/Executable doesn.t exist|browserType\.launch|msedge/i.test(String(error))) {
@@ -85,6 +118,15 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
     const records = JSON.parse(await readFile(output, "utf8"));
     assert.equal(records.length, 1);
     assert.equal(records[0]["Action.Name"], "ProcessCreate");
+    const progressEvents = events.filter((event) => event.type === "progress");
+    assert.deepEqual(progressEvents.map((event) => event.stage), [
+      "launch_browser", "create_context", "open_login_page", "select_child_user", "fill_credentials",
+      "submit_login", "select_domain", "open_event_view", "apply_host_filter", "apply_time_filter",
+      "prepare_export", "wait_download", "save_download",
+    ]);
+    assert(progressEvents.every((event, index) => index === 0 || event.progress >= progressEvents[index - 1].progress));
+    assert(events.some((event) => event.type === "debug"));
+    assert.doesNotMatch(JSON.stringify(events), /child-user|secret-value/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await rm(directory, { recursive: true, force: true });

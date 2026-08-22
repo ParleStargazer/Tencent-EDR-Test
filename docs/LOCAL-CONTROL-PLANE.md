@@ -61,6 +61,7 @@ pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -SkipBuild
 | POST | `/api/runs/{id}/cancel` | 取消并触发 Runner 清理 |
 | GET | `/api/runs/{id}/local-export` | 下载 `local-run.json` |
 | GET | `/api/runs/{id}/cloud-imports` | 查询当前轮次中校验成功的自动导入记录 |
+| GET | `/api/runs/{id}/cloud-imports/{importId}/debug-log` | 下载当前轮次的脱敏云端自动化 JSONL 调试日志 |
 | POST | `/api/compare` | multipart 导入云端日志并执行比较 |
 | GET | `/api/comparisons/{comparison-id}/progress` | 查询逐能力比较进度和最近一项结论 |
 | GET | `/api/reports/{comparison-id}/result` | 下载结构化 JSON 验证结果 |
@@ -80,8 +81,8 @@ pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -SkipBuild
 - 单个上传文件上限 256 MB，仅接受 JSON/JSONL；
 - 用户导入文件写入 `import/<comparison-id>/`，报告写入 `reports/<comparison-id>/`；
 - `samples/`、`runs/`、`import/`、`reports/` 与 `.edr-test/` 均不纳入版本控制；
-- 平台不调用腾讯 EDR API；可选自动化仅由本机 Edge 模拟控制台操作。账号和密码只驻留当前后台任务内存，并通过标准输入交给浏览器进程，不进入命令行、环境变量、日志、数据库或运行制品。
+- 平台不调用腾讯 EDR API；可选自动化仅由本机 Edge 模拟控制台操作。账号和密码只驻留当前后台任务内存，并通过标准输入交给浏览器进程，不进入命令行、环境变量、数据库或运行制品；调试模式仅保存经过 Node/C# 双层凭据脱敏的结构化诊断事件。
 
 ## 5. 前端行为
 
-前端始终展示规范化的 16 个活动域和 53 项能力，并拆分为工作台 `/`、进行测试 `/test` 和离线比较 `/compare` 三个路由。只有 API 实际发现的能力包可勾选，其余项目显示“样本待实现”。包含 L2/L3 能力时必须在页面显式确认高风险执行。测试页轮询真实逐能力进度，显示串行步骤、等待倒计时、重点日志和 Controller stdout/stderr；用户可为当前轮次临时填写腾讯 EDR 子账号、密码、设备名、查询起始时间和下载延迟，本地测试终态与云端下载状态分别展示，云端失败不改变本地结论。比较页会发现所选轮次中校验成功的自动导入记录：单份自动选中，多份默认最新并允许切换，没有记录时继续使用手动导入；比较期间每完成一项能力立即更新进度。比较完成后展示总体结论及每条 BASELINE 要求的期望值、实际值和满足状态，每项能力还提供可切换候选块的本地/EDR JSON 对照悬浮窗。
+前端始终展示规范化的 16 个活动域和 53 项能力，并拆分为工作台 `/`、进行测试 `/test` 和离线比较 `/compare` 三个路由。只有 API 实际发现的能力包可勾选，其余项目显示“样本待实现”。包含 L2/L3 能力时必须在页面显式确认高风险执行。测试页轮询真实逐能力进度，显示串行步骤、等待倒计时、重点日志和 Controller stdout/stderr；云端自动导入另有独立的百分比、当前阶段、阶段说明和最近事件。用户可启用可见 Edge 调试模式，在页面查看浏览器详细事件，并在终态下载本轮脱敏 JSONL；本地测试终态与云端下载状态分别展示，云端失败不改变本地结论。比较页会发现所选轮次中校验成功的自动导入记录：单份自动选中，多份默认最新并允许切换，没有记录时继续使用手动导入；比较期间每完成一项能力立即更新进度。比较完成后展示总体结论及每条 BASELINE 要求的期望值、实际值和满足状态，每项能力还提供可切换候选块的本地/EDR JSON 对照悬浮窗。

@@ -19,9 +19,22 @@
 2. 登录密码；
 3. 设备名称，默认使用本机计算机名；
 4. 可选日志起始时间，留空时使用轮次开始时间前 10 秒；
-5. 测试结束后等待时间，默认 30 秒，范围 0–3600 秒。
+5. 测试结束后等待时间，默认 30 秒，范围 0–3600 秒；
+6. 可选“调试模式（浏览器界面可见）”。启用后使用可见 Edge，页面实时展示详细自动化事件，并在本轮目录保存完整的脱敏 JSONL 调试日志。
 
-本地测试完成后，页面独立显示 `等待云端日志入库 → 正在自动下载 → 已自动绑定/云端日志获取失败`。账号和密码在轮次创建成功后从前端状态清空。设备名、手动起始时间和凭据都不写入浏览器本地存储。
+本地测试完成后，页面独立显示 `等待云端日志入库 → 正在自动获取 → 已自动绑定/云端日志获取失败`。云端区域包含 0–100% 进度条、当前阶段、阶段说明、更新时间和最近事件；每次进入新的阻塞操作前都会先上报阶段，因此长时间不动时可以直接判断卡在登录、筛选、导出还是文件校验。账号和密码在轮次创建成功后从前端状态清空。设备名、手动起始时间、调试开关和凭据都不写入浏览器本地存储。
+
+进度单调递增，主要检查点如下：
+
+| 进度 | 阶段 | 含义 |
+|---:|---|---|
+| 0–8% | `waiting_ingestion` / `prepare_import` / `runtime_ready` / `start_automation_process` | 等待 EDR 入库，创建当前轮次目录并检查 Node.js、Playwright 和自动化脚本 |
+| 10–42% | `launch_browser` → `submit_login` | 启动 Edge、创建隔离上下文、打开登录页、填写并提交登录表单 |
+| 48–71% | `select_domain` → `apply_time_filter` | 处理域选择，进入全部事件，应用主机和采集时间筛选 |
+| 79–91% | `prepare_export` → `save_download` | 选择全部字段与 JSON，等待下载并保存到当前轮次 |
+| 94–100% | `validate_download` → `completed` | 校验 JSON/大小/SHA-256、生成 manifest、绑定导入记录 |
+
+如果某一步失败，进度停留在最后完成的百分比，当前阶段保留失败位置，并追加 `acquisition_error` 或对应阶段的错误事件，不会伪造 100%。
 
 在“离线比较”页选择本地轮次后，平台读取该 run 下解析成功的云端导入：
 
@@ -45,7 +58,9 @@
 
 生产脚本使用 `playwright-core` 驱动系统已安装的 Edge (`channel: msedge`)。定位器以参考页面的中文可访问名称为主，并为部分腾讯组件提供文本回退；若页面语义发生变化，自动化会停止并返回稳定错误码，不会尝试模糊点击未知控件。
 
-腾讯云可能要求验证码、MFA 或风险验证。当前版本采用无头浏览器，不绕过这些验证；遇到交互式验证时应使用手动导出。平台也不会保存登录态供下一轮复用。
+腾讯云可能要求验证码、MFA 或风险验证。常规模式采用无头浏览器，不绕过这些验证；调试模式会打开可见 Edge，用户可以在当前自动化超时范围内完成交互式验证并观察页面状态。平台不会保存登录态供下一轮复用；若仍无法完成，应使用手动导出。
+
+调试模式除常规进度外，还采集浏览器控制台警告/错误、页面脚本异常、失败请求和 HTTP 4xx/5xx。网络事件只记录请求方法、资源类型、失败原因、状态码和来源 origin，不保存完整 URL、请求头、Cookie 或正文；内存快照和前端展示限制条数，单条落盘消息限制长度，避免页面噪声无限占用运行内存。
 
 ## 4. 凭据与日志安全
 
@@ -53,10 +68,11 @@
 
 - 前端仅在内存状态中持有输入，API 接受轮次后立即清空账号和密码；
 - 后端只在当前后台任务对象中持有凭据，任务结束的 `finally` 会清空字符串引用；
-- 后端通过 Node 子进程标准输入传递 JSON 请求，不把账号或密码放入命令行参数、环境变量或文件；
-- 自动化脚本的标准错误只输出固定步骤标记，后端只排空、不保存页面内容；
-- `ApiRunSnapshot`、`cloud-import.json`、manifest、SQLite、本地导出和失败信息均没有账号/密码字段；
-- 错误消息由稳定的本地文案生成，不回显页面、账号、密码或请求正文。
+- 后端通过 Node 子进程标准输入传递 JSON 请求，不把账号或密码放入命令行参数、环境变量或请求文件；
+- Node 的标准错误使用逐行结构化事件协议；后端解析后更新轮次进度，调试模式下同时追加到 JSONL；
+- Node 和 C# 两层都会将本轮账号、密码替换为 `[REDACTED]`；Node 还会遮蔽常见的 password、authorization、cookie、token 值，C# 落盘前再次执行精确凭据脱敏，单条消息最多保留 4096 个字符；
+- 浏览器事件不采集请求头、响应正文、Cookie、页面 DOM、截图或 trace；
+- `ApiRunSnapshot`、`cloud-import.json`、manifest、SQLite 和本地导出均没有账号/密码字段；失败信息也经过同一脱敏器后才进入页面或日志。
 
 这是应用层的最小化措施，不等同于操作系统秘密保险库。运行期间，凭据仍会存在于当前进程内存和登录页面 DOM 中；测试机应保持隔离并遵守腾讯云账号安全策略。
 
@@ -68,18 +84,22 @@
 runs/<date>/<run-id>/
 ├─ export/local-run.json
 └─ import/cloud/<import-id>/
-   ├─ cloud.json              # 下载成功后存在
-   ├─ cloud-manifest.json     # 下载且解析成功后存在
-   └─ cloud-import.json       # 成功/失败状态及完整性摘要
+   ├─ cloud.json                         # 下载成功后存在
+   ├─ cloud-manifest.json                # 下载且解析成功后存在
+   ├─ cloud-import.json                  # 成功/失败状态及完整性摘要
+   └─ cloud-automation-debug.jsonl       # 仅调试模式，成功或失败均尽量保留
 ```
 
 `cloud-import.json` 遵循 `schemas/cloud-import-record.schema.json`。成功记录保存格式、记录数、文件大小和 SHA-256；离线比较解析绑定时会重新计算这些值，任一不一致都拒绝使用。manifest 沿用 `schemas/cloud-export-manifest.schema.json`，记录查询窗口、设备筛选和源文件摘要。
 
+调试 JSONL 每行是一条 `ApiCloudProgressEntry`，包含 UTC 时间、级别、阶段、说明、累计百分比和 `detailed` 标记。API 内存快照仅保留最近 250 条，浏览器页面在调试模式显示最近 80 条，但 JSONL 保留本轮写入的完整序列；历史轮次重新打开时会从文件恢复最近 250 条。该文件不改变 `cloud-import.json` schema，也不参与离线比较。
+
 ## 6. 本地 API
 
-- `POST /api/runs`：可选 `cloud_automation` 对象；凭据仅用于该后台轮次。
-- `GET /api/runs/{operationId}`：`cloud_acquisition` 独立报告请求、等待、运行、成功或失败状态。
+- `POST /api/runs`：可选 `cloud_automation` 对象；`debug_mode: true` 启用可见浏览器和详细日志，凭据仅用于该后台轮次。
+- `GET /api/runs/{operationId}`：`cloud_acquisition` 独立报告状态，并返回 `progress`、`stage`、`stage_message`、`updated_at_utc`、最近 `logs`、`debug_mode` 和 `debug_log_available`。
 - `GET /api/runs/{operationId}/cloud-imports`：按导入时间倒序列出该 run 的绑定记录。
+- `GET /api/runs/{operationId}/cloud-imports/{importId}/debug-log`：仅在对应调试文件存在且导入记录属于该轮次时下载 JSONL；不接受任意文件路径。
 - `POST /api/compare`：继续支持 `cloud_file`；也支持 `operation_id + cloud_import_id`，两种来源互斥。
 
 自动绑定比较会使用同目录 `cloud-manifest.json`，不允许再上传另一份 manifest。手动导入保持原行为，文件保存到 Git 忽略的中央 `import/<comparison-id>/`。
@@ -99,4 +119,11 @@ pnpm test
 Pop-Location
 ```
 
-若前端显示“自动化运行时不可用”，重新运行 `pnpm install --frozen-lockfile` 或直接使用一键启动脚本。若显示“云端日志获取失败”，先确认网络、腾讯云登录/MFA、设备名和页面字段，再使用手动导出作为回退；失败不会要求重跑本地能力测试。
+若前端显示“自动化运行时不可用”，重新运行 `pnpm install --frozen-lockfile` 或直接使用一键启动脚本。若进度长时间不变：
+
+1. 先看当前阶段和最后一条常规事件，确认卡在登录、筛选、等待下载还是校验；
+2. 下一轮启用“调试模式（浏览器界面可见）”，直接观察 Edge，并查看页面中的详细事件；
+3. 轮次成功或失败后点击“下载调试日志”，按时间查找最后一个 `detailed: false` 主阶段及其后的 warning/error；
+4. 若涉及腾讯云登录/MFA、设备名或页面字段变化，修正后重试云端获取，或使用手动导出回退。本地能力测试结果已经封存，不需要重跑。
+
+调试日志可能包含腾讯云页面和网络故障诊断信息，即使已做凭据脱敏，也应按内部测试数据管理，不要公开上传。

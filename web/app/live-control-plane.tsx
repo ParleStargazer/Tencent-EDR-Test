@@ -117,12 +117,28 @@ type ApiCloudImport = {
 type ApiCloudAcquisition = {
   requested: boolean;
   status: "not_requested" | "pending" | "waiting" | "running" | "succeeded" | "failed";
+  debug_mode: boolean;
   device_name?: string;
   query_start_utc?: string;
   delay_seconds?: number;
   wait_remaining_seconds?: number;
+  progress: number;
+  stage?: string;
+  stage_message?: string;
+  updated_at_utc?: string;
+  logs: ApiCloudProgressEntry[];
+  debug_log_available: boolean;
   import?: ApiCloudImport;
   error?: string;
+};
+
+type ApiCloudProgressEntry = {
+  timestamp_utc: string;
+  level: "trace" | "debug" | "info" | "warning" | "error" | "critical";
+  stage: string;
+  message: string;
+  progress: number;
+  detailed: boolean;
 };
 
 type ApiRun = {
@@ -478,7 +494,7 @@ function runStatusLabel(status: RunStatus): string {
 
 function cloudStatusLabel(status?: ApiCloudAcquisition["status"]): string {
   if (!status || status === "not_requested") return "未启用";
-  return { pending: "等待本地测试", waiting: "等待云端日志入库", running: "正在自动下载", succeeded: "已自动绑定", failed: "云端日志获取失败" }[status];
+  return { pending: "等待本地测试", waiting: "等待云端日志入库", running: "正在自动获取", succeeded: "已自动绑定", failed: "云端日志获取失败" }[status];
 }
 
 function validationStatusLabel(status: ValidationStatus): string {
@@ -586,6 +602,7 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
   const [allowHighRisk, setAllowHighRisk] = useState(false);
   const [cloudAutomationAvailable, setCloudAutomationAvailable] = useState(false);
   const [cloudAutomationEnabled, setCloudAutomationEnabled] = useState(false);
+  const [cloudDebugMode, setCloudDebugMode] = useState(false);
   const [cloudAccount, setCloudAccount] = useState("");
   const [cloudPassword, setCloudPassword] = useState("");
   const [cloudDeviceName, setCloudDeviceName] = useState("");
@@ -760,6 +777,7 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
             device_name: cloudAutomationEnabled ? cloudDeviceName.trim() : undefined,
             log_start_time: cloudAutomationEnabled && cloudStartTime ? new Date(cloudStartTime).toISOString() : undefined,
             delay_seconds: cloudDelaySeconds,
+            debug_mode: cloudDebugMode,
           },
         }),
       });
@@ -788,6 +806,19 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
       downloadBlob(`${run.run_id ?? run.operation_id}-local-run.json`, await apiDownload(`/runs/${run.operation_id}/local-export`));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "下载本地结果失败。");
+    }
+  }
+
+  async function downloadCloudDebugLog(run: ApiRun) {
+    const cloudImport = run.cloud_acquisition.import;
+    if (!cloudImport || !run.cloud_acquisition.debug_log_available) {
+      setNotice("当前轮次没有可下载的云端自动化调试日志。");
+      return;
+    }
+    try {
+      downloadBlob(`${cloudImport.import_id}-cloud-automation-debug.jsonl`, await apiDownload(`/runs/${run.operation_id}/cloud-imports/${cloudImport.import_id}/debug-log`));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "下载云端调试日志失败。");
     }
   }
 
@@ -925,13 +956,13 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
         {view === "test" && <TestWorkspace
           apiState={apiState} availableIds={availableIds} administratorRequiredIds={administratorRequiredIds} selectedIds={selectedIds} activeRun={activeRun} recentRuns={recentRuns}
           runName={runName} environment={environment} nextDelay={nextDelay} allowHighRisk={allowHighRisk} selectedRisk={selectedRisk} hasHighRisk={hasHighRisk}
-          cloudAutomationAvailable={cloudAutomationAvailable} cloudAutomationEnabled={cloudAutomationEnabled} cloudAccount={cloudAccount} cloudPassword={cloudPassword}
+          cloudAutomationAvailable={cloudAutomationAvailable} cloudAutomationEnabled={cloudAutomationEnabled} cloudDebugMode={cloudDebugMode} cloudAccount={cloudAccount} cloudPassword={cloudPassword}
           cloudDeviceName={cloudDeviceName} cloudStartTime={cloudStartTime} cloudDelaySeconds={cloudDelaySeconds}
           onRunName={setRunName} onEnvironment={setEnvironment} onNextDelay={setNextDelay} onAllowHighRisk={setAllowHighRisk}
-          onCloudAutomationEnabled={setCloudAutomationEnabled} onCloudAccount={setCloudAccount} onCloudPassword={setCloudPassword}
+          onCloudAutomationEnabled={setCloudAutomationEnabled} onCloudDebugMode={setCloudDebugMode} onCloudAccount={setCloudAccount} onCloudPassword={setCloudPassword}
           onCloudDeviceName={setCloudDeviceName} onCloudStartTime={setCloudStartTime} onCloudDelaySeconds={setCloudDelaySeconds}
           onToggle={toggleCapability} onSelectAll={() => setSelectedIds([...availableIds])} onClear={() => setSelectedIds([])}
-          onStart={() => void startRun()} onCancel={() => void cancelRun()} onDownload={(run) => void downloadLocalExport(run)} onInspect={setActiveRun} onRefresh={() => void refreshRuns()}
+          onStart={() => void startRun()} onCancel={() => void cancelRun()} onDownload={(run) => void downloadLocalExport(run)} onDownloadCloudDebugLog={(run) => void downloadCloudDebugLog(run)} onInspect={setActiveRun} onRefresh={() => void refreshRuns()}
         />}
         {view === "compare" && <CompareWorkspace
           apiState={apiState} baselines={baselines} mappings={mappings} mappingId={mappingId} onMappingId={setMappingId}
@@ -999,12 +1030,12 @@ function Overview({ apiState, capabilities, baselines, recentRuns }: { apiState:
 type TestWorkspaceProps = {
   apiState: ApiState; availableIds: Set<string>; administratorRequiredIds: Set<string>; selectedIds: string[]; activeRun: ApiRun | null; recentRuns: ApiRun[];
   runName: string; environment: string; nextDelay: number; allowHighRisk: boolean; selectedRisk: string; hasHighRisk: boolean;
-  cloudAutomationAvailable: boolean; cloudAutomationEnabled: boolean; cloudAccount: string; cloudPassword: string; cloudDeviceName: string; cloudStartTime: string; cloudDelaySeconds: number;
+  cloudAutomationAvailable: boolean; cloudAutomationEnabled: boolean; cloudDebugMode: boolean; cloudAccount: string; cloudPassword: string; cloudDeviceName: string; cloudStartTime: string; cloudDelaySeconds: number;
   onRunName: (value: string) => void; onEnvironment: (value: string) => void; onNextDelay: (value: number) => void; onAllowHighRisk: (value: boolean) => void;
-  onCloudAutomationEnabled: (value: boolean) => void; onCloudAccount: (value: string) => void; onCloudPassword: (value: string) => void;
+  onCloudAutomationEnabled: (value: boolean) => void; onCloudDebugMode: (value: boolean) => void; onCloudAccount: (value: string) => void; onCloudPassword: (value: string) => void;
   onCloudDeviceName: (value: string) => void; onCloudStartTime: (value: string) => void; onCloudDelaySeconds: (value: number) => void;
   onToggle: (id: string) => void; onSelectAll: () => void; onClear: () => void; onStart: () => void; onCancel: () => void;
-  onDownload: (run: ApiRun) => void; onInspect: (run: ApiRun) => void; onRefresh: () => void;
+  onDownload: (run: ApiRun) => void; onDownloadCloudDebugLog: (run: ApiRun) => void; onInspect: (run: ApiRun) => void; onRefresh: () => void;
 };
 
 function TestWorkspace(props: TestWorkspaceProps) {
@@ -1036,26 +1067,52 @@ function TestWorkspace(props: TestWorkspaceProps) {
           <div className="serial-note"><strong>执行规则</strong><p>前一项完成并写入 SQLite 后，才会开始等待倒计时；倒计时结束后再启动下一项。</p></div>
           <section className={`cloud-automation-card ${props.cloudAutomationEnabled ? "enabled" : ""}`}>
             <label className="cloud-automation-toggle"><input type="checkbox" checked={props.cloudAutomationEnabled} disabled={!props.cloudAutomationAvailable} onChange={(event) => props.onCloudAutomationEnabled(event.target.checked)} /><span><strong>测试后自动下载并导入云端日志</strong><em>{props.cloudAutomationAvailable ? "通过本机 Edge 登录腾讯 EDR 控制台" : "自动化运行时不可用，请重新安装前端依赖"}</em></span></label>
-            {props.cloudAutomationEnabled && <div className="cloud-automation-fields"><label className="field-label">腾讯云子账号<input type="text" value={props.cloudAccount} autoComplete="off" maxLength={512} onChange={(event) => props.onCloudAccount(event.target.value)} /><span className="field-help">仅用于本轮，提交后立即从前端清除。</span></label><label className="field-label">登录密码<input type="password" value={props.cloudPassword} autoComplete="new-password" maxLength={4096} onChange={(event) => props.onCloudPassword(event.target.value)} /><span className="field-help">通过标准输入交给浏览器进程，不写入配置或日志。</span></label><label className="field-label">设备名称<input type="text" value={props.cloudDeviceName} maxLength={255} onChange={(event) => props.onCloudDeviceName(event.target.value)} /><span className="field-help">默认当前计算机名；手动修改值不会保存。</span></label><label className="field-label">日志起始时间（可选）<input type="datetime-local" step="1" value={props.cloudStartTime} onChange={(event) => props.onCloudStartTime(event.target.value)} /><span className="field-help">留空时取本轮开始时间前 10 秒。</span></label><label className="field-label">测试结束后等待（秒）<input type="number" min="0" max="3600" step="1" value={props.cloudDelaySeconds} onChange={(event) => props.onCloudDelaySeconds(Math.min(3600, Math.max(0, Number(event.target.value) || 0)))} /><span className="field-help">默认 30 秒，等待 EDR 云端完成入库。</span></label></div>}
+            {props.cloudAutomationEnabled && <div className="cloud-automation-fields">
+              <label className="cloud-debug-toggle"><input type="checkbox" checked={props.cloudDebugMode} onChange={(event) => props.onCloudDebugMode(event.target.checked)} /><span><strong>调试模式（浏览器界面可见）</strong><em>打开可见 Edge，实时展示详细自动化事件，并将脱敏日志保存到本轮目录。</em></span></label>
+              <label className="field-label">腾讯云子账号<input type="text" value={props.cloudAccount} autoComplete="off" maxLength={512} onChange={(event) => props.onCloudAccount(event.target.value)} /><span className="field-help">仅用于本轮，提交后立即从前端清除。</span></label>
+              <label className="field-label">登录密码<input type="password" value={props.cloudPassword} autoComplete="new-password" maxLength={4096} onChange={(event) => props.onCloudPassword(event.target.value)} /><span className="field-help">通过标准输入交给浏览器进程，不写入配置或日志。</span></label>
+              <label className="field-label">设备名称<input type="text" value={props.cloudDeviceName} maxLength={255} onChange={(event) => props.onCloudDeviceName(event.target.value)} /><span className="field-help">默认当前计算机名；手动修改值不会保存。</span></label>
+              <label className="field-label">日志起始时间（可选）<input type="datetime-local" step="1" value={props.cloudStartTime} onChange={(event) => props.onCloudStartTime(event.target.value)} /><span className="field-help">留空时取本轮开始时间前 10 秒。</span></label>
+              <label className="field-label">测试结束后等待（秒）<input type="number" min="0" max="3600" step="1" value={props.cloudDelaySeconds} onChange={(event) => props.onCloudDelaySeconds(Math.min(3600, Math.max(0, Number(event.target.value) || 0)))} /><span className="field-help">默认 30 秒，等待 EDR 云端完成入库。</span></label>
+            </div>}
           </section>
           {props.hasHighRisk && <label className="risk-confirm"><input type="checkbox" checked={props.allowHighRisk} onChange={(event) => props.onAllowHighRisk(event.target.checked)} /><span>我确认在隔离测试机执行 L2/L3 高风险样本</span></label>}
           <button className="primary-button" type="button" onClick={props.onStart} disabled={props.apiState !== "online" || Boolean(activeRun && shouldPollRun(activeRun))}>{activeRun && shouldPollRun(activeRun) ? "轮次处理中" : "启动本轮测试"}<span aria-hidden="true">→</span></button>
         </div>
       </section>
     </div>
-    <RunProgressPanel run={activeRun} onCancel={props.onCancel} onDownload={props.onDownload} />
+    <RunProgressPanel run={activeRun} onCancel={props.onCancel} onDownload={props.onDownload} onDownloadCloudDebugLog={props.onDownloadCloudDebugLog} />
     <RunLogPanel key={activeRun?.operation_id ?? "empty-run"} run={activeRun} />
     <RunHistory runs={props.recentRuns} onInspect={props.onInspect} onDownload={props.onDownload} onRefresh={props.onRefresh} />
   </>;
 }
 
-function RunProgressPanel({ run, onCancel, onDownload }: { run: ApiRun | null; onCancel: () => void; onDownload: (run: ApiRun) => void }) {
+function RunProgressPanel({ run, onCancel, onDownload, onDownloadCloudDebugLog }: { run: ApiRun | null; onCancel: () => void; onDownload: (run: ApiRun) => void; onDownloadCloudDebugLog: (run: ApiRun) => void }) {
   return <section className="panel progress-panel"><div className="panel-heading"><div><p className="section-index">C / 测试进度</p><h2>{run ? run.phase : "等待测试开始"}</h2></div>{run && <span className="line-badge">{run.progress}%</span>}</div>
     {run ? <><div className="progress-track large"><span style={{ width: `${run.progress}%` }} /></div><div className="run-progress-meta"><span>已完成 {run.completed_capabilities}/{run.capability_ids.length}</span><span>{run.wait_remaining_seconds ? `下一项将在 ${run.wait_remaining_seconds} 秒后开始` : "能力严格串行执行"}</span><span>{run.database_name ?? "正在创建独立 SQLite"}</span></div>
-      {run.cloud_acquisition?.requested && <div className={`cloud-acquisition-state ${run.cloud_acquisition.status}`}><div><span>云端日志</span><strong>{cloudStatusLabel(run.cloud_acquisition.status)}</strong></div><p>{run.cloud_acquisition.status === "waiting" ? `剩余 ${run.cloud_acquisition.wait_remaining_seconds ?? 0} 秒后启动浏览器导出` : run.cloud_acquisition.import?.status === "succeeded" ? `已绑定 ${run.cloud_acquisition.import.record_count ?? 0} 条事件 · ${run.cloud_acquisition.import.device_name}` : run.cloud_acquisition.error ?? `筛选设备：${run.cloud_acquisition.device_name ?? "—"}`}</p></div>}
+      {run.cloud_acquisition?.requested && <CloudAcquisitionPanel acquisition={run.cloud_acquisition} onDownloadDebugLog={() => onDownloadCloudDebugLog(run)} />}
       <ol className="step-timeline">{run.steps.map((step) => <li className={step.status} key={step.capability_id}><span className="step-marker">{step.sequence}</span><div><strong>{step.name_zh}</strong><span>{step.status_label}</span></div>{run.current_capability_id === step.capability_id && <em>{run.wait_remaining_seconds ? "等待中" : "当前"}</em>}</li>)}</ol>
       <div className="run-actions">{isActive(run.status) && <button className="danger-button" type="button" onClick={onCancel}>取消并清理</button>}{run.local_export_available && <button className="secondary-button" type="button" onClick={() => onDownload(run)}>下载本地结果</button>}</div>{run.error && <p className="api-error">{run.error}</p>}</>
       : <div className="empty-state"><span className="empty-glyph" aria-hidden="true">＋</span><p>启动轮次后，这里会逐项显示等待、执行和完成状态</p></div>}
+  </section>;
+}
+
+function CloudAcquisitionPanel({ acquisition, onDownloadDebugLog }: { acquisition: ApiCloudAcquisition; onDownloadDebugLog: () => void }) {
+  const visibleLogs = (acquisition.debug_mode ? acquisition.logs : acquisition.logs.filter((entry) => !entry.detailed)).slice(acquisition.debug_mode ? -80 : -12);
+  const summary = acquisition.status === "waiting"
+    ? `剩余 ${acquisition.wait_remaining_seconds ?? 0} 秒后启动浏览器导出`
+    : acquisition.import?.status === "succeeded"
+      ? `已绑定 ${acquisition.import.record_count ?? 0} 条事件 · ${acquisition.import.device_name}`
+      : acquisition.error ?? `筛选设备：${acquisition.device_name ?? "—"}`;
+  return <section className={`cloud-acquisition-state ${acquisition.status} ${acquisition.debug_mode ? "debug" : ""}`} aria-label="云端日志导入进度">
+    <div className="cloud-acquisition-heading"><div><span>云端日志</span><strong>{cloudStatusLabel(acquisition.status)}</strong></div><div className="cloud-acquisition-badges"><em>{acquisition.debug_mode ? "调试模式" : "常规模式"}</em><b>{acquisition.progress}%</b></div></div>
+    <div className="cloud-progress-track" role="progressbar" aria-label="云端日志导入进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={acquisition.progress}><span style={{ width: `${acquisition.progress}%` }} /></div>
+    <div className="cloud-current-stage"><code>{acquisition.stage ?? "pending"}</code><p>{acquisition.stage_message ?? summary}</p><time>{formatTime(acquisition.updated_at_utc)}</time></div>
+    <p className="cloud-acquisition-summary">{summary}</p>
+    <div className={`cloud-progress-log ${acquisition.debug_mode ? "debug" : ""}`} aria-label={acquisition.debug_mode ? "云端导入详细调试日志" : "云端导入阶段日志"}>
+      {visibleLogs.length ? visibleLogs.map((entry, index) => <div className={`cloud-progress-entry ${entry.level}`} key={`${entry.timestamp_utc}-${entry.stage}-${index}`}><time>{formatTime(entry.timestamp_utc)}</time><span>{entry.progress}%</span><code>{entry.stage}</code><p>{entry.message}</p></div>) : <p className="cloud-log-empty">等待云端导入输出运行阶段…</p>}
+    </div>
+    {acquisition.debug_mode && <div className="cloud-debug-footer"><p>详细日志已脱敏；完成或失败后可下载本轮完整 JSONL。</p>{acquisition.debug_log_available && <button type="button" className="secondary-button" onClick={onDownloadDebugLog}>下载调试日志</button>}</div>}
   </section>;
 }
 

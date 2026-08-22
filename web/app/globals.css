@@ -1570,14 +1570,54 @@ tbody tr:last-child td { border-bottom: 0; }
 .cloud-automation-toggle em { margin-top: 4px; color: var(--quiet); font-size: 9px; font-style: normal; line-height: 1.5; }
 .cloud-automation-toggle:has(input:disabled) { cursor: not-allowed; opacity: 0.68; }
 .cloud-automation-fields { display: grid; gap: 12px; padding: 13px; border-top: 1px solid var(--line); }
-.cloud-acquisition-state { display: grid; grid-template-columns: minmax(150px, 0.45fr) minmax(0, 1.55fr); gap: 14px; align-items: center; margin: 0 20px 14px; padding: 11px 13px; border-left: 3px solid #496781; background: #f3f7fa; }
+.cloud-debug-toggle { display: flex; gap: 10px; align-items: flex-start; padding: 11px 12px; border: 1px solid #9fbfb4; background: #eaf5f1; cursor: pointer; }
+.cloud-debug-toggle input { margin-top: 2px; accent-color: var(--accent); }
+.cloud-debug-toggle span,
+.cloud-debug-toggle strong,
+.cloud-debug-toggle em { display: block; }
+.cloud-debug-toggle strong { font-size: 10px; }
+.cloud-debug-toggle em { margin-top: 4px; color: var(--muted); font-size: 9px; font-style: normal; line-height: 1.55; }
+.cloud-acquisition-state { margin: 0 20px 14px; padding: 13px; border-left: 3px solid #496781; background: #f3f7fa; }
 .cloud-acquisition-state.succeeded { border-left-color: var(--accent); background: var(--accent-soft); }
 .cloud-acquisition-state.failed { border-left-color: var(--danger); background: #fff5f4; }
-.cloud-acquisition-state span,
-.cloud-acquisition-state strong { display: block; }
-.cloud-acquisition-state span { color: var(--quiet); font-size: 8px; letter-spacing: 0.08em; }
-.cloud-acquisition-state strong { margin-top: 3px; font-size: 11px; }
-.cloud-acquisition-state p { min-width: 0; color: var(--muted); font-size: 9px; overflow-wrap: anywhere; }
+.cloud-acquisition-heading { display: flex; gap: 14px; align-items: center; justify-content: space-between; }
+.cloud-acquisition-heading span,
+.cloud-acquisition-heading strong { display: block; }
+.cloud-acquisition-heading span { color: var(--quiet); font-size: 8px; letter-spacing: 0.08em; }
+.cloud-acquisition-heading strong { margin-top: 3px; font-size: 11px; }
+.cloud-acquisition-badges { display: flex; gap: 8px; align-items: center; }
+.cloud-acquisition-badges em { padding: 3px 6px; border: 1px solid #a8bab3; color: var(--muted); font-size: 8px; font-style: normal; }
+.cloud-acquisition-badges b { color: #315b4d; font-family: Consolas, monospace; font-size: 11px; }
+.cloud-progress-track { height: 7px; overflow: hidden; margin-top: 11px; border: 1px solid #c4d2cd; background: #e4ebe8; }
+.cloud-progress-track > span { display: block; height: 100%; background: linear-gradient(90deg, #315b4d, #64ad92); transition: width 180ms ease; }
+.cloud-current-stage { display: grid; grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr) auto; gap: 10px; align-items: start; margin-top: 10px; }
+.cloud-current-stage code { color: #315b4d; font-family: Consolas, monospace; font-size: 9px; overflow-wrap: anywhere; }
+.cloud-current-stage p,
+.cloud-acquisition-summary { min-width: 0; color: var(--muted); font-size: 9px; line-height: 1.55; overflow-wrap: anywhere; }
+.cloud-current-stage time { color: var(--quiet); font-family: Consolas, monospace; font-size: 8px; white-space: nowrap; }
+.cloud-acquisition-summary { margin-top: 6px; }
+.cloud-progress-log { max-height: 180px; overflow: auto; margin-top: 11px; border: 1px solid #cbd7d2; background: rgba(255, 255, 255, 0.66); scrollbar-gutter: stable; }
+.cloud-progress-log.debug { max-height: 300px; background: #111c18; color: #d7e3df; }
+.cloud-progress-entry { display: grid; grid-template-columns: 58px 34px minmax(110px, 0.28fr) minmax(0, 1fr); gap: 8px; align-items: start; padding: 7px 9px; border-bottom: 1px solid rgba(130, 153, 145, 0.24); font-family: Consolas, monospace; font-size: 8px; line-height: 1.55; }
+.cloud-progress-entry:last-child { border-bottom: 0; }
+.cloud-progress-entry time,
+.cloud-progress-entry > span { color: var(--quiet); white-space: nowrap; }
+.cloud-progress-entry code { color: #315b4d; font: inherit; overflow-wrap: anywhere; }
+.cloud-progress-entry p { min-width: 0; color: var(--muted); font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cloud-progress-log.debug .cloud-progress-entry time,
+.cloud-progress-log.debug .cloud-progress-entry > span { color: #71847d; }
+.cloud-progress-log.debug .cloud-progress-entry code { color: #79c9aa; }
+.cloud-progress-log.debug .cloud-progress-entry p { color: #d7e3df; }
+.cloud-progress-entry.warning code,
+.cloud-progress-entry.warning p { color: #a56b17; }
+.cloud-progress-entry.error code,
+.cloud-progress-entry.error p,
+.cloud-progress-entry.critical code,
+.cloud-progress-entry.critical p { color: #c7574a; }
+.cloud-log-empty { padding: 12px; color: var(--quiet); font-size: 9px; }
+.cloud-debug-footer { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-top: 10px; }
+.cloud-debug-footer p { color: var(--quiet); font-size: 8px; }
+.cloud-debug-footer .secondary-button { flex: 0 0 auto; padding: 7px 10px; }
 .cloud-import-binding { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(220px, 0.75fr); gap: 14px; align-items: stretch; margin: 0 20px 20px; padding: 14px; border: 1px solid var(--line); background: #fafbfa; }
 .cloud-import-binding.selected { border-color: #9fbfb4; background: #f1f8f5; }
 .cloud-import-summary { display: grid; align-content: center; min-width: 0; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--panel); }
