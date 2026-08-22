@@ -34,6 +34,40 @@ function Test-PortAvailable([int]$Port) {
     }
 }
 
+function ConvertTo-NativeArgument([AllowEmptyString()][string]$Value) {
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
+
+    $result = [System.Text.StringBuilder]::new()
+    [void]$result.Append([char]'"')
+    $backslashCount = 0
+    foreach ($character in $Value.ToCharArray()) {
+        if ($character -eq [char]'\') {
+            $backslashCount++
+            continue
+        }
+        if ($character -eq [char]'"') {
+            [void]$result.Append([char]'\', (($backslashCount * 2) + 1))
+            [void]$result.Append([char]'"')
+            $backslashCount = 0
+            continue
+        }
+        if ($backslashCount -gt 0) {
+            [void]$result.Append([char]'\', $backslashCount)
+            $backslashCount = 0
+        }
+        [void]$result.Append($character)
+    }
+    if ($backslashCount -gt 0) {
+        [void]$result.Append([char]'\', ($backslashCount * 2))
+    }
+    [void]$result.Append([char]'"')
+    return $result.ToString()
+}
+
+function Join-NativeArguments([object[]]$Arguments) {
+    return (($Arguments | ForEach-Object { ConvertTo-NativeArgument ([string]$_) }) -join " ")
+}
+
 if (Test-Path $statePath) {
     try {
         $existing = Get-Content $statePath -Raw | ConvertFrom-Json
@@ -157,14 +191,17 @@ try {
         "--allowed-origin", $webUrl,
         "--allowed-origin", "http://localhost:$WebPort"
     )
-    $backend = Start-Process -FilePath $dotnet.Source -ArgumentList $backendArguments -WorkingDirectory $repositoryRoot `
+    $backendCommandLine = Join-NativeArguments $backendArguments
+    $backend = Start-Process -FilePath $dotnet.Source -ArgumentList $backendCommandLine -WorkingDirectory $repositoryRoot `
         -WindowStyle Hidden -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr -PassThru
     $startedProcesses += $backend
 
-    $frontend = Start-Process -FilePath $pwsh.Source -ArgumentList @(
+    $frontendArguments = @(
         "-NoProfile", "-File", (Join-Path $PSScriptRoot "Run-WebControlPlane.ps1"),
         "-WebRoot", $webRoot, "-Port", $WebPort
-    ) -WorkingDirectory $repositoryRoot -WindowStyle Hidden `
+    )
+    $frontendCommandLine = Join-NativeArguments $frontendArguments
+    $frontend = Start-Process -FilePath $pwsh.Source -ArgumentList $frontendCommandLine -WorkingDirectory $repositoryRoot -WindowStyle Hidden `
         -RedirectStandardOutput $frontendOut -RedirectStandardError $frontendErr -PassThru
     $startedProcesses += $frontend
 

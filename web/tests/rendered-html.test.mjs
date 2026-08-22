@@ -115,6 +115,7 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   const localApi = await readFile(new URL("../../src/EdrTest/LocalApiService.cs", import.meta.url), "utf8");
   const cloudService = await readFile(new URL("../../src/EdrTest/TencentEdrCloudExportService.cs", import.meta.url), "utf8");
   const cloudAutomation = await readFile(new URL("../automation/tencent-edr-cloud-export.mjs", import.meta.url), "utf8");
+  const startScript = await readFile(new URL("../../scripts/Start-EdrTest.ps1", import.meta.url), "utf8");
 
   assert.doesNotMatch(packageJson, /react-loading-skeleton|drizzle-orm|tailwindcss/);
   assert.match(hosting, /"d1": null/);
@@ -137,6 +138,12 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(cloudService, /process\.StandardInput\.WriteAsync/);
   assert.doesNotMatch(cloudService, /ArgumentList\.Add\(config\.(?:Account|Password)\)/);
   assert.match(cloudAutomation, /readRequestFromStdin/);
+  assert.match(startScript, /function ConvertTo-NativeArgument/);
+  assert.match(startScript, /\$backendCommandLine = Join-NativeArguments \$backendArguments/);
+  assert.match(startScript, /-ArgumentList \$backendCommandLine/);
+  assert.match(startScript, /\$frontendCommandLine = Join-NativeArguments \$frontendArguments/);
+  assert.match(startScript, /-ArgumentList \$frontendCommandLine/);
+  assert.doesNotMatch(startScript, /-ArgumentList \$backendArguments/);
   assert.match(livePage, /action_name_standards/);
   assert.match(livePage, /edrtest\.actionNameStandards\.v1/);
   assert.match(livePage, /child_file_create_op_name_standards/);
