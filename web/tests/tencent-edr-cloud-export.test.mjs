@@ -27,14 +27,14 @@ test("云端自动化请求只接受受限的本地 JSON 下载目标", () => {
     stepTimeoutMs: 60_000,
     postLoginTimeoutMs: 180_000,
     stepSettleMs: 1_600,
-    domainSelectionSettleMs: 6_000,
+    domainLookupDelayMs: 15_000,
     queryResultSettleMs: 6_000,
   });
-  assert.deepEqual(buildAutomationTiming(debugValue, { stepTimeoutMs: 9_000, postLoginTimeoutMs: 12_000, stepSettleMs: 0, domainSelectionSettleMs: 0, queryResultSettleMs: 0 }), {
+  assert.deepEqual(buildAutomationTiming(debugValue, { stepTimeoutMs: 9_000, postLoginTimeoutMs: 12_000, stepSettleMs: 0, domainLookupDelayMs: 0, queryResultSettleMs: 0 }), {
     stepTimeoutMs: 9_000,
     postLoginTimeoutMs: 12_000,
     stepSettleMs: 0,
-    domainSelectionSettleMs: 0,
+    domainLookupDelayMs: 0,
     queryResultSettleMs: 0,
   });
   assert.throws(() => validateRequest({ ...value, debug_mode: "true" }), /debug_mode 必须是布尔值/);
@@ -76,7 +76,15 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
     <input type="password" placeholder="请输入登录密码" />
     <button id="login">登录</button>
     <section id="domain-step" hidden>
-      <div id="ioa-v1"><button id="chevron-down" aria-label="域选择"></button></div><div id="default-domain" role="listitem">默认域</div><button id="domain-confirm">确定</button>
+      <div id="ioa-v1">
+        <div class="app-ioa-dropdown" tabindex="0" style="width: 200px;">
+          <div class="app-ioa-dropdown__header app-ioa-dropdown-btn">
+            <div class="app-ioa-dropdown__value"><span class="app-ioa-dropdown__placeholder">请选择域</span></div>
+            <svg id="chevron-down" width="16" height="16"><path d="M0 0"></path></svg>
+          </div>
+        </div>
+      </div>
+      <div id="default-domain" role="listitem" hidden>默认域</div><button id="domain-confirm" hidden>确定</button>
     </section>
     <section id="event-view" hidden>
       <div>进程事件</div><div title="全部">全部事件</div>
@@ -97,10 +105,21 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
     <script>
       const domainStep = document.getElementById("domain-step");
       const eventView = document.getElementById("event-view");
+      const domainHeader = document.querySelector(".app-ioa-dropdown__header.app-ioa-dropdown-btn");
+      const domainOption = document.getElementById("default-domain");
+      const domainConfirm = document.getElementById("domain-confirm");
       const timeInput = document.querySelector('input[aria-label="选择时间"]');
+      let domainSelected = false;
       let timeSearchCompleted = false;
       document.getElementById("login").addEventListener("click", () => setTimeout(() => { domainStep.hidden = false; }, 5_500));
-      document.getElementById("domain-confirm").addEventListener("click", () => { domainStep.hidden = true; eventView.hidden = false; });
+      document.getElementById("chevron-down").addEventListener("click", (event) => event.stopPropagation());
+      domainHeader.addEventListener("click", () => { domainOption.hidden = false; });
+      domainOption.addEventListener("click", () => { domainSelected = true; domainConfirm.hidden = false; });
+      domainConfirm.addEventListener("click", () => {
+        if (!domainSelected) return;
+        domainStep.hidden = true;
+        eventView.hidden = false;
+      });
       timeInput.addEventListener("click", () => { timeInput.dataset.clicked = "true"; });
       timeInput.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && timeInput.dataset.clicked === "true") timeInput.dataset.entered = "true";
@@ -147,7 +166,7 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
         stepTimeoutMs: 10_000,
         postLoginTimeoutMs: 10_000,
         stepSettleMs: 0,
-        domainSelectionSettleMs: 1,
+        domainLookupDelayMs: 1,
         queryResultSettleMs: 1,
         onEvent: (event) => events.push(event),
       });
@@ -171,6 +190,7 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
     assert(progressEvents.every((event, index) => index === 0 || event.progress >= progressEvents[index - 1].progress));
     assert(events.some((event) => event.type === "debug" && event.stage === "wait_policy"));
     assert(events.some((event) => event.type === "debug" && event.stage === "domain_selection_wait"));
+    assert(events.some((event) => event.type === "debug" && event.stage === "domain_chooser_actionable"));
     assert(events.some((event) => event.type === "debug" && event.stage === "domain_step_completed" && /默认域已选择/.test(event.message)));
     assert(events.some((event) => event.type === "debug" && event.stage === "query_result_wait"));
     assert.doesNotMatch(JSON.stringify(events), /child-user|secret-value/);

@@ -8,7 +8,7 @@ const MAX_REQUEST_BYTES = 32 * 1024;
 const DEFAULT_STEP_TIMEOUT_MS = 60_000;
 const DEFAULT_POST_LOGIN_TIMEOUT_MS = 180_000;
 const DEFAULT_STEP_SETTLE_MS = 1_600;
-const DEFAULT_DOMAIN_SELECTION_SETTLE_MS = 6_000;
+const DEFAULT_DOMAIN_LOOKUP_DELAY_MS = 15_000;
 const DEFAULT_QUERY_RESULT_SETTLE_MS = 6_000;
 
 class AutomationError extends Error {
@@ -30,7 +30,7 @@ export function buildAutomationTiming(request, runtime = {}) {
     stepTimeoutMs: timingValue(runtime.stepTimeoutMs, Math.min(DEFAULT_STEP_TIMEOUT_MS, maximum), 1_000, maximum),
     postLoginTimeoutMs: timingValue(runtime.postLoginTimeoutMs, Math.min(DEFAULT_POST_LOGIN_TIMEOUT_MS, maximum), 1_000, maximum),
     stepSettleMs: timingValue(runtime.stepSettleMs, DEFAULT_STEP_SETTLE_MS, 0, 5_000),
-    domainSelectionSettleMs: timingValue(runtime.domainSelectionSettleMs, DEFAULT_DOMAIN_SELECTION_SETTLE_MS, 0, 30_000),
+    domainLookupDelayMs: timingValue(runtime.domainLookupDelayMs, DEFAULT_DOMAIN_LOOKUP_DELAY_MS, 0, 30_000),
     queryResultSettleMs: timingValue(runtime.queryResultSettleMs, DEFAULT_QUERY_RESULT_SETTLE_MS, 0, 30_000),
   };
 }
@@ -102,7 +102,13 @@ function accountInputCandidates(page) {
 }
 
 function domainChooserCandidates(page) {
+  const placeholder = page.locator("span.app-ioa-dropdown__placeholder").filter({ hasText: /^请选择域$/ });
+  const dropdown = page.locator("div.app-ioa-dropdown").filter({ has: placeholder });
   return [
+    dropdown.locator("div.app-ioa-dropdown__header.app-ioa-dropdown-btn"),
+    dropdown,
+    page.locator("#ioa-v1 div.app-ioa-dropdown__header.app-ioa-dropdown-btn"),
+    page.locator("xpath=/html/body/div[2]/div[2]/div[2]/div/div/div/div/div[4]/div").filter({ has: placeholder }),
     page.locator("#ioa-v1 #chevron-down"),
     page.locator("div").filter({ hasText: /^请选择域$/ }),
     page.getByText("请选择域", { exact: true }),
@@ -159,16 +165,20 @@ async function selectChildUser(page, timing) {
 }
 
 async function selectDefaultDomain(page, timing, events) {
+  if (timing.domainLookupDelayMs > 0) {
+    events.debug("domain_selection_wait", `开始定位域选择器或 EDR 事件页前等待 ${timing.domainLookupDelayMs} ms，让登录后页面完成渲染。`);
+    await page.waitForTimeout(timing.domainLookupDelayMs);
+  }
   const state = await firstVisibleState([
     { name: "domain_chooser", locators: domainChooserCandidates(page) },
     { name: "event_view_ready", locators: eventViewCandidates(page) },
   ], timing.postLoginTimeoutMs, "POST_LOGIN_STATE_TIMEOUT", "登录提交后，域选择器和 EDR 事件页在等待时间内均未出现；可能仍在登录验证或页面加载中。");
   if (state.name === "event_view_ready") return "not_required";
-  if (timing.domainSelectionSettleMs > 0) {
-    events.debug("domain_selection_wait", `域选择器已出现，等待页面稳定 ${timing.domainSelectionSettleMs} ms 后再选择默认域。`);
-    await page.waitForTimeout(timing.domainSelectionSettleMs);
-  }
-  await state.locator.click();
+  const chooser = state.locator;
+  await chooser.scrollIntoViewIfNeeded();
+  await chooser.click({ trial: true, timeout: timing.stepTimeoutMs });
+  events.debug("domain_chooser_actionable", "域下拉 header 已通过可见性、稳定性和点击遮挡预检。");
+  await chooser.click({ timeout: timing.stepTimeoutMs });
   await clickFirst([
     page.getByRole("listitem", { name: "默认域" }),
     page.getByText("默认域", { exact: true }),
@@ -337,7 +347,7 @@ export async function runTencentEdrExport(rawRequest, runtime = {}) {
       });
     }
 
-    events.debug("wait_policy", `等待策略：常规控件最长 ${timing.stepTimeoutMs} ms，登录后状态最长 ${timing.postLoginTimeoutMs} ms，每步稳定等待 ${timing.stepSettleMs} ms，域选择前等待 ${timing.domainSelectionSettleMs} ms，时间检索结果等待 ${timing.queryResultSettleMs} ms。`);
+    events.debug("wait_policy", `等待策略：常规控件最长 ${timing.stepTimeoutMs} ms，登录后状态最长 ${timing.postLoginTimeoutMs} ms，每步稳定等待 ${timing.stepSettleMs} ms，域定位前等待 ${timing.domainLookupDelayMs} ms，时间检索结果等待 ${timing.queryResultSettleMs} ms。`);
     await settleStep(page, timing, events, "create_context");
 
     events.emit("open_login_page", "正在打开腾讯云登录页面。", 20);

@@ -156,9 +156,12 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(cloudAutomation, /DEFAULT_STEP_TIMEOUT_MS = 60_000/);
   assert.match(cloudAutomation, /DEFAULT_POST_LOGIN_TIMEOUT_MS = 180_000/);
   assert.match(cloudAutomation, /DEFAULT_STEP_SETTLE_MS = 1_600/);
-  assert.match(cloudAutomation, /DEFAULT_DOMAIN_SELECTION_SETTLE_MS = 6_000/);
+  assert.match(cloudAutomation, /DEFAULT_DOMAIN_LOOKUP_DELAY_MS = 15_000/);
   assert.match(cloudAutomation, /DEFAULT_QUERY_RESULT_SETTLE_MS = 6_000/);
   assert.match(cloudAutomation, /#ioa-v1 #chevron-down/);
+  assert.match(cloudAutomation, /app-ioa-dropdown__header\.app-ioa-dropdown-btn/);
+  assert.match(cloudAutomation, /trial: true/);
+  assert.match(cloudAutomation, /domainLookupDelayMs[\s\S]*firstVisibleState/);
   assert.match(cloudAutomation, /timeInput\.press\("Enter"\)/);
   assert.match(cloudAutomation, /firstVisibleState/);
   assert.doesNotMatch(cloudAutomation, /selectDefaultDomain\(page, 30_000\)/);
