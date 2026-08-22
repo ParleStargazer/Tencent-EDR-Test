@@ -26,12 +26,14 @@ test("云端自动化请求只接受受限的本地 JSON 下载目标", () => {
     stepTimeoutMs: 60_000,
     postLoginTimeoutMs: 180_000,
     stepSettleMs: 800,
-    queryResultSettleMs: 10_000,
+    domainSelectionSettleMs: 3_000,
+    queryResultSettleMs: 3_000,
   });
-  assert.deepEqual(buildAutomationTiming(debugValue, { stepTimeoutMs: 9_000, postLoginTimeoutMs: 12_000, stepSettleMs: 0, queryResultSettleMs: 0 }), {
+  assert.deepEqual(buildAutomationTiming(debugValue, { stepTimeoutMs: 9_000, postLoginTimeoutMs: 12_000, stepSettleMs: 0, domainSelectionSettleMs: 0, queryResultSettleMs: 0 }), {
     stepTimeoutMs: 9_000,
     postLoginTimeoutMs: 12_000,
     stepSettleMs: 0,
+    domainSelectionSettleMs: 0,
     queryResultSettleMs: 0,
   });
   assert.throws(() => validateRequest({ ...value, debug_mode: "true" }), /debug_mode 必须是布尔值/);
@@ -143,6 +145,7 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
         stepTimeoutMs: 10_000,
         postLoginTimeoutMs: 10_000,
         stepSettleMs: 0,
+        domainSelectionSettleMs: 1,
         queryResultSettleMs: 1,
         onEvent: (event) => events.push(event),
       });
@@ -165,6 +168,7 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
     ]);
     assert(progressEvents.every((event, index) => index === 0 || event.progress >= progressEvents[index - 1].progress));
     assert(events.some((event) => event.type === "debug" && event.stage === "wait_policy"));
+    assert(events.some((event) => event.type === "debug" && event.stage === "domain_selection_wait"));
     assert(events.some((event) => event.type === "debug" && event.stage === "domain_step_completed" && /默认域已选择/.test(event.message)));
     assert(events.some((event) => event.type === "debug" && event.stage === "query_result_wait"));
     assert.doesNotMatch(JSON.stringify(events), /child-user|secret-value/);
