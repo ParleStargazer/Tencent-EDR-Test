@@ -24,13 +24,15 @@ test("云端自动化请求只接受受限的本地 JSON 下载目标", () => {
   assert.equal(buildLaunchOptions(debugValue, { headless: true }).headless, true);
   assert.deepEqual(buildAutomationTiming({ ...debugValue, timeout_ms: 300_000 }), {
     stepTimeoutMs: 60_000,
-    postLoginTimeoutMs: 90_000,
+    postLoginTimeoutMs: 180_000,
     stepSettleMs: 800,
+    queryResultSettleMs: 10_000,
   });
-  assert.deepEqual(buildAutomationTiming(debugValue, { stepTimeoutMs: 9_000, postLoginTimeoutMs: 12_000, stepSettleMs: 0 }), {
+  assert.deepEqual(buildAutomationTiming(debugValue, { stepTimeoutMs: 9_000, postLoginTimeoutMs: 12_000, stepSettleMs: 0, queryResultSettleMs: 0 }), {
     stepTimeoutMs: 9_000,
     postLoginTimeoutMs: 12_000,
     stepSettleMs: 0,
+    queryResultSettleMs: 0,
   });
   assert.throws(() => validateRequest({ ...value, debug_mode: "true" }), /debug_mode 必须是布尔值/);
   assert.throws(() => validateRequest({ ...value, download_path: "relative.json" }), /绝对 JSON 文件路径/);
@@ -71,7 +73,7 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
     <input type="password" placeholder="请输入登录密码" />
     <button id="login">登录</button>
     <section id="domain-step" hidden>
-      <div>请选择域</div><div id="default-domain" role="listitem">默认域</div><button id="domain-confirm">确定</button>
+      <div id="ioa-v1"><button id="chevron-down" aria-label="域选择"></button></div><div id="default-domain" role="listitem">默认域</div><button id="domain-confirm">确定</button>
     </section>
     <section id="event-view" hidden>
       <div>进程事件</div><div title="全部">全部事件</div>
@@ -86,15 +88,25 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
         <div role="listitem">等于</div><div role="listitem">其他信息</div>
         <div role="listitem">采集时间</div><div role="listitem">大于</div>
         <div role="listitem">json</div>
-        <button>确定</button><button>检索</button><button id="final-export">导出</button>
+        <button>确定</button><button id="time-search">检索</button><button id="final-export">导出</button>
       </div>
     </section>
     <script>
       const domainStep = document.getElementById("domain-step");
       const eventView = document.getElementById("event-view");
+      const timeInput = document.querySelector('input[aria-label="选择时间"]');
+      let timeSearchCompleted = false;
       document.getElementById("login").addEventListener("click", () => setTimeout(() => { domainStep.hidden = false; }, 5_500));
       document.getElementById("domain-confirm").addEventListener("click", () => { domainStep.hidden = true; eventView.hidden = false; });
+      timeInput.addEventListener("click", () => { timeInput.dataset.clicked = "true"; });
+      timeInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && timeInput.dataset.clicked === "true") timeInput.dataset.entered = "true";
+      });
+      document.getElementById("time-search").addEventListener("click", () => {
+        timeSearchCompleted = timeInput.dataset.entered === "true";
+      });
       document.getElementById("final-export").addEventListener("click", () => {
+        if (!timeSearchCompleted) return;
         const blob = new Blob([JSON.stringify([{ "Action.Name": "ProcessCreate", "Host.Name": "EDR-TEST-01" }])], { type: "application/json" });
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
@@ -131,6 +143,7 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
         stepTimeoutMs: 10_000,
         postLoginTimeoutMs: 10_000,
         stepSettleMs: 0,
+        queryResultSettleMs: 1,
         onEvent: (event) => events.push(event),
       });
       assert.equal(result.status, "succeeded");
@@ -153,6 +166,7 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
     assert(progressEvents.every((event, index) => index === 0 || event.progress >= progressEvents[index - 1].progress));
     assert(events.some((event) => event.type === "debug" && event.stage === "wait_policy"));
     assert(events.some((event) => event.type === "debug" && event.stage === "domain_step_completed" && /默认域已选择/.test(event.message)));
+    assert(events.some((event) => event.type === "debug" && event.stage === "query_result_wait"));
     assert.doesNotMatch(JSON.stringify(events), /child-user|secret-value/);
   } finally {
     await new Promise((resolve) => server.close(resolve));

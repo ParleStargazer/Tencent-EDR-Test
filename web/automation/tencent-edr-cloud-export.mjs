@@ -6,8 +6,9 @@ import { chromium } from "playwright-core";
 const LOGIN_URL = "https://cloud.tencent.com/login?s_url=https%3A%2F%2Fconsole.cloud.tencent.com%2Fioa%2Fv1%2Fedr%2Fprotect%2Fthreatalarm";
 const MAX_REQUEST_BYTES = 32 * 1024;
 const DEFAULT_STEP_TIMEOUT_MS = 60_000;
-const DEFAULT_POST_LOGIN_TIMEOUT_MS = 90_000;
+const DEFAULT_POST_LOGIN_TIMEOUT_MS = 180_000;
 const DEFAULT_STEP_SETTLE_MS = 800;
+const DEFAULT_QUERY_RESULT_SETTLE_MS = 10_000;
 
 class AutomationError extends Error {
   constructor(code, message) {
@@ -28,6 +29,7 @@ export function buildAutomationTiming(request, runtime = {}) {
     stepTimeoutMs: timingValue(runtime.stepTimeoutMs, Math.min(DEFAULT_STEP_TIMEOUT_MS, maximum), 1_000, maximum),
     postLoginTimeoutMs: timingValue(runtime.postLoginTimeoutMs, Math.min(DEFAULT_POST_LOGIN_TIMEOUT_MS, maximum), 1_000, maximum),
     stepSettleMs: timingValue(runtime.stepSettleMs, DEFAULT_STEP_SETTLE_MS, 0, 5_000),
+    queryResultSettleMs: timingValue(runtime.queryResultSettleMs, DEFAULT_QUERY_RESULT_SETTLE_MS, 0, 30_000),
   };
 }
 
@@ -99,6 +101,7 @@ function accountInputCandidates(page) {
 
 function domainChooserCandidates(page) {
   return [
+    page.locator("#ioa-v1 #chevron-down"),
     page.locator("div").filter({ hasText: /^请选择域$/ }),
     page.getByText("请选择域", { exact: true }),
   ];
@@ -232,17 +235,15 @@ async function addStartTimeFilter(page, queryStartLocal, timeoutMs) {
     page.getByText("选择关系", { exact: true }),
   ], timeoutMs);
   await clickFirst([page.getByRole("listitem", { name: "大于", exact: true }), page.getByText("大于", { exact: true })], timeoutMs);
-  await fillFirst([
+  const timeInput = await firstVisible([
     page.getByRole("textbox", { name: "选择时间" }),
     page.locator('input[placeholder*="选择时间"]'),
-  ], queryStartLocal, timeoutMs);
-  await clickFirst([
-    page.locator("#tea-overlay-root").getByRole("button", { name: "确定", exact: true }),
-    page.getByRole("button", { name: "确定", exact: true }),
   ], timeoutMs);
+  await timeInput.click();
+  await timeInput.fill(queryStartLocal);
+  await timeInput.press("Enter");
   await clickFirst([
-    page.locator("#tea-overlay-root").getByRole("button", { name: "检索" }),
-    page.getByRole("button", { name: "检索", exact: true }),
+    page.locator("#tea-overlay-root").getByRole("button", { name: "检索", exact: true }),
   ], timeoutMs);
 }
 
@@ -330,7 +331,7 @@ export async function runTencentEdrExport(rawRequest, runtime = {}) {
       });
     }
 
-    events.debug("wait_policy", `等待策略：常规控件最长 ${timing.stepTimeoutMs} ms，登录后状态最长 ${timing.postLoginTimeoutMs} ms，每步稳定等待 ${timing.stepSettleMs} ms。`);
+    events.debug("wait_policy", `等待策略：常规控件最长 ${timing.stepTimeoutMs} ms，登录后状态最长 ${timing.postLoginTimeoutMs} ms，每步稳定等待 ${timing.stepSettleMs} ms，时间检索结果等待 ${timing.queryResultSettleMs} ms。`);
     await settleStep(page, timing, events, "create_context");
 
     events.emit("open_login_page", "正在打开腾讯云登录页面。", 20);
@@ -384,6 +385,10 @@ export async function runTencentEdrExport(rawRequest, runtime = {}) {
 
     events.emit("apply_time_filter", "正在添加采集时间筛选并执行检索。", 71);
     await addStartTimeFilter(page, request.query_start_local, timing.stepTimeoutMs);
+    if (timing.queryResultSettleMs > 0) {
+      events.debug("query_result_wait", `时间筛选已提交，等待检索结果加载 ${timing.queryResultSettleMs} ms。`);
+      await page.waitForTimeout(timing.queryResultSettleMs);
+    }
     await settleStep(page, timing, events, "apply_time_filter");
     events.debug("time_filter_applied", "采集时间筛选已应用，检索结果已完成稳定等待。");
 
