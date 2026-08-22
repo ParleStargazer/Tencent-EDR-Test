@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "next": "16.2.6",
+    "playwright-core": "1.62.1",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },

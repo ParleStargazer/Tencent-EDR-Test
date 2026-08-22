@@ -163,7 +163,21 @@ public static class Program
             Path.GetFullPath(options.Get("import-dir") ?? Path.Combine(repositoryRoot, "import")),
             Path.GetFullPath(options.Get("reports-dir") ?? Path.Combine(repositoryRoot, "reports")),
             allowedOrigins.Count == 0 ? ["http://127.0.0.1:3000", "http://localhost:3000"] : allowedOrigins,
-            options.Get("token")));
+            options.Get("token"),
+            ResolveNodeExecutable(options.Get("node-path"))));
+    }
+
+    private static string ResolveNodeExecutable(string? configured)
+    {
+        if (!string.IsNullOrWhiteSpace(configured)) return Path.GetFullPath(configured);
+        var fileName = OperatingSystem.IsWindows() ? "node.exe" : "node";
+        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
+                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var candidate = Path.Combine(directory, fileName);
+            if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+        }
+        return fileName;
     }
 
     private static int ParsePort(string value) => int.TryParse(value, out var port) && port is >= 1024 and <= 65535
@@ -202,7 +216,7 @@ public static class Program
               inspect --db <run.db>
               serve [--host 127.0.0.1] [--port 4317] [--repo-root <path>]
                   [--samples-root samples] [--runs-dir runs]
-                  [--allowed-origin http://localhost:3000] [--token <local-token>]
+                  [--allowed-origin http://localhost:3000] [--token <local-token>] [--node-path <node.exe>]
               version
 
             samples/、runs/ 和云端导出均为本地文件，不纳入版本控制。

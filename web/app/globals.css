@@ -1559,6 +1559,36 @@ tbody tr:last-child td { border-bottom: 0; }
 .json-match-footer span code { color: #315b4d; font-size: 8px; }
 .json-match-footer em { color: var(--quiet); font-size: 9px; font-style: normal; }
 
+.cloud-automation-card { border: 1px solid var(--line); background: #f8faf9; }
+.cloud-automation-card.enabled { border-color: #9fbfb4; background: #f1f8f5; }
+.cloud-automation-toggle { display: flex; gap: 10px; align-items: flex-start; padding: 12px 13px; cursor: pointer; }
+.cloud-automation-toggle input { margin-top: 2px; accent-color: var(--accent); }
+.cloud-automation-toggle span,
+.cloud-automation-toggle strong,
+.cloud-automation-toggle em { display: block; }
+.cloud-automation-toggle strong { font-size: 11px; }
+.cloud-automation-toggle em { margin-top: 4px; color: var(--quiet); font-size: 9px; font-style: normal; line-height: 1.5; }
+.cloud-automation-toggle:has(input:disabled) { cursor: not-allowed; opacity: 0.68; }
+.cloud-automation-fields { display: grid; gap: 12px; padding: 13px; border-top: 1px solid var(--line); }
+.cloud-acquisition-state { display: grid; grid-template-columns: minmax(150px, 0.45fr) minmax(0, 1.55fr); gap: 14px; align-items: center; margin: 0 20px 14px; padding: 11px 13px; border-left: 3px solid #496781; background: #f3f7fa; }
+.cloud-acquisition-state.succeeded { border-left-color: var(--accent); background: var(--accent-soft); }
+.cloud-acquisition-state.failed { border-left-color: var(--danger); background: #fff5f4; }
+.cloud-acquisition-state span,
+.cloud-acquisition-state strong { display: block; }
+.cloud-acquisition-state span { color: var(--quiet); font-size: 8px; letter-spacing: 0.08em; }
+.cloud-acquisition-state strong { margin-top: 3px; font-size: 11px; }
+.cloud-acquisition-state p { min-width: 0; color: var(--muted); font-size: 9px; overflow-wrap: anywhere; }
+.cloud-import-binding { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(220px, 0.75fr); gap: 14px; align-items: stretch; margin: 0 20px 20px; padding: 14px; border: 1px solid var(--line); background: #fafbfa; }
+.cloud-import-binding.selected { border-color: #9fbfb4; background: #f1f8f5; }
+.cloud-import-summary { display: grid; align-content: center; min-width: 0; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--panel); }
+.cloud-import-summary.manual { border-left-color: var(--quiet); }
+.cloud-import-summary span,
+.cloud-import-summary strong,
+.cloud-import-summary em { display: block; }
+.cloud-import-summary span { color: var(--accent); font-size: 8px; letter-spacing: 0.08em; }
+.cloud-import-summary strong { overflow-wrap: anywhere; margin-top: 4px; font-size: 10px; }
+.cloud-import-summary em { margin-top: 4px; color: var(--quiet); font-size: 9px; font-style: normal; line-height: 1.5; }
+
 @media (max-width: 1120px) {
   .log-workspace { grid-template-columns: 1fr; }
   .sticky-panel { position: static; }
@@ -1569,6 +1599,7 @@ tbody tr:last-child td { border-bottom: 0; }
   .baseline-card-grid,
   .compare-select-grid,
   .comparison-time-grid { grid-template-columns: 1fr; }
+  .cloud-import-binding { grid-template-columns: 1fr; }
   .action-name-grid { grid-template-columns: 1fr; }
   .action-name-field { border-right: 0; }
   .baseline-card { border-right: 0; }

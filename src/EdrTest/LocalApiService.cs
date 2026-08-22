@@ -23,7 +23,8 @@ public sealed record LocalApiOptions(
     string ImportDirectory,
     string ReportsDirectory,
     IReadOnlyList<string> AllowedOrigins,
-    string? Token);
+    string? Token,
+    string NodePath);
 
 public sealed class ApiRunStartRequest
 {
@@ -32,7 +33,28 @@ public sealed class ApiRunStartRequest
     public string? EnvironmentId { get; init; }
     public bool AllowHighRisk { get; init; }
     public int InterCapabilityDelaySeconds { get; init; } = 3;
+    public ApiCloudAutomationStartRequest? CloudAutomation { get; init; }
 }
+
+public sealed class ApiCloudAutomationStartRequest
+{
+    public bool Enabled { get; init; }
+    public string? Account { get; init; }
+    public string? Password { get; init; }
+    public string? DeviceName { get; init; }
+    public DateTimeOffset? LogStartTime { get; init; }
+    public int DelaySeconds { get; init; } = 30;
+}
+
+public sealed record ApiCloudAcquisitionSnapshot(
+    bool Requested,
+    string Status,
+    string? DeviceName,
+    DateTimeOffset? QueryStartUtc,
+    int? DelaySeconds,
+    int? WaitRemainingSeconds,
+    ApiCloudImportRecord? Import,
+    string? Error);
 
 public sealed record ApiCapability(
     string CapabilityId,
@@ -98,6 +120,7 @@ public sealed record ApiRunSnapshot(
     DateTimeOffset? EndedAtUtc,
     string? DatabaseName,
     bool LocalExportAvailable,
+    ApiCloudAcquisitionSnapshot CloudAcquisition,
     string? Error);
 
 public sealed record ApiComparisonProgressSnapshot(
@@ -114,7 +137,7 @@ public sealed record ApiComparisonProgressSnapshot(
 
 public static class LocalApiService
 {
-    private const long MaximumUploadBytes = 256L * 1024 * 1024;
+    private const long MaximumUploadBytes = CloudExportFile.MaximumBytes;
     private static readonly JsonSerializerOptions ApiJson = new(JsonDefaults.Options);
 
     public static async Task<int> RunAsync(LocalApiOptions options, CancellationToken cancellationToken = default)
@@ -136,7 +159,9 @@ public static class LocalApiService
         builder.Services.Configure<FormOptions>(value => value.MultipartBodyLengthLimit = MaximumUploadBytes);
 
         var catalog = new LocalApiCatalog(options);
-        var coordinator = new ApiRunCoordinator(options, catalog);
+        var cloudImportStore = new CloudImportStore(options.RunsDirectory);
+        var cloudExporter = new TencentEdrCloudExportService(options, cloudImportStore);
+        var coordinator = new ApiRunCoordinator(options, catalog, cloudImportStore, cloudExporter);
         var comparisonCoordinator = new ApiComparisonCoordinator();
         var app = builder.Build();
         ConfigureSecurity(app, options);
@@ -148,6 +173,8 @@ public static class LocalApiService
             server_time_utc = Values.Utc(DateTimeOffset.UtcNow),
             capabilities_available = catalog.Capabilities.Count,
             authentication = string.IsNullOrWhiteSpace(options.Token) ? "origin-only" : "local-token",
+            host_name = Environment.MachineName,
+            cloud_automation_available = cloudExporter.Available,
         }, ApiJson));
 
         app.MapGet("/api/capabilities", () => Results.Json(catalog.Capabilities, ApiJson));
@@ -188,6 +215,12 @@ public static class LocalApiService
             return path is null
                 ? ApiError(404, "该轮次还没有可用的本地导出。")
                 : Results.File(path, "application/json; charset=utf-8", $"{Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(path)))}-local-run.json");
+        });
+
+        app.MapGet("/api/runs/{operationId}/cloud-imports", (string operationId) =>
+        {
+            var imports = coordinator.ListCloudImports(operationId);
+            return imports is null ? ApiError(404, "找不到测试轮次。") : Results.Json(imports, ApiJson);
         });
 
         app.MapPost("/api/compare", (Func<HttpContext, Task<IResult>>)(context => CompareAsync(context, options, catalog, coordinator, comparisonCoordinator)));
@@ -274,12 +307,16 @@ public static class LocalApiService
         if (!context.Request.HasFormContentType) return ApiError(415, "比较接口需要 multipart/form-data。");
         var form = await context.Request.ReadFormAsync(context.RequestAborted);
         var cloudFile = form.Files.GetFile("cloud_file");
-        if (cloudFile is null) return ApiError(400, "必须上传 cloud_file。");
-        if (!ValidJsonExtension(cloudFile.FileName)) return ApiError(400, "cloud_file 仅支持 .json 或 .jsonl。");
-        if (cloudFile.Length is <= 0 or > MaximumUploadBytes) return ApiError(413, "cloud_file 为空或超过 256 MB。");
+        var cloudImportId = form["cloud_import_id"].ToString().Trim();
+        if (cloudFile is not null && !string.IsNullOrWhiteSpace(cloudImportId)) return ApiError(400, "cloud_file 与 cloud_import_id 只能提供一个。");
+        if (cloudFile is null && string.IsNullOrWhiteSpace(cloudImportId)) return ApiError(400, "必须上传 cloud_file，或选择当前轮次已绑定的 cloud_import_id。");
+        if (cloudFile is not null && (!ValidJsonExtension(cloudFile.FileName) || cloudFile.Length is <= 0 or > MaximumUploadBytes))
+            return ApiError(400, "cloud_file 必须是 256 MB 以内的非空 .json 或 .jsonl 文件。");
 
         var localFile = form.Files.GetFile("local_file");
         var operationId = form["operation_id"].ToString();
+        if (!string.IsNullOrWhiteSpace(cloudImportId) && (localFile is not null || string.IsNullOrWhiteSpace(operationId)))
+            return ApiError(400, "自动绑定的云端日志只能与其 operation_id 对应的本地轮次比较。");
         if (localFile is not null && !string.IsNullOrWhiteSpace(operationId)) return ApiError(400, "local_file 与 operation_id 只能提供一个。");
         if (localFile is null && string.IsNullOrWhiteSpace(operationId)) return ApiError(400, "必须提供 local_file 或 operation_id。");
         if (localFile is not null && (!ValidJsonExtension(localFile.FileName) || localFile.Length is <= 0 or > MaximumUploadBytes))
@@ -340,8 +377,20 @@ public static class LocalApiService
         var reportRoot = Path.Combine(options.ReportsDirectory, comparisonId);
         Directory.CreateDirectory(importRoot);
         Directory.CreateDirectory(reportRoot);
-        var cloudPath = Path.Combine(importRoot, Path.GetExtension(cloudFile.FileName).Equals(".jsonl", StringComparison.OrdinalIgnoreCase) ? "cloud.jsonl" : "cloud.json");
-        await SaveUploadAsync(cloudFile, cloudPath, context.RequestAborted);
+        string cloudPath;
+        string? manifestPath = null;
+        if (cloudFile is not null)
+        {
+            cloudPath = Path.Combine(importRoot, Path.GetExtension(cloudFile.FileName).Equals(".jsonl", StringComparison.OrdinalIgnoreCase) ? "cloud.jsonl" : "cloud.json");
+            await SaveUploadAsync(cloudFile, cloudPath, context.RequestAborted);
+        }
+        else
+        {
+            var resolvedCloud = coordinator.ResolveCloudImport(operationId, cloudImportId);
+            if (resolvedCloud is null) return ApiError(404, "找不到该轮次中可用的云端日志绑定，或文件完整性校验失败。");
+            cloudPath = resolvedCloud.CloudPath;
+            manifestPath = resolvedCloud.ManifestPath;
+        }
 
         string localPath;
         if (localFile is not null)
@@ -356,10 +405,10 @@ public static class LocalApiService
             localPath = resolvedLocalPath;
         }
 
-        string? manifestPath = null;
         var manifestFile = form.Files.GetFile("cloud_manifest");
         if (manifestFile is not null)
         {
+            if (!string.IsNullOrWhiteSpace(cloudImportId)) return ApiError(400, "自动绑定日志已包含云端导出清单，不能再上传 cloud_manifest。");
             if (!ValidJsonExtension(manifestFile.FileName) || manifestFile.Length is <= 0 or > MaximumUploadBytes)
             {
                 return ApiError(400, "cloud_manifest 必须是 256 MB 以内的非空 JSON 文件。");
@@ -644,12 +693,20 @@ internal sealed class ApiRunCoordinator
 {
     private readonly LocalApiOptions options;
     private readonly LocalApiCatalog catalog;
+    private readonly CloudImportStore cloudImportStore;
+    private readonly TencentEdrCloudExportService cloudExporter;
     private readonly ConcurrentDictionary<string, ApiRunState> states = new(StringComparer.Ordinal);
 
-    public ApiRunCoordinator(LocalApiOptions options, LocalApiCatalog catalog)
+    public ApiRunCoordinator(
+        LocalApiOptions options,
+        LocalApiCatalog catalog,
+        CloudImportStore cloudImportStore,
+        TencentEdrCloudExportService cloudExporter)
     {
         this.options = options;
         this.catalog = catalog;
+        this.cloudImportStore = cloudImportStore;
+        this.cloudExporter = cloudExporter;
     }
 
     public ApiRunSnapshot Start(ApiRunStartRequest request)
@@ -664,15 +721,21 @@ internal sealed class ApiRunCoordinator
             throw new ApiRequestException(409, "所选能力包含 L2/L3 项，请显式确认高风险执行。");
         }
 
+        var cloudConfig = BuildCloudAutomationConfig(request.CloudAutomation);
         var state = new ApiRunState(
             Ids.NewUuid7(),
             request.Name?.Trim() is { Length: > 0 } name ? name : "未命名验证轮次",
             packages,
             request.AllowHighRisk,
             request.InterCapabilityDelaySeconds,
-            DateTimeOffset.UtcNow);
-        if (!states.TryAdd(state.OperationId, state)) throw new InvalidOperationException("无法创建唯一操作 ID。");
-        _ = Task.Run(() => ExecuteAsync(state, packages, request.EnvironmentId));
+            DateTimeOffset.UtcNow,
+            cloudConfig);
+        if (!states.TryAdd(state.OperationId, state))
+        {
+            cloudConfig?.Dispose();
+            throw new InvalidOperationException("无法创建唯一操作 ID。");
+        }
+        _ = Task.Run(() => ExecuteAsync(state, packages, request.EnvironmentId, cloudConfig));
         return state.Snapshot();
     }
 
@@ -705,31 +768,110 @@ internal sealed class ApiRunCoordinator
         return historical?.ExportPath;
     }
 
-    private async Task ExecuteAsync(ApiRunState state, IReadOnlyList<CapabilityPackage> packages, string? environmentId)
+    public IReadOnlyList<ApiCloudImportRecord>? ListCloudImports(string operationId)
+    {
+        var runDirectory = ResolveRunDirectory(operationId);
+        return runDirectory is null ? null : cloudImportStore.List(runDirectory);
+    }
+
+    public ResolvedCloudImport? ResolveCloudImport(string operationId, string importId)
+    {
+        var runDirectory = ResolveRunDirectory(operationId);
+        return runDirectory is null ? null : cloudImportStore.ResolveSuccessful(runDirectory, importId);
+    }
+
+    private string? ResolveRunDirectory(string operationId)
+    {
+        if (states.TryGetValue(operationId, out var state) && state.RunDirectory is { } current && Directory.Exists(current)) return current;
+        var historical = ReadHistoricalRunFiles().FirstOrDefault(value => value.RunId == operationId);
+        return historical?.RunDirectory;
+    }
+
+    private async Task ExecuteAsync(
+        ApiRunState state,
+        IReadOnlyList<CapabilityPackage> packages,
+        string? environmentId,
+        CloudExportAutomationConfig? cloudConfig)
     {
         state.MarkRunning();
         try
         {
-            var result = await new RunnerService().RunAsync(new RunRequest(
-                packages.Select(value => value.ManifestPath).ToArray(),
-                options.RunsDirectory,
-                null,
-                state.AllowHighRisk,
-                state.Name,
-                environmentId,
-                state.InterCapabilityDelaySeconds,
-                state.ApplyProgress), state.CancellationToken);
-            state.Complete(result);
+            RunResult result;
+            try
+            {
+                result = await new RunnerService().RunAsync(new RunRequest(
+                    packages.Select(value => value.ManifestPath).ToArray(),
+                    options.RunsDirectory,
+                    null,
+                    state.AllowHighRisk,
+                    state.Name,
+                    environmentId,
+                    state.InterCapabilityDelaySeconds,
+                    state.ApplyProgress), state.CancellationToken);
+                state.Complete(result);
+            }
+            catch (OperationCanceledException)
+            {
+                state.MarkCancelled();
+                if (cloudConfig is not null) state.FailCloudAcquisition("本地轮次已取消，未启动云端日志获取。");
+                return;
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine(exception);
+                state.Fail(exception.Message);
+                if (cloudConfig is not null) state.FailCloudAcquisition("本地轮次未正常完成，未启动云端日志获取。");
+                return;
+            }
+
+            if (cloudConfig is null) return;
+            try
+            {
+                var queryStartUtc = cloudConfig.RequestedStartTime ?? state.StartedAt.AddSeconds(-10);
+                state.BeginCloudWait(queryStartUtc);
+                for (var remaining = cloudConfig.DelaySeconds; remaining > 0; remaining--)
+                {
+                    state.UpdateCloudWaitRemaining(remaining);
+                    await Task.Delay(TimeSpan.FromSeconds(1));
+                }
+                state.BeginCloudAcquisition();
+                var import = await cloudExporter.ExportAndImportAsync(result, cloudConfig, queryStartUtc, CancellationToken.None);
+                state.CompleteCloudAcquisition(import);
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine(exception);
+                state.FailCloudAcquisition("云端日志获取失败；本地测试结果不受影响，可稍后手动导入。");
+            }
         }
-        catch (OperationCanceledException)
+        finally
         {
-            state.MarkCancelled();
+            cloudConfig?.Dispose();
         }
-        catch (Exception exception)
+    }
+
+    private static CloudExportAutomationConfig? BuildCloudAutomationConfig(ApiCloudAutomationStartRequest? request)
+    {
+        if (request is null || !request.Enabled) return null;
+        var account = request.Account?.Trim();
+        var password = request.Password;
+        var deviceName = string.IsNullOrWhiteSpace(request.DeviceName) ? Environment.MachineName : request.DeviceName.Trim();
+        if (string.IsNullOrWhiteSpace(account) || account.Length > 512 || account.Any(char.IsControl))
+            throw new ApiRequestException(400, "启用云端自动获取时必须提供有效的子账号。");
+        if (string.IsNullOrEmpty(password) || password.Length > 4096 || password.Any(char.IsControl))
+            throw new ApiRequestException(400, "启用云端自动获取时必须提供有效的密码。");
+        if (deviceName.Length > 255 || deviceName.Any(char.IsControl))
+            throw new ApiRequestException(400, "设备名称无效。");
+        if (request.DelaySeconds is < 0 or > 3600)
+            throw new ApiRequestException(400, "云端日志等待时间必须在 0..3600 秒内。");
+        return new CloudExportAutomationConfig
         {
-            Console.Error.WriteLine(exception);
-            state.Fail(exception.Message);
-        }
+            Account = account,
+            Password = password,
+            DeviceName = deviceName,
+            RequestedStartTime = request.LogStartTime,
+            DelaySeconds = request.DelaySeconds,
+        };
     }
 
     private IReadOnlyList<ApiRunSnapshot> ReadHistoricalRuns() => ReadHistoricalRunFiles().Select(value => value.Snapshot).ToArray();
@@ -792,6 +934,18 @@ internal sealed class ApiRunCoordinator
                 var endedText = run?["ended_at_utc"]?.GetValue<string>();
                 var runDirectory = Directory.GetParent(Path.GetDirectoryName(path)!)!.FullName;
                 var databasePath = Path.Combine(runDirectory, $"{runId}.db");
+                var latestCloudImport = cloudImportStore.List(runDirectory).FirstOrDefault();
+                var cloudAcquisition = latestCloudImport is null
+                    ? new ApiCloudAcquisitionSnapshot(false, "not_requested", null, null, null, null, null, null)
+                    : new ApiCloudAcquisitionSnapshot(
+                        true,
+                        latestCloudImport.Status,
+                        latestCloudImport.DeviceName,
+                        latestCloudImport.QueryStartUtc,
+                        null,
+                        null,
+                        latestCloudImport,
+                        latestCloudImport.Error);
                 var snapshot = new ApiRunSnapshot(
                     runId,
                     runId,
@@ -812,8 +966,9 @@ internal sealed class ApiRunCoordinator
                     endedText is null ? null : DateTimeOffset.Parse(endedText),
                     File.Exists(databasePath) ? Path.GetFileName(databasePath) : null,
                     true,
+                    cloudAcquisition,
                     status == "COMPLETED" ? null : status);
-                results.Add(new HistoricalRun(runId, path, snapshot));
+                results.Add(new HistoricalRun(runId, runDirectory, path, snapshot));
             }
             catch (Exception exception) when (exception is JsonException or InvalidOperationException or FormatException or InvalidDataException)
             {
@@ -888,7 +1043,7 @@ internal sealed class ApiRunCoordinator
         return new JsonObject { ["capability"] = capabilityEvidence, ["programs"] = programs, ["facts"] = facts };
     }
 
-    private sealed record HistoricalRun(string RunId, string ExportPath, ApiRunSnapshot Snapshot);
+    private sealed record HistoricalRun(string RunId, string RunDirectory, string ExportPath, ApiRunSnapshot Snapshot);
 }
 
 internal sealed class ApiRunState
@@ -907,9 +1062,25 @@ internal sealed class ApiRunState
     private DateTimeOffset? endedAt;
     private string? databaseName;
     private string? localExportPath;
+    private string? runDirectory;
     private string? error;
+    private readonly bool cloudRequested;
+    private readonly string? cloudDeviceName;
+    private readonly int? cloudDelaySeconds;
+    private DateTimeOffset? cloudQueryStartUtc;
+    private string cloudStatus;
+    private int? cloudWaitRemainingSeconds;
+    private ApiCloudImportRecord? cloudImport;
+    private string? cloudError;
 
-    public ApiRunState(string operationId, string name, IReadOnlyList<CapabilityPackage> packages, bool allowHighRisk, int interCapabilityDelaySeconds, DateTimeOffset startedAt)
+    public ApiRunState(
+        string operationId,
+        string name,
+        IReadOnlyList<CapabilityPackage> packages,
+        bool allowHighRisk,
+        int interCapabilityDelaySeconds,
+        DateTimeOffset startedAt,
+        CloudExportAutomationConfig? cloudConfig)
     {
         OperationId = operationId;
         Name = name;
@@ -917,6 +1088,11 @@ internal sealed class ApiRunState
         AllowHighRisk = allowHighRisk;
         InterCapabilityDelaySeconds = interCapabilityDelaySeconds;
         StartedAt = startedAt;
+        cloudRequested = cloudConfig is not null;
+        cloudDeviceName = cloudConfig?.DeviceName;
+        cloudDelaySeconds = cloudConfig?.DelaySeconds;
+        cloudQueryStartUtc = cloudConfig?.RequestedStartTime;
+        cloudStatus = cloudRequested ? "pending" : "not_requested";
         steps = packages.Select((value, index) => new ApiRunCapabilityStep(
             value.Manifest.CapabilityId,
             value.Manifest.DisplayNameZh ?? value.Manifest.DisplayName ?? value.Manifest.CapabilityId,
@@ -935,6 +1111,7 @@ internal sealed class ApiRunState
     public DateTimeOffset StartedAt { get; }
     public CancellationToken CancellationToken => cancellation.Token;
     public string? LocalExportPath { get { lock (sync) return localExportPath; } }
+    public string? RunDirectory { get { lock (sync) return runDirectory; } }
 
     public void MarkRunning()
     {
@@ -992,9 +1169,72 @@ internal sealed class ApiRunState
             endedAt = DateTimeOffset.UtcNow;
             databaseName = Path.GetFileName(result.DatabasePath);
             localExportPath = result.LocalExportPath;
+            runDirectory = result.RunDirectory;
             error = result.Status == "COMPLETED" ? null : result.Status;
             currentCapabilityId = null;
             waitRemainingSeconds = null;
+        }
+    }
+
+    public void BeginCloudWait(DateTimeOffset queryStartUtc)
+    {
+        lock (sync)
+        {
+            if (!cloudRequested) return;
+            cloudQueryStartUtc = queryStartUtc;
+            cloudStatus = "waiting";
+            cloudWaitRemainingSeconds = cloudDelaySeconds;
+            AddLog(new ApiRunLogEntry(DateTimeOffset.UtcNow, "info", "cloud_export", $"本地测试已完成，等待 {cloudDelaySeconds ?? 0} 秒后获取云端日志。", null, true));
+        }
+    }
+
+    public void UpdateCloudWaitRemaining(int remainingSeconds)
+    {
+        lock (sync)
+        {
+            if (cloudStatus == "waiting") cloudWaitRemainingSeconds = Math.Max(0, remainingSeconds);
+        }
+    }
+
+    public void BeginCloudAcquisition()
+    {
+        lock (sync)
+        {
+            if (!cloudRequested) return;
+            cloudStatus = "running";
+            cloudWaitRemainingSeconds = null;
+            AddLog(new ApiRunLogEntry(DateTimeOffset.UtcNow, "info", "cloud_export", "正在登录 EDR 控制台并导出当前轮次的云端日志。", null, true));
+        }
+    }
+
+    public void CompleteCloudAcquisition(ApiCloudImportRecord import)
+    {
+        lock (sync)
+        {
+            cloudImport = import;
+            cloudStatus = import.Status;
+            cloudError = import.Error;
+            cloudWaitRemainingSeconds = null;
+            var succeeded = import.Status == "succeeded";
+            AddLog(new ApiRunLogEntry(
+                DateTimeOffset.UtcNow,
+                succeeded ? "info" : "warning",
+                "cloud_export",
+                succeeded ? $"云端日志已下载并绑定，共 {import.RecordCount ?? 0} 条事件。" : import.Error ?? "云端日志获取失败，可稍后手动导入。",
+                null,
+                true));
+        }
+    }
+
+    public void FailCloudAcquisition(string message)
+    {
+        lock (sync)
+        {
+            if (!cloudRequested || cloudStatus is "succeeded" or "failed") return;
+            cloudStatus = "failed";
+            cloudError = message;
+            cloudWaitRemainingSeconds = null;
+            AddLog(new ApiRunLogEntry(DateTimeOffset.UtcNow, "warning", "cloud_export", message, null, true));
         }
     }
 
@@ -1072,6 +1312,15 @@ internal sealed class ApiRunState
                 endedAt,
                 databaseName,
                 localExportPath is not null && File.Exists(localExportPath),
+                new ApiCloudAcquisitionSnapshot(
+                    cloudRequested,
+                    cloudStatus,
+                    cloudDeviceName,
+                    cloudQueryStartUtc,
+                    cloudDelaySeconds,
+                    cloudWaitRemainingSeconds,
+                    cloudImport,
+                    cloudError),
                 error);
         }
     }

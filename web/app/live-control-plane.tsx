@@ -93,6 +93,38 @@ type ApiRunLog = {
   important: boolean;
 };
 
+type ApiCloudImport = {
+  schema_version: string;
+  import_id: string;
+  run_id: string;
+  status: "succeeded" | "failed";
+  source: string;
+  device_name: string;
+  query_start_utc: string;
+  query_end_utc?: string;
+  created_at_utc: string;
+  imported_at_utc?: string;
+  file_name?: string;
+  manifest_file_name?: string;
+  format?: string;
+  record_count?: number;
+  size_bytes?: number;
+  sha256?: string;
+  error_code?: string;
+  error?: string;
+};
+
+type ApiCloudAcquisition = {
+  requested: boolean;
+  status: "not_requested" | "pending" | "waiting" | "running" | "succeeded" | "failed";
+  device_name?: string;
+  query_start_utc?: string;
+  delay_seconds?: number;
+  wait_remaining_seconds?: number;
+  import?: ApiCloudImport;
+  error?: string;
+};
+
 type ApiRun = {
   operation_id: string;
   run_id?: string;
@@ -113,6 +145,7 @@ type ApiRun = {
   ended_at_utc?: string;
   database_name?: string;
   local_export_available: boolean;
+  cloud_acquisition: ApiCloudAcquisition;
   error?: string;
 };
 
@@ -398,6 +431,14 @@ function isActive(status: RunStatus): boolean {
   return status === "queued" || status === "running" || status === "cancelling";
 }
 
+function isCloudActive(status?: ApiCloudAcquisition["status"]): boolean {
+  return status === "pending" || status === "waiting" || status === "running";
+}
+
+function shouldPollRun(run: ApiRun): boolean {
+  return isActive(run.status) || isCloudActive(run.cloud_acquisition?.status);
+}
+
 function formatTime(value?: string): string {
   if (!value) return "—";
   return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(value));
@@ -433,6 +474,11 @@ function confidenceLabel(value: EdrCandidate["confidence"]): string {
 
 function runStatusLabel(status: RunStatus): string {
   return { queued: "等待执行", running: "正在执行", cancelling: "正在取消", completed: "本地通过", completed_with_errors: "带错误完成", cancelled: "已取消", failed: "执行失败" }[status];
+}
+
+function cloudStatusLabel(status?: ApiCloudAcquisition["status"]): string {
+  if (!status || status === "not_requested") return "未启用";
+  return { pending: "等待本地测试", waiting: "等待云端日志入库", running: "正在自动下载", succeeded: "已自动绑定", failed: "云端日志获取失败" }[status];
 }
 
 function validationStatusLabel(status: ValidationStatus): string {
@@ -538,12 +584,22 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
   const [environment, setEnvironment] = useState("Windows 11 · 实验室");
   const [nextDelay, setNextDelay] = useState(3);
   const [allowHighRisk, setAllowHighRisk] = useState(false);
+  const [cloudAutomationAvailable, setCloudAutomationAvailable] = useState(false);
+  const [cloudAutomationEnabled, setCloudAutomationEnabled] = useState(false);
+  const [cloudAccount, setCloudAccount] = useState("");
+  const [cloudPassword, setCloudPassword] = useState("");
+  const [cloudDeviceName, setCloudDeviceName] = useState("");
+  const [cloudStartTime, setCloudStartTime] = useState("");
+  const [cloudDelaySeconds, setCloudDelaySeconds] = useState(30);
   const [activeRun, setActiveRun] = useState<ApiRun | null>(null);
   const [recentRuns, setRecentRuns] = useState<ApiRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState("");
   const [cloudFile, setCloudFile] = useState<FileChoice>(emptyFile);
   const [manifestFile, setManifestFile] = useState<FileChoice>(emptyFile);
   const [localFile, setLocalFile] = useState<FileChoice>(emptyFile);
+  const [cloudImports, setCloudImports] = useState<ApiCloudImport[]>([]);
+  const [selectedCloudImportId, setSelectedCloudImportId] = useState("");
+  const [cloudImportsLoading, setCloudImportsLoading] = useState(false);
   const [actionNameInputs, setActionNameInputs] = useState<Record<string, string>>(defaultActionNameInputs);
   const [childFileCreateOpNameInputs, setChildFileCreateOpNameInputs] = useState<Record<string, string>>(defaultChildFileCreateOpNameInputs);
   const [strongCorrelationTimeMs, setStrongCorrelationTimeMs] = useState(defaultStrongCorrelationTimeMs);
@@ -572,13 +628,15 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
   const connect = useCallback(async () => {
     try {
       const [health, capabilities, baselineList, mappingList, runs] = await Promise.all([
-        apiRequest<{ version: string }>("/health"),
+        apiRequest<{ version: string; host_name: string; cloud_automation_available: boolean }>("/health"),
         apiRequest<ApiCapability[]>("/capabilities"),
         apiRequest<ApiBaseline[]>("/baselines"),
         apiRequest<ApiMapping[]>("/mappings"),
         apiRequest<ApiRun[]>("/runs"),
       ]);
       setApiVersion(health.version);
+      setCloudAutomationAvailable(health.cloud_automation_available);
+      setCloudDeviceName((current) => current || health.host_name);
       setAvailableCapabilities(capabilities);
       setBaselines(baselineList);
       setMappings(mappingList);
@@ -634,19 +692,44 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
   }, []);
 
   useEffect(() => {
-    if (!activeRun || !isActive(activeRun.status)) return;
+    if (!activeRun || !shouldPollRun(activeRun)) return;
     const operationId = activeRun.operation_id;
     const timer = window.setInterval(() => {
       void apiRequest<ApiRun>(`/runs/${operationId}`).then((run) => {
         setActiveRun(run);
-        if (!isActive(run.status)) {
-          setNotice(`轮次已结束：${run.phase}`);
+        if (!shouldPollRun(run)) {
+          setNotice(run.cloud_acquisition.status === "failed" ? `本地轮次已结束；${run.cloud_acquisition.error ?? "云端日志获取失败，可手动导入。"}` : `轮次已结束：${run.phase}`);
           void refreshRuns();
+        } else if (!isActive(run.status) && isCloudActive(run.cloud_acquisition.status)) {
+          setNotice(`本地测试已完成；${cloudStatusLabel(run.cloud_acquisition.status)}。`);
         }
       }).catch((error: unknown) => setNotice(error instanceof Error ? error.message : "刷新进度失败。"));
     }, 500);
     return () => window.clearInterval(timer);
   }, [activeRun, refreshRuns]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedRunId || localFile.file || cloudFile.file) {
+      setCloudImports([]);
+      setSelectedCloudImportId("");
+      return;
+    }
+    setCloudImportsLoading(true);
+    void apiRequest<ApiCloudImport[]>(`/runs/${selectedRunId}/cloud-imports`).then((imports) => {
+      if (cancelled) return;
+      const succeeded = imports.filter((item) => item.status === "succeeded");
+      setCloudImports(succeeded);
+      setSelectedCloudImportId((current) => succeeded.some((item) => item.import_id === current) ? current : succeeded[0]?.import_id ?? "");
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        setCloudImports([]);
+        setSelectedCloudImportId("");
+        setNotice(error instanceof Error ? error.message : "读取轮次云端日志失败。");
+      }
+    }).finally(() => { if (!cancelled) setCloudImportsLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedRunId, localFile.file, cloudFile.file, recentRuns]);
 
   function toggleCapability(capabilityId: string) {
     if (!availableIds.has(capabilityId)) return;
@@ -656,6 +739,10 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
   async function startRun() {
     if (!selectedIds.length) { setNotice("请至少选择一项已有样本的能力。"); return; }
     if (hasHighRisk && !allowHighRisk) { setNotice("所选能力包含高风险样本，请先确认隔离环境。"); return; }
+    if (cloudAutomationEnabled && !cloudAutomationAvailable) { setNotice("当前机器缺少云端自动下载运行时，请先重新安装前端依赖或关闭该选项。"); return; }
+    if (cloudAutomationEnabled && (!cloudAccount.trim() || !cloudPassword || !cloudDeviceName.trim())) { setNotice("云端自动下载需要填写子账号、密码和设备名称。"); return; }
+    if (cloudAutomationEnabled && (!Number.isInteger(cloudDelaySeconds) || cloudDelaySeconds < 0 || cloudDelaySeconds > 3600)) { setNotice("云端日志等待时间必须是 0–3600 秒的整数。"); return; }
+    if (cloudAutomationEnabled && cloudStartTime && Number.isNaN(new Date(cloudStartTime).getTime())) { setNotice("日志起始时间无效。"); return; }
     try {
       const run = await apiRequest<ApiRun>("/runs", {
         method: "POST",
@@ -666,10 +753,20 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
           environment_id: environment,
           allow_high_risk: allowHighRisk,
           inter_capability_delay_seconds: nextDelay,
+          cloud_automation: {
+            enabled: cloudAutomationEnabled,
+            account: cloudAutomationEnabled ? cloudAccount : undefined,
+            password: cloudAutomationEnabled ? cloudPassword : undefined,
+            device_name: cloudAutomationEnabled ? cloudDeviceName.trim() : undefined,
+            log_start_time: cloudAutomationEnabled && cloudStartTime ? new Date(cloudStartTime).toISOString() : undefined,
+            delay_seconds: cloudDelaySeconds,
+          },
         }),
       });
+      setCloudAccount("");
+      setCloudPassword("");
       setActiveRun(run);
-      setNotice(`已提交 ${selectedIds.length} 项能力，Runner 将严格串行执行。`);
+      setNotice(cloudAutomationEnabled ? `已提交 ${selectedIds.length} 项能力；本地结束后将自动获取并绑定云端日志。` : `已提交 ${selectedIds.length} 项能力，Runner 将严格串行执行。`);
       void refreshRuns();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "轮次创建失败。");
@@ -754,12 +851,14 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
   }
 
   async function compare() {
-    if (!cloudFile.file) { setNotice("请先选择从 EDR 平台导出的云端事件文件。"); return; }
+    if (!cloudFile.file && !selectedCloudImportId) { setNotice("请选择当前轮次已绑定的云端日志，或手动导入 EDR 事件文件。"); return; }
     if (!localFile.file && !selectedRunId) { setNotice("请选择已完成轮次，或导入本地运行 JSON。"); return; }
+    if (selectedCloudImportId && (localFile.file || !selectedRunId)) { setNotice("自动绑定日志只能与其所属的本地轮次比较。"); return; }
     if (!mappingId) { setNotice("本地仓库没有可用的字段映射。"); return; }
     if (!validComparisonTimeSettings()) return;
     const form = new FormData();
-    form.append("cloud_file", cloudFile.file);
+    if (selectedCloudImportId) form.append("cloud_import_id", selectedCloudImportId);
+    else if (cloudFile.file) form.append("cloud_file", cloudFile.file);
     form.append("mapping_id", mappingId);
     form.append("strong_correlation_time_ms", String(strongCorrelationTimeMs));
     form.append("candidate_time_limit_ms", String(candidateTimeLimitMs));
@@ -772,7 +871,7 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
       .map(([capabilityId, value]) => [capabilityId, parseFilterValues(value)])
       .filter(([, values]) => values.length > 0));
     if (Object.keys(childFileCreateOpNameStandards).length) form.append("child_file_create_op_name_standards", JSON.stringify(childFileCreateOpNameStandards));
-    if (manifestFile.file) form.append("cloud_manifest", manifestFile.file);
+    if (!selectedCloudImportId && manifestFile.file) form.append("cloud_manifest", manifestFile.file);
     if (localFile.file) form.append("local_file", localFile.file);
     else form.append("operation_id", selectedRunId);
     const comparisonId = window.crypto.randomUUID();
@@ -826,13 +925,19 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
         {view === "test" && <TestWorkspace
           apiState={apiState} availableIds={availableIds} administratorRequiredIds={administratorRequiredIds} selectedIds={selectedIds} activeRun={activeRun} recentRuns={recentRuns}
           runName={runName} environment={environment} nextDelay={nextDelay} allowHighRisk={allowHighRisk} selectedRisk={selectedRisk} hasHighRisk={hasHighRisk}
+          cloudAutomationAvailable={cloudAutomationAvailable} cloudAutomationEnabled={cloudAutomationEnabled} cloudAccount={cloudAccount} cloudPassword={cloudPassword}
+          cloudDeviceName={cloudDeviceName} cloudStartTime={cloudStartTime} cloudDelaySeconds={cloudDelaySeconds}
           onRunName={setRunName} onEnvironment={setEnvironment} onNextDelay={setNextDelay} onAllowHighRisk={setAllowHighRisk}
+          onCloudAutomationEnabled={setCloudAutomationEnabled} onCloudAccount={setCloudAccount} onCloudPassword={setCloudPassword}
+          onCloudDeviceName={setCloudDeviceName} onCloudStartTime={setCloudStartTime} onCloudDelaySeconds={setCloudDelaySeconds}
           onToggle={toggleCapability} onSelectAll={() => setSelectedIds([...availableIds])} onClear={() => setSelectedIds([])}
           onStart={() => void startRun()} onCancel={() => void cancelRun()} onDownload={(run) => void downloadLocalExport(run)} onInspect={setActiveRun} onRefresh={() => void refreshRuns()}
         />}
         {view === "compare" && <CompareWorkspace
           apiState={apiState} baselines={baselines} mappings={mappings} mappingId={mappingId} onMappingId={setMappingId}
           completedRuns={completedRuns} selectedRunId={selectedRunId} onSelectedRunId={setSelectedRunId}
+          cloudImports={cloudImports} selectedCloudImportId={selectedCloudImportId} cloudImportsLoading={cloudImportsLoading}
+          onSelectedCloudImportId={(value) => { setSelectedCloudImportId(value); if (value) { setCloudFile(emptyFile); setManifestFile(emptyFile); } }}
           localFile={localFile} cloudFile={cloudFile} manifestFile={manifestFile}
           actionNameInputs={actionNameInputs} onActionNameInput={(capabilityId, value) => setActionNameInputs((current) => ({ ...current, [capabilityId]: value }))}
           childFileCreateOpNameInputs={childFileCreateOpNameInputs} onChildFileCreateOpNameInput={(capabilityId, value) => setChildFileCreateOpNameInputs((current) => ({ ...current, [capabilityId]: value }))}
@@ -840,7 +945,9 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
           strongCorrelationTimeMs={strongCorrelationTimeMs} candidateTimeLimitMs={candidateTimeLimitMs}
           onStrongCorrelationTimeMs={setStrongCorrelationTimeMs} onCandidateTimeLimitMs={setCandidateTimeLimitMs}
           onSaveComparisonTimeSettings={saveComparisonTimeSettings} onResetComparisonTimeSettings={resetComparisonTimeSettings}
-          onLocalFile={(event) => chooseFile(setLocalFile, event)} onCloudFile={(event) => chooseFile(setCloudFile, event)} onManifestFile={(event) => chooseFile(setManifestFile, event)}
+          onLocalFile={(event) => { setSelectedCloudImportId(""); chooseFile(setLocalFile, event); }}
+          onCloudFile={(event) => { setSelectedCloudImportId(""); chooseFile(setCloudFile, event); }}
+          onManifestFile={(event) => chooseFile(setManifestFile, event)}
           comparison={comparison} comparisonProgress={comparisonProgress} isComparing={isComparing} onCompare={() => void compare()}
           onDownloadJson={() => comparison && downloadJson(`validation-${comparison.comparison_id}.json`, comparison)} onDownloadConclusion={() => void downloadConclusion()}
         />}
@@ -861,7 +968,7 @@ function Sidebar({ view, apiState, apiVersion, onReconnect }: { view: ControlPla
     </nav>
     <div className="sidebar-note">
       <div className="status-line"><span className={`status-dot ${apiState === "online" ? "green" : apiState === "checking" ? "amber" : "red"}`} />{apiState === "online" ? "本地 Runner 已连接" : apiState === "checking" ? "正在连接 Runner" : "Runner 未连接"}</div>
-      <p>所有测试、数据库和导入日志都保存在本机，不直接连接 EDR 云端接口。</p>
+      <p>所有测试、数据库和导入日志都保存在本机；可选浏览器自动导出，不调用 EDR 云端 API。</p>
       {apiState === "offline" && <button className="sidebar-button" type="button" onClick={onReconnect}>重新连接</button>}
     </div>
   </aside>;
@@ -892,7 +999,10 @@ function Overview({ apiState, capabilities, baselines, recentRuns }: { apiState:
 type TestWorkspaceProps = {
   apiState: ApiState; availableIds: Set<string>; administratorRequiredIds: Set<string>; selectedIds: string[]; activeRun: ApiRun | null; recentRuns: ApiRun[];
   runName: string; environment: string; nextDelay: number; allowHighRisk: boolean; selectedRisk: string; hasHighRisk: boolean;
+  cloudAutomationAvailable: boolean; cloudAutomationEnabled: boolean; cloudAccount: string; cloudPassword: string; cloudDeviceName: string; cloudStartTime: string; cloudDelaySeconds: number;
   onRunName: (value: string) => void; onEnvironment: (value: string) => void; onNextDelay: (value: number) => void; onAllowHighRisk: (value: boolean) => void;
+  onCloudAutomationEnabled: (value: boolean) => void; onCloudAccount: (value: string) => void; onCloudPassword: (value: string) => void;
+  onCloudDeviceName: (value: string) => void; onCloudStartTime: (value: string) => void; onCloudDelaySeconds: (value: number) => void;
   onToggle: (id: string) => void; onSelectAll: () => void; onClear: () => void; onStart: () => void; onCancel: () => void;
   onDownload: (run: ApiRun) => void; onInspect: (run: ApiRun) => void; onRefresh: () => void;
 };
@@ -924,8 +1034,12 @@ function TestWorkspace(props: TestWorkspaceProps) {
           <label className="field-label">测试环境<select value={props.environment} onChange={(event) => props.onEnvironment(event.target.value)}><option>Windows 11 · 实验室</option><option>Windows Server 2022 · 实验室</option></select></label>
           <label className="field-label">下一项能力前等待（秒）<input type="number" min="0" max="300" value={props.nextDelay} onChange={(event) => props.onNextDelay(Math.min(300, Math.max(0, Number(event.target.value) || 0)))} /><span className="field-help">默认 3 秒；设置为 0 可取消等待。</span></label>
           <div className="serial-note"><strong>执行规则</strong><p>前一项完成并写入 SQLite 后，才会开始等待倒计时；倒计时结束后再启动下一项。</p></div>
+          <section className={`cloud-automation-card ${props.cloudAutomationEnabled ? "enabled" : ""}`}>
+            <label className="cloud-automation-toggle"><input type="checkbox" checked={props.cloudAutomationEnabled} disabled={!props.cloudAutomationAvailable} onChange={(event) => props.onCloudAutomationEnabled(event.target.checked)} /><span><strong>测试后自动下载并导入云端日志</strong><em>{props.cloudAutomationAvailable ? "通过本机 Edge 登录腾讯 EDR 控制台" : "自动化运行时不可用，请重新安装前端依赖"}</em></span></label>
+            {props.cloudAutomationEnabled && <div className="cloud-automation-fields"><label className="field-label">腾讯云子账号<input type="text" value={props.cloudAccount} autoComplete="off" maxLength={512} onChange={(event) => props.onCloudAccount(event.target.value)} /><span className="field-help">仅用于本轮，提交后立即从前端清除。</span></label><label className="field-label">登录密码<input type="password" value={props.cloudPassword} autoComplete="new-password" maxLength={4096} onChange={(event) => props.onCloudPassword(event.target.value)} /><span className="field-help">通过标准输入交给浏览器进程，不写入配置或日志。</span></label><label className="field-label">设备名称<input type="text" value={props.cloudDeviceName} maxLength={255} onChange={(event) => props.onCloudDeviceName(event.target.value)} /><span className="field-help">默认当前计算机名；手动修改值不会保存。</span></label><label className="field-label">日志起始时间（可选）<input type="datetime-local" step="1" value={props.cloudStartTime} onChange={(event) => props.onCloudStartTime(event.target.value)} /><span className="field-help">留空时取本轮开始时间前 10 秒。</span></label><label className="field-label">测试结束后等待（秒）<input type="number" min="0" max="3600" step="1" value={props.cloudDelaySeconds} onChange={(event) => props.onCloudDelaySeconds(Math.min(3600, Math.max(0, Number(event.target.value) || 0)))} /><span className="field-help">默认 30 秒，等待 EDR 云端完成入库。</span></label></div>}
+          </section>
           {props.hasHighRisk && <label className="risk-confirm"><input type="checkbox" checked={props.allowHighRisk} onChange={(event) => props.onAllowHighRisk(event.target.checked)} /><span>我确认在隔离测试机执行 L2/L3 高风险样本</span></label>}
-          <button className="primary-button" type="button" onClick={props.onStart} disabled={props.apiState !== "online" || Boolean(activeRun && isActive(activeRun.status))}>{activeRun && isActive(activeRun.status) ? "测试执行中" : "启动本轮测试"}<span aria-hidden="true">→</span></button>
+          <button className="primary-button" type="button" onClick={props.onStart} disabled={props.apiState !== "online" || Boolean(activeRun && shouldPollRun(activeRun))}>{activeRun && shouldPollRun(activeRun) ? "轮次处理中" : "启动本轮测试"}<span aria-hidden="true">→</span></button>
         </div>
       </section>
     </div>
@@ -938,6 +1052,7 @@ function TestWorkspace(props: TestWorkspaceProps) {
 function RunProgressPanel({ run, onCancel, onDownload }: { run: ApiRun | null; onCancel: () => void; onDownload: (run: ApiRun) => void }) {
   return <section className="panel progress-panel"><div className="panel-heading"><div><p className="section-index">C / 测试进度</p><h2>{run ? run.phase : "等待测试开始"}</h2></div>{run && <span className="line-badge">{run.progress}%</span>}</div>
     {run ? <><div className="progress-track large"><span style={{ width: `${run.progress}%` }} /></div><div className="run-progress-meta"><span>已完成 {run.completed_capabilities}/{run.capability_ids.length}</span><span>{run.wait_remaining_seconds ? `下一项将在 ${run.wait_remaining_seconds} 秒后开始` : "能力严格串行执行"}</span><span>{run.database_name ?? "正在创建独立 SQLite"}</span></div>
+      {run.cloud_acquisition?.requested && <div className={`cloud-acquisition-state ${run.cloud_acquisition.status}`}><div><span>云端日志</span><strong>{cloudStatusLabel(run.cloud_acquisition.status)}</strong></div><p>{run.cloud_acquisition.status === "waiting" ? `剩余 ${run.cloud_acquisition.wait_remaining_seconds ?? 0} 秒后启动浏览器导出` : run.cloud_acquisition.import?.status === "succeeded" ? `已绑定 ${run.cloud_acquisition.import.record_count ?? 0} 条事件 · ${run.cloud_acquisition.import.device_name}` : run.cloud_acquisition.error ?? `筛选设备：${run.cloud_acquisition.device_name ?? "—"}`}</p></div>}
       <ol className="step-timeline">{run.steps.map((step) => <li className={step.status} key={step.capability_id}><span className="step-marker">{step.sequence}</span><div><strong>{step.name_zh}</strong><span>{step.status_label}</span></div>{run.current_capability_id === step.capability_id && <em>{run.wait_remaining_seconds ? "等待中" : "当前"}</em>}</li>)}</ol>
       <div className="run-actions">{isActive(run.status) && <button className="danger-button" type="button" onClick={onCancel}>取消并清理</button>}{run.local_export_available && <button className="secondary-button" type="button" onClick={() => onDownload(run)}>下载本地结果</button>}</div>{run.error && <p className="api-error">{run.error}</p>}</>
       : <div className="empty-state"><span className="empty-glyph" aria-hidden="true">＋</span><p>启动轮次后，这里会逐项显示等待、执行和完成状态</p></div>}
@@ -985,12 +1100,13 @@ function LocalEvidencePanel({ evidence }: { evidence?: ApiLocalEvidence }) {
 }
 
 function RunHistory({ runs, onInspect, onDownload, onRefresh }: { runs: ApiRun[]; onInspect: (run: ApiRun) => void; onDownload: (run: ApiRun) => void; onRefresh: () => void }) {
-  return <section className="panel runs-panel"><div className="panel-heading"><div><p className="section-index">F / 运行记录</p><h2>本机最近轮次</h2></div><button className="text-button" type="button" onClick={onRefresh}>刷新</button></div>{runs.length ? <div className="table-wrap"><table><thead><tr><th>轮次</th><th>能力</th><th>开始时间</th><th>本地状态</th><th>操作</th></tr></thead><tbody>{runs.map((run) => <tr key={run.operation_id}><td><strong>{run.name}</strong><span className="table-id">{run.run_id ?? run.operation_id}</span></td><td>{run.capability_ids.length} 项</td><td>{formatTime(run.started_at_utc)}</td><td><span className="table-status"><span className={`status-dot ${statusDot(run.status)}`} />{runStatusLabel(run.status)}</span></td><td><div className="table-actions"><button className="text-button" type="button" onClick={() => onInspect(run)}>查看</button>{run.local_export_available && <button className="text-button" type="button" onClick={() => onDownload(run)}>下载</button>}</div></td></tr>)}</tbody></table></div> : <div className="table-empty">本机还没有测试轮次。</div>}</section>;
+  return <section className="panel runs-panel"><div className="panel-heading"><div><p className="section-index">F / 运行记录</p><h2>本机最近轮次</h2></div><button className="text-button" type="button" onClick={onRefresh}>刷新</button></div>{runs.length ? <div className="table-wrap"><table><thead><tr><th>轮次</th><th>能力</th><th>开始时间</th><th>本地状态</th><th>云端日志</th><th>操作</th></tr></thead><tbody>{runs.map((run) => <tr key={run.operation_id}><td><strong>{run.name}</strong><span className="table-id">{run.run_id ?? run.operation_id}</span></td><td>{run.capability_ids.length} 项</td><td>{formatTime(run.started_at_utc)}</td><td><span className="table-status"><span className={`status-dot ${statusDot(run.status)}`} />{runStatusLabel(run.status)}</span></td><td>{cloudStatusLabel(run.cloud_acquisition?.status)}</td><td><div className="table-actions"><button className="text-button" type="button" onClick={() => onInspect(run)}>查看</button>{run.local_export_available && <button className="text-button" type="button" onClick={() => onDownload(run)}>下载</button>}</div></td></tr>)}</tbody></table></div> : <div className="table-empty">本机还没有测试轮次。</div>}</section>;
 }
 
 type CompareWorkspaceProps = {
   apiState: ApiState; baselines: ApiBaseline[]; mappings: ApiMapping[]; mappingId: string; onMappingId: (value: string) => void;
   completedRuns: ApiRun[]; selectedRunId: string; onSelectedRunId: (value: string) => void;
+  cloudImports: ApiCloudImport[]; selectedCloudImportId: string; cloudImportsLoading: boolean; onSelectedCloudImportId: (value: string) => void;
   localFile: FileChoice; cloudFile: FileChoice; manifestFile: FileChoice;
   onLocalFile: (event: ChangeEvent<HTMLInputElement>) => void; onCloudFile: (event: ChangeEvent<HTMLInputElement>) => void; onManifestFile: (event: ChangeEvent<HTMLInputElement>) => void;
   actionNameInputs: Record<string, string>; onActionNameInput: (capabilityId: string, value: string) => void;
@@ -1005,10 +1121,11 @@ type CompareWorkspaceProps = {
 function CompareWorkspace(props: CompareWorkspaceProps) {
   return <>
     <PageHeader index="03" eyebrow="离线比较" title="核对 EDR 日志" description="选择本地运行结果和 EDR 导出日志。系统会按 BASELINE 逐条说明要求是什么、是否满足，以及依据是什么。" apiState={props.apiState} />
-    <section className="panel compare-input-panel"><div className="panel-heading compare-heading"><div><p className="section-index">A / 准备输入</p><h2>选择本地结果与 EDR 日志</h2><p className="panel-description">文件只会发送到 127.0.0.1 的本地比较服务。</p></div><button className="primary-button compact" type="button" onClick={props.onCompare} disabled={props.isComparing || props.apiState !== "online"}>{props.isComparing ? "正在逐项核对" : "开始离线比较"}<span aria-hidden="true">→</span></button></div>
+    <section className="panel compare-input-panel"><div className="panel-heading compare-heading"><div><p className="section-index">A / 准备输入</p><h2>选择本地结果与 EDR 日志</h2><p className="panel-description">优先使用当前轮次已绑定日志；手动文件只会发送到 127.0.0.1 的本地比较服务。</p></div><button className="primary-button compact" type="button" onClick={props.onCompare} disabled={props.isComparing || props.apiState !== "online"}>{props.isComparing ? "正在逐项核对" : "开始离线比较"}<span aria-hidden="true">→</span></button></div>
       <div className="compare-select-grid"><label className="field-label">使用已完成轮次<select value={props.selectedRunId} onChange={(event) => props.onSelectedRunId(event.target.value)} disabled={Boolean(props.localFile.file)}><option value="">请选择本机轮次</option>{props.completedRuns.map((run) => <option value={run.operation_id} key={run.operation_id}>{run.name} · {formatTime(run.started_at_utc)}</option>)}</select><span className="field-help">导入本地 JSON 后，此选择会被替代。</span></label><label className="field-label">EDR 字段映射<select value={props.mappingId} onChange={(event) => props.onMappingId(event.target.value)}>{props.mappings.map((mapping) => <option value={mapping.profile_id} key={mapping.profile_id}>{mapping.vendor} {mapping.product} · {mapping.profile_id}</option>)}</select><span className="field-help">负责把厂商字段转换成统一字段。</span></label></div>
+      <div className={`cloud-import-binding ${props.selectedCloudImportId ? "selected" : ""}`}><label className="field-label">当前轮次已绑定的云端日志<select value={props.selectedCloudImportId} disabled={!props.selectedRunId || Boolean(props.localFile.file) || props.cloudImportsLoading} onChange={(event) => props.onSelectedCloudImportId(event.target.value)}><option value="">{props.cloudImportsLoading ? "正在发现已绑定日志…" : "手动导入云端日志"}</option>{props.cloudImports.map((item, index) => <option value={item.import_id} key={item.import_id}>{index === 0 ? "最新 · " : ""}{formatTime(item.imported_at_utc ?? item.created_at_utc)} · {item.record_count ?? 0} 条 · {item.device_name}</option>)}</select><span className="field-help">仅发现解析成功且完整性校验通过的日志；有多份时默认选择最新一份。</span></label>{props.selectedCloudImportId ? <div className="cloud-import-summary"><span>已自动选择</span><strong>{props.cloudImports.find((item) => item.import_id === props.selectedCloudImportId)?.file_name ?? "cloud.json"}</strong><em>比较时自动使用同目录导出清单，无需再次上传。</em></div> : <div className="cloud-import-summary manual"><span>手动模式</span><strong>{props.cloudImports.length ? `${props.cloudImports.length} 份可用绑定` : "该轮次没有可用绑定"}</strong><em>仍可在下方导入 JSON/JSONL 和导出清单。</em></div>}</div>
       <div className="comparison-time-settings"><div className="comparison-time-heading"><div><span>时间关联参数</span><strong>先裁剪候选，再判断强关联</strong><p>候选上限越小，需要评分的无关 EDR 日志越少；两项都以本地行为时间为基准。</p></div><div><button className="text-button" type="button" onClick={props.onResetComparisonTimeSettings}>恢复默认</button><button className="secondary-button" type="button" onClick={props.onSaveComparisonTimeSettings}>保存到本机</button></div></div><div className="comparison-time-grid"><label className="field-label">强关联时间（ms）<input type="number" min="1" max="60000" step="1" value={props.strongCorrelationTimeMs} onChange={(event) => props.onStrongCorrelationTimeMs(Number(event.target.value))} /><span className="field-help">默认 15 ms；命中身份锚点且时间差不超过该值时形成强时间证据。</span></label><label className="field-label">无关联候选事件时间上限（ms）<input type="number" min="1" max="300000" step="1" value={props.candidateTimeLimitMs} onChange={(event) => props.onCandidateTimeLimitMs(Number(event.target.value))} /><span className="field-help">默认 1000 ms（1 秒）；超出范围的 EDR 事件不进入锚点评分和候选展示。</span></label></div></div>
-      <div className="upload-grid"><FileSlot id="local-file" step="1" title="本地运行 JSON" hint="可选：用于比较其他机器或历史轮次" choice={props.localFile} onChange={props.onLocalFile} /><FileSlot id="cloud-file" step="2" title="EDR 云端事件" hint="必需：支持 JSON 数组或 JSONL" choice={props.cloudFile} required onChange={props.onCloudFile} /><FileSlot id="manifest-file" step="3" title="云端导出清单" hint="建议：证明主机与时间范围完整" choice={props.manifestFile} onChange={props.onManifestFile} /></div>
+      <div className="upload-grid"><FileSlot id="local-file" step="1" title="本地运行 JSON" hint="可选：用于比较其他机器或历史轮次" choice={props.localFile} onChange={props.onLocalFile} /><FileSlot id="cloud-file" step="2" title="EDR 云端事件" hint={props.selectedCloudImportId ? "已选择轮次绑定；导入文件将切换为手动模式" : "必需：支持 JSON 数组或 JSONL"} choice={props.cloudFile} required={!props.selectedCloudImportId} onChange={props.onCloudFile} /><FileSlot id="manifest-file" step="3" title="云端导出清单" hint={props.selectedCloudImportId ? "已自动使用绑定清单" : "建议：证明主机与时间范围完整"} choice={props.manifestFile} onChange={props.onManifestFile} /></div>
       {props.comparisonProgress && <ComparisonProgressBar progress={props.comparisonProgress} isComparing={props.isComparing} />}
     </section>
     <EdrFilterSettings

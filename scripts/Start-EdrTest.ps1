@@ -54,6 +54,8 @@ $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
 if ($null -eq $pwsh) { throw "未找到 PowerShell 7（pwsh）。" }
 $pnpm = Get-Command pnpm -ErrorAction SilentlyContinue
 if ($null -eq $pnpm) { throw "未找到 pnpm。请安装 Node.js 22.13+ 和 pnpm 11.9+。" }
+$node = Get-Command node -ErrorAction SilentlyContinue
+if ($null -eq $node) { throw "未找到 Node.js。云端日志自动下载与前端构建都需要 Node.js 22.13+。" }
 if (-not (Test-PortAvailable $ApiPort)) { throw "API 端口 $ApiPort 已被占用，请先停止占用程序或使用 -ApiPort 指定其他端口。" }
 if (-not (Test-PortAvailable $WebPort)) { throw "前端端口 $WebPort 已被占用，请先停止占用程序或使用 -WebPort 指定其他端口。" }
 
@@ -111,7 +113,7 @@ if (-not $SkipBuild) {
 }
 
 if (-not (Test-Path $runnerDll)) { throw "找不到 Runner：$runnerDll。请移除 -SkipBuild 后重试。" }
-if (-not (Test-Path (Join-Path $webRoot "node_modules\.modules.yaml"))) {
+if (-not (Test-Path (Join-Path $webRoot "node_modules\.modules.yaml")) -or -not (Test-Path (Join-Path $webRoot "node_modules\playwright-core\package.json"))) {
     Write-Host "[3/5] 安装前端依赖…" -ForegroundColor Cyan
     Push-Location $webRoot
     try {
@@ -151,6 +153,7 @@ try {
         "--host", "127.0.0.1",
         "--port", $ApiPort,
         "--repo-root", $repositoryRoot,
+        "--node-path", $node.Source,
         "--allowed-origin", $webUrl,
         "--allowed-origin", "http://localhost:$WebPort"
     )

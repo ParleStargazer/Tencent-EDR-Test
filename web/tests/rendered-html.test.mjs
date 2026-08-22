@@ -50,6 +50,7 @@ test("测试子页面展示串行设置、逐项进度与两级日志", async ()
   assert.match(html, /重点日志/);
   assert.match(html, /详细日志/);
   assert.match(html, /Runner 与 Controller 输出/);
+  assert.match(html, /测试后自动下载并导入云端日志/);
   assert.match(html, /进程创建/);
   assert.match(html, /Process Creation/);
 });
@@ -64,6 +65,8 @@ test("离线比较子页面解释 BASELINE 并展示逐项满足情况", async (
   assert.match(html, /要求满足情况/);
   assert.match(html, /本地运行 JSON/);
   assert.match(html, /EDR 云端事件/);
+  assert.match(html, /当前轮次已绑定的云端日志/);
+  assert.match(html, /有多份时默认选择最新一份/);
   assert.match(html, /开始离线比较/);
 });
 
@@ -110,6 +113,8 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   const testRoute = await readFile(new URL("../app/test/page.tsx", import.meta.url), "utf8");
   const compareRoute = await readFile(new URL("../app/compare/page.tsx", import.meta.url), "utf8");
   const localApi = await readFile(new URL("../../src/EdrTest/LocalApiService.cs", import.meta.url), "utf8");
+  const cloudService = await readFile(new URL("../../src/EdrTest/TencentEdrCloudExportService.cs", import.meta.url), "utf8");
+  const cloudAutomation = await readFile(new URL("../automation/tencent-edr-cloud-export.mjs", import.meta.url), "utf8");
 
   assert.doesNotMatch(packageJson, /react-loading-skeleton|drizzle-orm|tailwindcss/);
   assert.match(hosting, /"d1": null/);
@@ -121,6 +126,17 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /127\.0\.0\.1:4317\/api/);
   assert.match(livePage, /apiRequest<ApiRun>\("\/runs"/);
   assert.match(livePage, /apiRequest<ValidationResult>\("\/compare"/);
+  assert.match(livePage, /cloud_automation:/);
+  assert.match(livePage, /腾讯云子账号/);
+  assert.match(livePage, /日志起始时间（可选）/);
+  assert.match(livePage, /cloud_import_id/);
+  assert.match(livePage, /\/runs\/\$\{selectedRunId\}\/cloud-imports/);
+  assert.match(localApi, /MapGet\("\/api\/runs\/\{operationId\}\/cloud-imports"/);
+  assert.match(localApi, /cloud_import_id/);
+  assert.match(cloudService, /RedirectStandardInput = true/);
+  assert.match(cloudService, /process\.StandardInput\.WriteAsync/);
+  assert.doesNotMatch(cloudService, /ArgumentList\.Add\(config\.(?:Account|Password)\)/);
+  assert.match(cloudAutomation, /readRequestFromStdin/);
   assert.match(livePage, /action_name_standards/);
   assert.match(livePage, /edrtest\.actionNameStandards\.v1/);
   assert.match(livePage, /child_file_create_op_name_standards/);

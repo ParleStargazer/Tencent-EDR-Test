@@ -27,6 +27,7 @@ public static class Program
 
         var failures = new List<string>();
         await RunTest("能力包路径和参数校验", TestManifestValidation, failures);
+        await RunTest("云端导出 JSON/JSONL 统一解析与凭据隔离", TestCloudExportFile, failures);
         await RunTest("协议 JSON 遇到短暂文件独占时可靠重试", TestReliableProtocolFile, failures);
         await RunTest("多子测试使用独立程序与事件序号入库", TestMultipleObservationIndexes, failures);
         await RunTest("L2/L3 默认风险门禁", TestHighRiskGate, failures);
@@ -75,6 +76,33 @@ public static class Program
         var path = Path.Combine(fixture.Path, "capability.json");
         File.WriteAllText(path, manifest.ToJsonString(JsonDefaults.Options));
         AssertThrows<InvalidDataException>(() => CapabilityCatalog.Load(path));
+        return Task.CompletedTask;
+    }
+
+    private static Task TestCloudExportFile()
+    {
+        using var fixture = TestDirectory.Create();
+        var arrayPath = Path.Combine(fixture.Path, "cloud-array.json");
+        File.WriteAllText(arrayPath, "[{\"id\":1},{\"id\":2}]");
+        var array = CloudExportFile.Inspect(arrayPath);
+        Assert(array.Format == "json_array" && array.RecordCount == 2, "JSON 数组识别或记录计数不正确。");
+        Assert(array.Sha256.Length == 64 && array.SizeBytes > 0, "云端日志完整性摘要不正确。");
+
+        var objectPath = Path.Combine(fixture.Path, "cloud-object.json");
+        File.WriteAllText(objectPath, "{\"id\":1}");
+        var single = CloudExportFile.Inspect(objectPath);
+        Assert(single.Format == "json_object" && single.RecordCount == 1, "单个 JSON 对象应作为一条云端事件导入。");
+
+        var jsonlPath = Path.Combine(fixture.Path, "cloud.jsonl");
+        File.WriteAllText(jsonlPath, "{\"id\":1}\n{\"id\":2}\n");
+        var jsonl = CloudExportFile.Inspect(jsonlPath);
+        Assert(jsonl.Format == "jsonl" && jsonl.RecordCount == 2, "JSONL 识别或记录计数不正确。");
+
+        var invalidPath = Path.Combine(fixture.Path, "invalid.json");
+        File.WriteAllText(invalidPath, "[{\"id\":1},2]");
+        AssertThrows<InvalidDataException>(() => CloudExportFile.Inspect(invalidPath));
+        var persistedFields = typeof(ApiCloudImportRecord).GetProperties().Select(value => value.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert(!persistedFields.Contains("account") && !persistedFields.Contains("password"), "云端导入记录不得包含账号或密码字段。");
         return Task.CompletedTask;
     }
 

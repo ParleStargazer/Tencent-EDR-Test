@@ -1539,29 +1539,8 @@ public static class CompareService
         foreach (var input in paths)
         {
             var path = Path.GetFullPath(input);
-            var text = File.ReadAllText(path);
-            var trimmed = text.AsSpan().TrimStart();
-            if (!trimmed.IsEmpty && trimmed[0] == '[')
-            {
-                using var document = JsonDocument.Parse(text);
-                var index = 0;
-                foreach (var item in document.RootElement.EnumerateArray())
-                {
-                    if (item.ValueKind == JsonValueKind.Object) MapRecord(item, $"{path}#/{index}", mapping, events, observations);
-                    index++;
-                }
-            }
-            else
-            {
-                var index = 0;
-                foreach (var line in File.ReadLines(path))
-                {
-                    if (string.IsNullOrWhiteSpace(line)) continue;
-                    using var document = JsonDocument.Parse(line);
-                    if (document.RootElement.ValueKind == JsonValueKind.Object) MapRecord(document.RootElement, $"{path}#/{index}", mapping, events, observations);
-                    index++;
-                }
-            }
+            CloudExportFile.ReadObjectRecords(path, (record, index, _) =>
+                MapRecord(record, $"{path}#/{index}", mapping, events, observations));
         }
         return new CloudLoadResult(events, observations);
     }
