@@ -28,13 +28,15 @@ test("云端自动化请求只接受受限的本地 JSON 下载目标", () => {
     postLoginTimeoutMs: 180_000,
     stepSettleMs: 1_600,
     domainLookupDelayMs: 15_000,
+    filterActionDelayMs: 150,
     queryResultSettleMs: 6_000,
   });
-  assert.deepEqual(buildAutomationTiming(debugValue, { stepTimeoutMs: 9_000, postLoginTimeoutMs: 12_000, stepSettleMs: 0, domainLookupDelayMs: 0, queryResultSettleMs: 0 }), {
+  assert.deepEqual(buildAutomationTiming(debugValue, { stepTimeoutMs: 9_000, postLoginTimeoutMs: 12_000, stepSettleMs: 0, domainLookupDelayMs: 0, filterActionDelayMs: 0, queryResultSettleMs: 0 }), {
     stepTimeoutMs: 9_000,
     postLoginTimeoutMs: 12_000,
     stepSettleMs: 0,
     domainLookupDelayMs: 0,
+    filterActionDelayMs: 0,
     queryResultSettleMs: 0,
   });
   assert.throws(() => validateRequest({ ...value, debug_mode: "true" }), /debug_mode 必须是布尔值/);
@@ -167,6 +169,7 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
         postLoginTimeoutMs: 10_000,
         stepSettleMs: 0,
         domainLookupDelayMs: 1,
+        filterActionDelayMs: 1,
         queryResultSettleMs: 1,
         onEvent: (event) => events.push(event),
       });

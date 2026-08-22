@@ -9,6 +9,7 @@ const DEFAULT_STEP_TIMEOUT_MS = 60_000;
 const DEFAULT_POST_LOGIN_TIMEOUT_MS = 180_000;
 const DEFAULT_STEP_SETTLE_MS = 1_600;
 const DEFAULT_DOMAIN_LOOKUP_DELAY_MS = 15_000;
+const DEFAULT_FILTER_ACTION_DELAY_MS = 150;
 const DEFAULT_QUERY_RESULT_SETTLE_MS = 6_000;
 
 class AutomationError extends Error {
@@ -31,6 +32,7 @@ export function buildAutomationTiming(request, runtime = {}) {
     postLoginTimeoutMs: timingValue(runtime.postLoginTimeoutMs, Math.min(DEFAULT_POST_LOGIN_TIMEOUT_MS, maximum), 1_000, maximum),
     stepSettleMs: timingValue(runtime.stepSettleMs, DEFAULT_STEP_SETTLE_MS, 0, 5_000),
     domainLookupDelayMs: timingValue(runtime.domainLookupDelayMs, DEFAULT_DOMAIN_LOOKUP_DELAY_MS, 0, 30_000),
+    filterActionDelayMs: timingValue(runtime.filterActionDelayMs, DEFAULT_FILTER_ACTION_DELAY_MS, 0, 2_000),
     queryResultSettleMs: timingValue(runtime.queryResultSettleMs, DEFAULT_QUERY_RESULT_SETTLE_MS, 0, 30_000),
   };
 }
@@ -196,71 +198,80 @@ async function selectDefaultDomain(page, timing, events) {
   return "selected";
 }
 
-async function addHostFilter(page, deviceName, timeoutMs) {
-  await clickFirst([
-    page.locator("div").filter({ hasText: /^添加筛选条件$/ }),
-    page.getByText("添加筛选条件", { exact: true }),
-  ], timeoutMs);
-  await clickFirst([
-    page.locator("div").filter({ hasText: /^选择字段$/ }),
-    page.getByText("选择字段", { exact: true }),
-  ], timeoutMs);
-  await clickFirst([
-    page.locator("#tea-overlay-root").getByText("主机名称（系统环境信息）", { exact: true }),
-    page.getByText("主机名称（系统环境信息）", { exact: true }),
-  ], timeoutMs);
-  await clickFirst([
-    page.locator("div").filter({ hasText: /^选择关系$/ }),
-    page.getByText("选择关系", { exact: true }),
-  ], timeoutMs);
-  await clickFirst([page.getByRole("listitem", { name: "等于", exact: true }), page.getByText("等于", { exact: true })], timeoutMs);
-  await clickFirst([
-    page.locator("div").filter({ hasText: /^请指定$/ }),
-    page.getByText("请指定", { exact: true }),
-  ], timeoutMs);
-  const input = await fillFirst([
-    page.getByRole("textbox", { name: "请输入添加内容" }),
-    page.locator('input[placeholder*="请输入添加内容"]'),
-  ], deviceName, timeoutMs);
-  await input.press("Enter");
-  await clickFirst([
-    page.locator("#tea-overlay-root").getByRole("button", { name: "确定", exact: true }),
-    page.getByRole("button", { name: "确定", exact: true }),
-  ], timeoutMs);
+async function runFilterAction(page, timing, action) {
+  if (timing.filterActionDelayMs > 0) await page.waitForTimeout(timing.filterActionDelayMs);
+  const result = await action();
+  if (timing.filterActionDelayMs > 0) await page.waitForTimeout(timing.filterActionDelayMs);
+  return result;
 }
 
-async function addStartTimeFilter(page, queryStartLocal, timeoutMs) {
-  await clickFirst([
-    page.getByRole("button", { name: /添加条件/ }),
-    page.locator('button:has-text("添加条件")'),
-  ], timeoutMs);
-  await clickFirst([
+async function addHostFilter(page, deviceName, timing) {
+  const timeoutMs = timing.stepTimeoutMs;
+  await runFilterAction(page, timing, () => clickFirst([
+    page.locator("div").filter({ hasText: /^添加筛选条件$/ }),
+    page.getByText("添加筛选条件", { exact: true }),
+  ], timeoutMs));
+  await runFilterAction(page, timing, () => clickFirst([
     page.locator("div").filter({ hasText: /^选择字段$/ }),
     page.getByText("选择字段", { exact: true }),
-  ], timeoutMs);
-  await clickFirst([
-    page.getByRole("listitem").filter({ hasText: "其他信息" }),
-    page.getByText("其他信息", { exact: true }),
-  ], timeoutMs);
-  await clickFirst([
-    page.getByRole("listitem").filter({ hasText: "采集时间" }),
-    page.getByText("采集时间", { exact: true }),
-  ], timeoutMs);
-  await clickFirst([
+  ], timeoutMs));
+  await runFilterAction(page, timing, () => clickFirst([
+    page.locator("#tea-overlay-root").getByText("主机名称（系统环境信息）", { exact: true }),
+    page.getByText("主机名称（系统环境信息）", { exact: true }),
+  ], timeoutMs));
+  await runFilterAction(page, timing, () => clickFirst([
     page.locator("div").filter({ hasText: /^选择关系$/ }),
     page.getByText("选择关系", { exact: true }),
-  ], timeoutMs);
-  await clickFirst([page.getByRole("listitem", { name: "大于", exact: true }), page.getByText("大于", { exact: true })], timeoutMs);
-  const timeInput = await firstVisible([
+  ], timeoutMs));
+  await runFilterAction(page, timing, () => clickFirst([page.getByRole("listitem", { name: "等于", exact: true }), page.getByText("等于", { exact: true })], timeoutMs));
+  await runFilterAction(page, timing, () => clickFirst([
+    page.locator("div").filter({ hasText: /^请指定$/ }),
+    page.getByText("请指定", { exact: true }),
+  ], timeoutMs));
+  const input = await runFilterAction(page, timing, () => fillFirst([
+    page.getByRole("textbox", { name: "请输入添加内容" }),
+    page.locator('input[placeholder*="请输入添加内容"]'),
+  ], deviceName, timeoutMs));
+  await runFilterAction(page, timing, () => input.press("Enter"));
+  await runFilterAction(page, timing, () => clickFirst([
+    page.locator("#tea-overlay-root").getByRole("button", { name: "确定", exact: true }),
+    page.getByRole("button", { name: "确定", exact: true }),
+  ], timeoutMs));
+}
+
+async function addStartTimeFilter(page, queryStartLocal, timing) {
+  const timeoutMs = timing.stepTimeoutMs;
+  await runFilterAction(page, timing, () => clickFirst([
+    page.getByRole("button", { name: /添加条件/ }),
+    page.locator('button:has-text("添加条件")'),
+  ], timeoutMs));
+  await runFilterAction(page, timing, () => clickFirst([
+    page.locator("div").filter({ hasText: /^选择字段$/ }),
+    page.getByText("选择字段", { exact: true }),
+  ], timeoutMs));
+  await runFilterAction(page, timing, () => clickFirst([
+    page.getByRole("listitem").filter({ hasText: "其他信息" }),
+    page.getByText("其他信息", { exact: true }),
+  ], timeoutMs));
+  await runFilterAction(page, timing, () => clickFirst([
+    page.getByRole("listitem").filter({ hasText: "采集时间" }),
+    page.getByText("采集时间", { exact: true }),
+  ], timeoutMs));
+  await runFilterAction(page, timing, () => clickFirst([
+    page.locator("div").filter({ hasText: /^选择关系$/ }),
+    page.getByText("选择关系", { exact: true }),
+  ], timeoutMs));
+  await runFilterAction(page, timing, () => clickFirst([page.getByRole("listitem", { name: "大于", exact: true }), page.getByText("大于", { exact: true })], timeoutMs));
+  const timeInput = await runFilterAction(page, timing, () => firstVisible([
     page.getByRole("textbox", { name: "选择时间" }),
     page.locator('input[placeholder*="选择时间"]'),
-  ], timeoutMs);
-  await timeInput.click();
-  await timeInput.fill(queryStartLocal);
-  await timeInput.press("Enter");
-  await clickFirst([
+  ], timeoutMs));
+  await runFilterAction(page, timing, () => timeInput.click());
+  await runFilterAction(page, timing, () => timeInput.fill(queryStartLocal));
+  await runFilterAction(page, timing, () => timeInput.press("Enter"));
+  await runFilterAction(page, timing, () => clickFirst([
     page.locator("#tea-overlay-root").getByRole("button", { name: "检索", exact: true }),
-  ], timeoutMs);
+  ], timeoutMs));
 }
 
 function redactText(value, secrets) {
@@ -347,7 +358,7 @@ export async function runTencentEdrExport(rawRequest, runtime = {}) {
       });
     }
 
-    events.debug("wait_policy", `等待策略：常规控件最长 ${timing.stepTimeoutMs} ms，登录后状态最长 ${timing.postLoginTimeoutMs} ms，每步稳定等待 ${timing.stepSettleMs} ms，域定位前等待 ${timing.domainLookupDelayMs} ms，时间检索结果等待 ${timing.queryResultSettleMs} ms。`);
+    events.debug("wait_policy", `等待策略：常规控件最长 ${timing.stepTimeoutMs} ms，登录后状态最长 ${timing.postLoginTimeoutMs} ms，每步稳定等待 ${timing.stepSettleMs} ms，域定位前等待 ${timing.domainLookupDelayMs} ms，查询条件操作前后各等待 ${timing.filterActionDelayMs} ms，时间检索结果等待 ${timing.queryResultSettleMs} ms。`);
     await settleStep(page, timing, events, "create_context");
 
     events.emit("open_login_page", "正在打开腾讯云登录页面。", 20);
@@ -395,12 +406,12 @@ export async function runTencentEdrExport(rawRequest, runtime = {}) {
     events.debug("event_view_ready", "全部事件视图已确认并完成稳定等待。");
 
     events.emit("apply_host_filter", "正在添加主机名称筛选条件。", 63);
-    await addHostFilter(page, request.device_name, timing.stepTimeoutMs);
+    await addHostFilter(page, request.device_name, timing);
     await settleStep(page, timing, events, "apply_host_filter");
     events.debug("host_filter_applied", "主机名称筛选已应用并完成稳定等待。");
 
     events.emit("apply_time_filter", "正在添加采集时间筛选并执行检索。", 71);
-    await addStartTimeFilter(page, request.query_start_local, timing.stepTimeoutMs);
+    await addStartTimeFilter(page, request.query_start_local, timing);
     if (timing.queryResultSettleMs > 0) {
       events.debug("query_result_wait", `时间筛选已提交，等待检索结果加载 ${timing.queryResultSettleMs} ms。`);
       await page.waitForTimeout(timing.queryResultSettleMs);
