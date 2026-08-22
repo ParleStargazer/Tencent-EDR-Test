@@ -1,16 +1,17 @@
 """腾讯 EDR 云端日志导出的独立浏览器自动化调试脚本。
 
 本文件与平台当前使用的 Node.js 自动化链路隔离，便于单独修改、运行和观察。
-默认启动可见的 Microsoft Edge；密码只通过终端交互读取，不进入命令行历史。
+默认启动可见的 Microsoft Edge。运行前只需修改本文件顶部的用户配置区，
+执行过程中不会再从终端读取账号、密码或其他参数。
 
 首次运行前，创建项目专用 Conda 环境并安装 Python Playwright：
 
     conda create --prefix .\\.conda python=3.13 -y
     .\\.conda\\python.exe -m pip install playwright
 
-本脚本直接使用系统已安装的 Edge，不需要执行 ``playwright install``。示例：
+本脚本直接使用系统已安装的 Edge，不需要执行 ``playwright install``。修改配置后运行：
 
-    .\\.conda\\python.exe scripts\\TencentEdrCloudExportDebug.py --account "子账号" --device-name "EDR-TEST-01" --query-start "2026-08-22 16:00:00" --output "C:\\Temp\\tencent-edr-cloud.json" --pause-on-error
+    .\\.conda\\python.exe scripts\\TencentEdrCloudExportDebug.py
 
 选择器、等待参数和执行步骤全部保留在本文件中，调试完成后可直接对照修改
 ``web/automation/tencent-edr-cloud-export.mjs``。
@@ -18,8 +19,6 @@
 
 from __future__ import annotations
 
-import argparse
-import getpass
 import json
 import os
 import re
@@ -57,8 +56,21 @@ if os.name == "nt":
 
 
 # ---------------------------------------------------------------------------
-# 调试时优先修改这里：入口地址和默认等待策略
+# 用户配置区：运行前只修改本段，不需要传入任何命令行参数
 # ---------------------------------------------------------------------------
+
+# 警告：真实密码只用于本机临时调试，不要提交填写真实凭据后的文件。
+TENCENT_CLOUD_ACCOUNT = "请填写腾讯云子账号"
+TENCENT_CLOUD_PASSWORD = "请填写腾讯云登录密码"
+EDR_DEVICE_NAME = "请填写 EDR 设备名称"
+
+# 留空时自动使用脚本启动时间前 10 秒；也可填写 "2026-08-22 16:00:00"。
+QUERY_START_LOCAL = ""
+
+OUTPUT_PATH = Path(r"C:\Temp\tencent-edr-cloud.json")
+DEBUG_LOG_PATH = Path(r"C:\Temp\tencent-edr-cloud-debug.jsonl")
+FAILURE_SCREENSHOT_PATH = Path(r"C:\Temp\tencent-edr-cloud-error.png")
+TRACE_OUTPUT_PATH = Path(r"C:\Temp\tencent-edr-cloud-trace.zip")
 
 LOGIN_URL = (
     "https://cloud.tencent.com/login?"
@@ -70,6 +82,12 @@ DEFAULT_NAVIGATION_TIMEOUT_MS = 300_000
 DEFAULT_ACTION_SETTLE_MS = 1_000
 DEFAULT_POLL_INTERVAL_MS = 200
 DEFAULT_SLOW_MO_MS = 150
+
+HEADLESS = False
+PAUSE_ON_ERROR = False
+KEEP_BROWSER_OPEN_AFTER_SUCCESS = False
+SAVE_SCREENSHOT_ON_ERROR = False
+ENABLE_TRACE = False
 
 
 class AutomationFailure(RuntimeError):
@@ -967,153 +985,82 @@ def run_automation(
             browser.close()
 
 
-def positive_int(value: str) -> int:
-    parsed = int(value)
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("必须为正整数")
-    return parsed
+def validate_configuration() -> tuple[str, str, str, str, Path, Path]:
+    account = TENCENT_CLOUD_ACCOUNT.strip()
+    password = TENCENT_CLOUD_PASSWORD
+    device_name = EDR_DEVICE_NAME.strip()
+    required_values = (
+        ("TENCENT_CLOUD_ACCOUNT", account),
+        ("TENCENT_CLOUD_PASSWORD", password),
+        ("EDR_DEVICE_NAME", device_name),
+    )
+    for name, value in required_values:
+        if not value or value.startswith("请填写"):
+            raise AutomationFailure(
+                "INVALID_CONFIGURATION", f"请先在文件顶部配置 {name}。"
+            )
 
-
-def non_negative_int(value: str) -> int:
-    parsed = int(value)
-    if parsed < 0:
-        raise argparse.ArgumentTypeError("必须为非负整数")
-    return parsed
-
-
-def parse_args() -> argparse.Namespace:
-    default_start = (datetime.now().astimezone() - timedelta(seconds=10)).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-    parser = argparse.ArgumentParser(
-        description="独立调试腾讯 EDR 云端日志导出浏览器自动化。",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument("--account", help="腾讯云子账号；留空时交互输入")
-    parser.add_argument(
-        "--device-name", default=os.environ.get("COMPUTERNAME"), help="EDR 设备名称"
-    )
-    parser.add_argument(
-        "--query-start",
-        default=default_start,
-        help="采集时间下限，格式 yyyy-MM-dd HH:mm:ss",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path.cwd() / "tencent-edr-cloud-debug.json",
-        help="JSON 下载路径",
-    )
-    parser.add_argument(
-        "--log-file", type=Path, help="JSONL 调试日志路径；默认与输出文件同目录"
-    )
-    parser.add_argument(
-        "--headless", action="store_true", help="使用无头 Edge；调试时不建议启用"
-    )
-    parser.add_argument(
-        "--slow-mo-ms",
-        type=non_negative_int,
-        default=DEFAULT_SLOW_MO_MS,
-        help="可见浏览器动作减速",
-    )
-    parser.add_argument(
-        "--step-timeout-ms",
-        type=positive_int,
-        default=DEFAULT_STEP_TIMEOUT_MS,
-        help="普通元素最长等待时间",
-    )
-    parser.add_argument(
-        "--post-login-timeout-ms",
-        type=positive_int,
-        default=DEFAULT_POST_LOGIN_TIMEOUT_MS,
-        help="登录后域选择器或事件页最长等待时间",
-    )
-    parser.add_argument(
-        "--navigation-timeout-ms",
-        type=positive_int,
-        default=DEFAULT_NAVIGATION_TIMEOUT_MS,
-        help="页面导航和文件下载最长等待时间",
-    )
-    parser.add_argument(
-        "--action-settle-ms",
-        type=non_negative_int,
-        default=DEFAULT_ACTION_SETTLE_MS,
-        help="每次点击、填写或按键后的稳定等待时间",
-    )
-    parser.add_argument(
-        "--poll-interval-ms",
-        type=positive_int,
-        default=DEFAULT_POLL_INTERVAL_MS,
-        help="元素轮询间隔",
-    )
-    parser.add_argument(
-        "--pause-on-error",
-        action="store_true",
-        help="失败时保持可见浏览器，按 Enter 后退出",
-    )
-    parser.add_argument(
-        "--keep-open", action="store_true", help="成功后保持可见浏览器，按 Enter 后退出"
-    )
-    parser.add_argument(
-        "--screenshot-on-error",
-        action="store_true",
-        help="失败时保存全页截图；可能包含敏感信息",
-    )
-    parser.add_argument(
-        "--trace",
-        action="store_true",
-        help="保存 Playwright trace；会包含页面 DOM 等敏感信息",
-    )
-    return parser.parse_args()
-
-
-def validate_inputs(args: argparse.Namespace) -> tuple[str, str, str, str, Path, Path]:
-    account = (args.account or input("腾讯云子账号：")).strip()
-    password = getpass.getpass("腾讯云登录密码：")
-    device_name = (args.device_name or "").strip()
-    if not account:
-        raise AutomationFailure("INVALID_INPUT", "腾讯云子账号不能为空。")
-    if not password:
-        raise AutomationFailure("INVALID_INPUT", "腾讯云登录密码不能为空。")
-    if not device_name:
-        raise AutomationFailure("INVALID_INPUT", "EDR 设备名称不能为空。")
+    query_start = QUERY_START_LOCAL.strip()
+    if not query_start:
+        query_start = (datetime.now().astimezone() - timedelta(seconds=10)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
     try:
-        time.strptime(args.query_start, "%Y-%m-%d %H:%M:%S")
+        time.strptime(query_start, "%Y-%m-%d %H:%M:%S")
     except ValueError as error:
         raise AutomationFailure(
-            "INVALID_INPUT", "query-start 必须使用 yyyy-MM-dd HH:mm:ss 格式。"
+            "INVALID_CONFIGURATION",
+            "QUERY_START_LOCAL 必须留空或使用 yyyy-MM-dd HH:mm:ss 格式。",
         ) from error
-    output = args.output.expanduser().resolve()
-    if output.suffix.lower() != ".json":
-        raise AutomationFailure("INVALID_INPUT", "output 必须是 .json 文件。")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    log_file = (
-        (args.log_file or output.with_suffix(".debug.jsonl")).expanduser().resolve()
+
+    numeric_values = (
+        ("DEFAULT_STEP_TIMEOUT_MS", DEFAULT_STEP_TIMEOUT_MS, 1),
+        ("DEFAULT_POST_LOGIN_TIMEOUT_MS", DEFAULT_POST_LOGIN_TIMEOUT_MS, 1),
+        ("DEFAULT_NAVIGATION_TIMEOUT_MS", DEFAULT_NAVIGATION_TIMEOUT_MS, 1),
+        ("DEFAULT_ACTION_SETTLE_MS", DEFAULT_ACTION_SETTLE_MS, 0),
+        ("DEFAULT_POLL_INTERVAL_MS", DEFAULT_POLL_INTERVAL_MS, 1),
+        ("DEFAULT_SLOW_MO_MS", DEFAULT_SLOW_MO_MS, 0),
     )
-    return account, password, device_name, args.query_start, output, log_file
+    for name, value, minimum in numeric_values:
+        if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+            raise AutomationFailure(
+                "INVALID_CONFIGURATION", f"{name} 必须是不小于 {minimum} 的整数。"
+            )
+
+    output = OUTPUT_PATH.expanduser().resolve()
+    log_file = DEBUG_LOG_PATH.expanduser().resolve()
+    if output.suffix.lower() != ".json":
+        raise AutomationFailure(
+            "INVALID_CONFIGURATION", "OUTPUT_PATH 必须是 .json 文件。"
+        )
+    if log_file.suffix.lower() != ".jsonl":
+        raise AutomationFailure(
+            "INVALID_CONFIGURATION", "DEBUG_LOG_PATH 必须是 .jsonl 文件。"
+        )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    return account, password, device_name, query_start, output, log_file
 
 
 def main() -> int:
-    args = parse_args()
     logger: DebugLogger | None = None
     try:
-        account, password, device_name, query_start, output, log_file = validate_inputs(
-            args
+        account, password, device_name, query_start, output, log_file = (
+            validate_configuration()
         )
         logger = DebugLogger(log_file, (account, password))
         timing = Timing(
-            step_timeout_ms=args.step_timeout_ms,
-            post_login_timeout_ms=args.post_login_timeout_ms,
-            navigation_timeout_ms=args.navigation_timeout_ms,
-            action_settle_ms=args.action_settle_ms,
-            poll_interval_ms=args.poll_interval_ms,
+            step_timeout_ms=DEFAULT_STEP_TIMEOUT_MS,
+            post_login_timeout_ms=DEFAULT_POST_LOGIN_TIMEOUT_MS,
+            navigation_timeout_ms=DEFAULT_NAVIGATION_TIMEOUT_MS,
+            action_settle_ms=DEFAULT_ACTION_SETTLE_MS,
+            poll_interval_ms=DEFAULT_POLL_INTERVAL_MS,
         )
-        # first_visible 使用模块常量轮询；保留一处显式赋值，方便用户调试时直接修改参数。
-        global DEFAULT_POLL_INTERVAL_MS
-        DEFAULT_POLL_INTERVAL_MS = timing.poll_interval_ms
-        trace_path = output.with_suffix(".trace.zip") if args.trace else None
+        trace_path = TRACE_OUTPUT_PATH.expanduser().resolve() if ENABLE_TRACE else None
         screenshot_path = (
-            output.with_suffix(".error.png") if args.screenshot_on_error else None
+            FAILURE_SCREENSHOT_PATH.expanduser().resolve()
+            if SAVE_SCREENSHOT_ON_ERROR
+            else None
         )
         with sync_playwright() as playwright:
             run_automation(
@@ -1125,12 +1072,12 @@ def main() -> int:
                 output,
                 timing,
                 logger,
-                headless=args.headless,
-                slow_mo_ms=args.slow_mo_ms,
+                headless=HEADLESS,
+                slow_mo_ms=DEFAULT_SLOW_MO_MS,
                 trace_path=trace_path,
                 screenshot_on_error=screenshot_path,
-                pause_on_error=args.pause_on_error,
-                keep_open=args.keep_open,
+                pause_on_error=PAUSE_ON_ERROR,
+                keep_open=KEEP_BROWSER_OPEN_AFTER_SUCCESS,
             )
         print(
             json.dumps(
