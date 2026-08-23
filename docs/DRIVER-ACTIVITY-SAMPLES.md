@@ -63,7 +63,7 @@
 
 加载的默认前端 `Action.Name` 消歧值为 `LoadDriver`。修改与卸载默认留空，保持“留空不筛选”的既有逻辑。
 
-## 6. 构建与环境初始化
+## 6. 构建与启动环境检查
 
 开发机理论构建（不加载驱动）：
 
@@ -81,25 +81,33 @@ $cert = & .\script\driver\New-DriverTestCertificate.ps1
   -CertificateThumbprint $cert.Thumbprint -UpdatePrebuilt
 ```
 
-根目录入口默认只读检查，不执行管理员变更：
+启动平台时会检测管理员权限、当前启动项的 `testsigning`、驱动包签名以及公开证书信任状态：
 
 ```powershell
-pwsh -File .\初始化驱动测试环境.ps1
+pwsh -File .\scripts\Start-EdrTest.ps1
 ```
 
-管理员在隔离测试机确认后显式应用：
+当签名包、`drivers\cert\EdrTestDriverTest.cer` 和元数据指纹一致，但证书尚未完整导入时，交互式启动会询问：
+
+```text
+是否导入测试用证书到 LocalMachine\Root 和 LocalMachine\TrustedPublisher？[y/N]
+```
+
+用户确认后才会导入公开证书。自动化环境可以用 `-DriverCertificateImportMode Always` 明确允许导入，或用 `Never` 禁止询问和导入；默认值为 `Prompt`。平台不会执行 `bcdedit /set testsigning on`、安装 INF 或自动重启。
+
+`testsigning` 必须由测试机管理员在隔离环境中自行开启并重启，例如：
 
 ```powershell
-pwsh -File .\初始化驱动测试环境.ps1 -Apply -InstallPackage
+bcdedit /set testsigning on
 ```
 
-该操作可能导入公开证书到两个 LocalMachine 信任区、执行 `bcdedit /set testsigning on`，并按需用 `pnputil` 添加 INF。脚本不会自动重启，除非额外提供 `-Restart`。Secure Boot 或组织策略可能阻止 testsigning；脚本会停止并保留明确错误。
+若未以管理员身份启动、未开启 `testsigning`、驱动包未签名、公开证书缺失或证书不受信任，启动过程仍会继续，但会明确提示驱动能力不可用；Controller 运行时仍以 `SKIPPED / ENVIRONMENT_NOT_READY` 封存，不会计作 EDR 检测失败。Secure Boot 或组织策略可能阻止测试签名模式，平台不会尝试绕过这些安全策略。
 
 ## 7. 手工验收
 
 建议只在有快照的专用 VM 中执行，选择三项能力并显式确认 L3。验收顺序：
 
-1. 先运行根目录初始化入口的只读检查，确认 `ready_for_load=True`；
+1. 以管理员身份启动平台，确认启动日志显示 `testsigning=已开启`、`测试证书=已导入`；
 2. 导入同一主机、同一测试时间窗的 EDR JSON；
 3. 加载应优先找到路径、MD5、大小和时间均一致的 `LoadDriver`；
 4. 修改和卸载应显示本地条件通过，但在当前产品日志中保持 EDR 未满足；

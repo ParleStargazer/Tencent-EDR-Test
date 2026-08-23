@@ -69,20 +69,21 @@ test("驱动三项能力具备 L3 清单、本地绝对基准、直接映射与�
   assert.match(liveFront, /"win\.driver\.load": "LoadDriver"/);
 });
 
-test("驱动环境初始化脚本默认只读，管理员变更均需显式 Apply", async () => {
-  const rootEntry = await readText("初始化驱动测试环境.ps1");
-  const initialize = await readText("script/driver/Initialize-DriverTestEnvironment.ps1");
+test("平台启动检测驱动环境，证书导入需确认且不修改 testsigning", async () => {
+  const start = await readText("scripts/Start-EdrTest.ps1");
   const environment = await readText("script/driver/Test-DriverEnvironment.ps1");
   const certificate = await readText("script/driver/New-DriverTestCertificate.ps1");
   const build = await readText("script/driver/Build-DriverPackage.ps1");
 
-  assert.match(rootEntry, /Initialize-DriverTestEnvironment\.ps1/);
-  assert.match(initialize, /if \(-not \$Apply\)/);
-  assert.match(initialize, /LocalMachine\\\$store/);
-  assert.match(initialize, /bcdedit\.exe/);
-  assert.match(initialize, /\/set testsigning on/);
-  assert.match(initialize, /pnputil\.exe/);
-  assert.match(initialize, /ShouldProcess/);
+  assert.match(start, /DriverCertificateImportMode = "Prompt"/);
+  assert.match(start, /WindowsBuiltInRole\]::Administrator/);
+  assert.match(start, /Test-CurrentBootTestSigning/);
+  assert.match(start, /是否导入测试用证书到 LocalMachine\\Root 和 LocalMachine\\TrustedPublisher/);
+  assert.match(start, /Import-DriverTestCertificate/);
+  assert.match(start, /certificateMatchesPackage/);
+  assert.match(start, /不开启会导致驱动加载与卸载能力不可用/);
+  assert.doesNotMatch(start, /\/set testsigning on/);
+  assert.doesNotMatch(start, /pnputil\.exe/);
   assert.match(environment, /ready_for_load/);
   assert.match(certificate, /KeyExportPolicy NonExportable/);
   assert.match(certificate, /PrivateKeyExported = \$false/);

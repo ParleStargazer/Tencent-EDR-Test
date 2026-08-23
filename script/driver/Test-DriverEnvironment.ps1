@@ -29,7 +29,7 @@ $certificate = $null
 if (Test-Path -LiteralPath $CertificatePath -PathType Leaf) {
     $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($CertificatePath)
 }
-$thumbprint = $certificate?.Thumbprint
+$thumbprint = if ($null -eq $certificate) { $null } else { $certificate.Thumbprint }
 function Test-Store([string]$StoreName, [string]$Thumbprint) {
     if ([string]::IsNullOrWhiteSpace($Thumbprint)) { return $false }
     return $null -ne (Get-ChildItem "Cert:\LocalMachine\$StoreName" -ErrorAction SilentlyContinue |
@@ -43,6 +43,8 @@ $metadataPath = Join-Path $DriverPackagePath "driver-package.json"
 $metadata = if (Test-Path -LiteralPath $metadataPath) {
     Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
 } else { $null }
+$metadataSha256 = if ($null -eq $metadata) { $null } else { [string]$metadata.sha256 }
+$metadataSignatureValid = if ($null -eq $metadata) { $false } else { $metadata.signature_valid -eq $true }
 $actualHash = if (Test-Path -LiteralPath $driverPath) {
     (Get-FileHash -LiteralPath $driverPath -Algorithm SHA256).Hash.ToLowerInvariant()
 } else { $null }
@@ -67,13 +69,13 @@ $result = [ordered]@{
     catalog_exists = Test-Path -LiteralPath $catPath
     metadata_exists = Test-Path -LiteralPath $metadataPath
     driver_sha256 = $actualHash
-    metadata_sha256 = $metadata?.sha256
-    hash_matches_metadata = $null -ne $actualHash -and $actualHash -eq $metadata?.sha256
-    package_signature_valid = $metadata?.signature_valid
+    metadata_sha256 = $metadataSha256
+    hash_matches_metadata = $null -ne $actualHash -and $actualHash -eq $metadataSha256
+    package_signature_valid = $metadataSignatureValid
     ready_for_load = $isAdministrator -and $testSigning `
         -and (Test-Store "Root" $thumbprint) -and (Test-Store "TrustedPublisher" $thumbprint) `
         -and (Test-Path -LiteralPath $driverPath) -and (Test-Path -LiteralPath $catPath) `
-        -and $null -ne $actualHash -and $actualHash -eq $metadata?.sha256 -and $metadata?.signature_valid
+        -and $null -ne $actualHash -and $actualHash -eq $metadataSha256 -and $metadataSignatureValid
 }
 
 if ($AsJson) { $result | ConvertTo-Json -Depth 10 } else { [pscustomobject]$result | Format-List }

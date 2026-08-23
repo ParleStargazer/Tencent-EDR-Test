@@ -53,10 +53,14 @@
 
 准备好 .NET 8 SDK（或更高版本）、PowerShell 7、Node.js 22.13+ 和 pnpm 11.9+ 后，双击仓库根目录的 `启动平台.cmd`。脚本会构建框架与能力包、构建前端、启动本地服务并打开 `http://127.0.0.1:3000/`。
 
-五项用户账号活动、三项服务活动、组策略修改、三项 permanent WMI subscription 活动、虚拟磁盘挂载和驱动三项需要管理员权限。组策略修改与虚拟磁盘挂载为 L2，驱动三项为 L3，都必须在前端确认高风险或向 CLI 传入 `--allow-high-risk`。启动脚本及对应能力包构建脚本会检测当前 PowerShell 权限；非管理员仍可构建并使用其他能力，但会收到推荐以管理员身份重启的提示。驱动 Controller 还会核验驱动哈希、签名、公开证书信任与 testsigning；不满足时封存为 `SKIPPED / ENVIRONMENT_NOT_READY`，不会尝试加载驱动或计作 EDR 失败。
+五项用户账号活动、三项服务活动、组策略修改、三项 permanent WMI subscription 活动、虚拟磁盘挂载和驱动三项需要管理员权限。组策略修改与虚拟磁盘挂载为 L2，驱动三项为 L3，都必须在前端确认高风险或向 CLI 传入 `--allow-high-risk`。启动脚本会检测管理员权限与当前启动项的 `testsigning`；若签名包对应的公开测试证书尚未受信任，会询问是否导入到 `LocalMachine\Root` 和 `LocalMachine\TrustedPublisher`。平台不会自动开启 `testsigning`，不开启时会明确提示驱动能力不可用。驱动 Controller 仍会复核驱动哈希、签名和证书信任；不满足时封存为 `SKIPPED / ENVIRONMENT_NOT_READY`，不会尝试加载驱动或计作 EDR 失败。
 
 ```powershell
 pwsh -NoProfile -File scripts/Start-EdrTest.ps1
+
+# 非交互环境明确允许或禁止导入与签名包匹配的公开测试证书
+pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -DriverCertificateImportMode Always
+pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -DriverCertificateImportMode Never
 
 # 已有最新构建产物时可快速启动
 pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -SkipBuild

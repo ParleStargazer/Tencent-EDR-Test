@@ -5,7 +5,9 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$WebPort = 3000,
     [switch]$SkipBuild,
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [ValidateSet("Prompt", "Always", "Never")]
+    [string]$DriverCertificateImportMode = "Prompt"
 )
 
 $ErrorActionPreference = "Stop"
@@ -68,6 +70,159 @@ function Join-NativeArguments([object[]]$Arguments) {
     return (($Arguments | ForEach-Object { ConvertTo-NativeArgument ([string]$_) }) -join " ")
 }
 
+function Test-CurrentBootTestSigning {
+    $bcdedit = Join-Path $env:SystemRoot "System32\bcdedit.exe"
+    if (-not (Test-Path -LiteralPath $bcdedit -PathType Leaf)) {
+        Write-Warning "找不到 bcdedit.exe，无法检测 testsigning。"
+        return $false
+    }
+    try {
+        $info = [System.Diagnostics.ProcessStartInfo]::new()
+        $info.FileName = $bcdedit
+        $info.UseShellExecute = $false
+        $info.CreateNoWindow = $true
+        $info.RedirectStandardOutput = $true
+        $info.RedirectStandardError = $true
+        [void]$info.ArgumentList.Add("/enum")
+        [void]$info.ArgumentList.Add("{current}")
+        $process = [System.Diagnostics.Process]::Start($info)
+        if ($null -eq $process) { throw "无法启动 bcdedit.exe。" }
+        try {
+            $output = $process.StandardOutput.ReadToEnd()
+            $errorOutput = $process.StandardError.ReadToEnd()
+            if (-not $process.WaitForExit(10000)) {
+                $process.Kill($true)
+                throw "bcdedit 环境检测超时。"
+            }
+            if ($process.ExitCode -ne 0) { throw "bcdedit 环境检测失败：$errorOutput" }
+            return $output -match '(?im)^\s*testsigning\s+(Yes|On|是|开启)\s*$'
+        } finally {
+            $process.Dispose()
+        }
+    } catch {
+        Write-Warning "无法检测当前启动项的 testsigning 状态：$($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Test-LocalMachineCertificate([string]$StoreName, [string]$Thumbprint) {
+    if ([string]::IsNullOrWhiteSpace($Thumbprint)) { return $false }
+    $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+        $StoreName,
+        [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
+    try {
+        $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+        return $store.Certificates.Find(
+            [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
+            $Thumbprint,
+            $false).Count -gt 0
+    } catch {
+        return $false
+    } finally {
+        $store.Dispose()
+    }
+}
+
+function Import-DriverTestCertificate(
+    [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate
+) {
+    foreach ($storeName in @("Root", "TrustedPublisher")) {
+        if (Test-LocalMachineCertificate $storeName $Certificate.Thumbprint) { continue }
+        $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+            $storeName,
+            [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
+        try {
+            $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+            $store.Add($Certificate)
+        } finally {
+            $store.Dispose()
+        }
+    }
+}
+
+function Test-DriverEnvironmentAtStartup([bool]$IsAdministrator, [string]$ImportMode) {
+    $testSigningEnabled = Test-CurrentBootTestSigning
+    $metadataPath = Join-Path $repositoryRoot "drivers\EdrTestDriver\prebuilt\x64\driver-package.json"
+    $certificatePath = Join-Path $repositoryRoot "drivers\cert\EdrTestDriverTest.cer"
+    $metadata = $null
+    try {
+        if (Test-Path -LiteralPath $metadataPath -PathType Leaf) {
+            $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+        }
+    } catch {
+        Write-Warning "驱动包元数据无法读取：$($_.Exception.Message)"
+    }
+
+    $packageSigned = $null -ne $metadata -and $metadata.signature_valid -eq $true
+    $expectedThumbprint = if ($null -eq $metadata) { $null } else { [string]$metadata.certificate_thumbprint }
+    $certificate = $null
+    $certificateMatchesPackage = $false
+    try {
+        if (Test-Path -LiteralPath $certificatePath -PathType Leaf) {
+            $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certificatePath)
+            $certificateMatchesPackage = $packageSigned `
+                -and -not [string]::IsNullOrWhiteSpace($expectedThumbprint) `
+                -and $certificate.Thumbprint -eq $expectedThumbprint.Replace(" ", "").ToUpperInvariant()
+        }
+
+        $certificateTrusted = $false
+        if ($certificateMatchesPackage) {
+            $certificateTrusted = (Test-LocalMachineCertificate "Root" $certificate.Thumbprint) `
+                -and (Test-LocalMachineCertificate "TrustedPublisher" $certificate.Thumbprint)
+        }
+
+        if ($certificateMatchesPackage -and -not $certificateTrusted) {
+            if (-not $IsAdministrator) {
+                Write-Warning "测试用公开证书尚未导入 LocalMachine\Root 和 LocalMachine\TrustedPublisher；当前不是管理员，无法导入。"
+            } else {
+                $shouldImport = $ImportMode -eq "Always"
+                if ($ImportMode -eq "Prompt") {
+                    $canPrompt = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+                    if ($canPrompt) {
+                        $answer = Read-Host "是否导入测试用证书到 LocalMachine\Root 和 LocalMachine\TrustedPublisher？[y/N]"
+                        $shouldImport = $answer -match '^(?i:y|yes|是)$'
+                    } else {
+                        Write-Warning "当前会话不能交互询问是否导入测试用证书；可在交互式终端启动，或使用 -DriverCertificateImportMode Always。"
+                    }
+                }
+                if ($shouldImport) {
+                    try {
+                        Import-DriverTestCertificate $certificate
+                        $certificateTrusted = (Test-LocalMachineCertificate "Root" $certificate.Thumbprint) `
+                            -and (Test-LocalMachineCertificate "TrustedPublisher" $certificate.Thumbprint)
+                        if ($certificateTrusted) {
+                            Write-Host "[驱动环境] 测试用公开证书已导入两个 LocalMachine 信任区。" -ForegroundColor Green
+                        } else {
+                            Write-Warning "测试用公开证书导入后未能在两个 LocalMachine 信任区中确认。"
+                        }
+                    } catch {
+                        Write-Warning "导入测试用公开证书失败：$($_.Exception.Message)"
+                    }
+                } else {
+                    Write-Warning "未导入测试用公开证书；驱动加载与卸载能力不可用。"
+                }
+            }
+        } elseif (-not $packageSigned) {
+            Write-Warning "当前预构建驱动包未签名，无法准备有效的测试证书信任；驱动加载与卸载能力不可用。"
+        } elseif (-not $certificateMatchesPackage) {
+            Write-Warning "测试用公开证书缺失或与签名驱动包指纹不一致；驱动加载与卸载能力不可用。"
+        }
+
+        $administratorText = if ($IsAdministrator) { "是" } else { "否" }
+        $testSigningText = if ($testSigningEnabled) { "已开启" } else { "未开启" }
+        $certificateText = if ($certificateTrusted) { "已导入" } else { "未就绪" }
+        Write-Host "[驱动环境] 管理员=$administratorText；testsigning=$testSigningText；测试证书=$certificateText。" -ForegroundColor Cyan
+        if (-not $testSigningEnabled) {
+            Write-Warning "当前启动项未开启 testsigning。平台不会自动修改启动配置；不开启会导致驱动加载与卸载能力不可用。"
+        }
+        if (-not $IsAdministrator) {
+            Write-Warning "驱动三项能力要求管理员权限，当前运行中将不可用。"
+        }
+    } finally {
+        if ($null -ne $certificate) { $certificate.Dispose() }
+    }
+}
+
 if (Test-Path $statePath) {
     try {
         $existing = Get-Content $statePath -Raw | ConvertFrom-Json
@@ -105,6 +260,7 @@ try {
 if (-not $isAdministrator) {
     Write-Warning "当前平台未以管理员身份运行。建议关闭后使用管理员权限重新运行 scripts\Start-EdrTest.ps1；五项用户账号活动、三项服务活动、组策略修改、三项 WMI permanent subscription、虚拟磁盘挂载和三项驱动活动需要管理员权限，否则会被跳过或不可用。"
 }
+[void](Test-DriverEnvironmentAtStartup -IsAdministrator $isAdministrator -ImportMode $DriverCertificateImportMode)
 
 [System.IO.Directory]::CreateDirectory($logRoot) | Out-Null
 

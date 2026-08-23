@@ -46,8 +46,7 @@ $scripts = @(
     "script\driver\New-DriverTestCertificate.ps1",
     "script\driver\Build-DriverPackage.ps1",
     "script\driver\Test-DriverEnvironment.ps1",
-    "script\driver\Initialize-DriverTestEnvironment.ps1",
-    "初始化驱动测试环境.ps1",
+    "scripts\Start-EdrTest.ps1",
     "scripts\Build-DriverActivitySamples.ps1",
     "scripts\Test-DriverActivitySamples.ps1"
 )
