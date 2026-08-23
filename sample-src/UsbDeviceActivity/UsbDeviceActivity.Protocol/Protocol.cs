@@ -1,4 +1,5 @@
 using Microsoft.Win32.SafeHandles;
+using Microsoft.Win32;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -97,6 +98,74 @@ public sealed class UsbDriverPackageLease
     public string? PublishedInfPath { get; init; }
     public required string RootInstanceId { get; init; }
     public required bool RebootRequired { get; init; }
+    public required UsbDriverInstallDiagnostic Diagnostic { get; init; }
+}
+
+public sealed class UsbDriverInstallDiagnostic
+{
+    public string Stage { get; set; } = "not_started";
+    public int? Win32Error { get; set; }
+    public bool DriverStorePresent { get; set; }
+    public string? PublishedInfPath { get; set; }
+    public bool RootDevNodePresent { get; set; }
+    public string? RootInstanceId { get; set; }
+    public string? BoundService { get; set; }
+    public string? BoundDriverKey { get; set; }
+    public string? BoundInfName { get; set; }
+    public uint? ConfigManagerResult { get; set; }
+    public uint? DevNodeStatus { get; set; }
+    public uint? DevNodeProblemCode { get; set; }
+    public bool DevNodeStarted { get; set; }
+    public bool RebootRequired { get; set; }
+    public string? DriverInitializationStage { get; set; }
+    public uint? DriverInitializationStatus { get; set; }
+    public string? DriverInterfaceGuid { get; set; }
+    public string ExpectedInterfaceGuid { get; set; } = UsbTestConstants.DeviceInterfaceGuid.ToString("B").ToUpperInvariant();
+    public int? InterfaceQueryWin32Error { get; set; }
+    public bool InterfacePresent { get; set; }
+    public string? InterfacePath { get; set; }
+
+    public string Describe() => string.Join("；", new[]
+    {
+        $"stage={Stage}",
+        $"win32={(Win32Error is null ? "n/a" : Win32Error)}",
+        $"driver_store={DriverStorePresent}",
+        $"published_inf={PublishedInfPath ?? "n/a"}",
+        $"root_devnode={RootDevNodePresent}",
+        $"instance={RootInstanceId ?? "n/a"}",
+        $"service={BoundService ?? "n/a"}",
+        $"bound_inf={BoundInfName ?? "n/a"}",
+        $"cm_result={Hex(ConfigManagerResult)}",
+        $"devnode_status={Hex(DevNodeStatus)}",
+        $"problem={Problem(DevNodeProblemCode)}",
+        $"running={DevNodeStarted}",
+        $"driver_stage={DriverInitializationStage ?? "n/a"}",
+        $"driver_status={Hex(DriverInitializationStatus)}",
+        $"driver_guid={DriverInterfaceGuid ?? "n/a"}",
+        $"controller_guid={ExpectedInterfaceGuid}",
+        $"interface_query_win32={(InterfaceQueryWin32Error is null ? "n/a" : InterfaceQueryWin32Error)}",
+        $"interface={InterfacePresent}",
+    });
+
+    private static string Hex(uint? value) => value is null ? "n/a" : $"0x{value.Value:X8}";
+    private static string Problem(uint? value) => value switch
+    {
+        null => "n/a",
+        0 => "CM_PROB_NONE(0)",
+        10 => "CM_PROB_FAILED_START(10)",
+        31 => "CM_PROB_FAILED_ADD(31)",
+        39 => "CM_PROB_DRIVER_FAILED_LOAD(39)",
+        52 => "CM_PROB_UNSIGNED_DRIVER(52)",
+        _ => $"CM_PROB_{value.Value}",
+    };
+}
+
+public sealed class UsbDriverInstallException : Exception
+{
+    public UsbDriverInstallException(string message, UsbDriverInstallDiagnostic diagnostic, Exception? inner = null)
+        : base($"{message}；{diagnostic.Describe()}", inner) => Diagnostic = diagnostic;
+
+    public UsbDriverInstallDiagnostic Diagnostic { get; }
 }
 
 public static class UsbUdeClient
@@ -156,22 +225,41 @@ public static class UsbUdeClient
         throw new TimeoutException("等待 UsbUdeTest 设备接口超时。");
     }
 
-    public static string? TryGetInterfacePath()
+    public static string? TryGetInterfacePath() => TryGetInterfacePath(out _);
+
+    public static string? TryGetInterfacePath(out int? queryError)
     {
+        queryError = null;
         var interfaceGuid = UsbTestConstants.DeviceInterfaceGuid;
         var set = SetupDiGetClassDevsW(ref interfaceGuid, null, IntPtr.Zero, SetupDiGetClassDevsFlags.Present | SetupDiGetClassDevsFlags.DeviceInterface);
-        if (set == InvalidHandleValue) return null;
+        if (set == InvalidHandleValue)
+        {
+            queryError = Marshal.GetLastWin32Error();
+            return null;
+        }
         try
         {
             var data = new SpDeviceInterfaceData { Size = (uint)Marshal.SizeOf<SpDeviceInterfaceData>() };
-            if (!SetupDiEnumDeviceInterfaces(set, IntPtr.Zero, ref interfaceGuid, 0, ref data)) return null;
+            if (!SetupDiEnumDeviceInterfaces(set, IntPtr.Zero, ref interfaceGuid, 0, ref data))
+            {
+                queryError = Marshal.GetLastWin32Error();
+                return null;
+            }
             _ = SetupDiGetDeviceInterfaceDetailW(set, ref data, IntPtr.Zero, 0, out var required, IntPtr.Zero);
-            if (required == 0) return null;
+            if (required == 0)
+            {
+                queryError = Marshal.GetLastWin32Error();
+                return null;
+            }
             var detail = Marshal.AllocHGlobal(checked((int)required));
             try
             {
                 Marshal.WriteInt32(detail, IntPtr.Size == 8 ? 8 : 6);
-                if (!SetupDiGetDeviceInterfaceDetailW(set, ref data, detail, required, out _, IntPtr.Zero)) return null;
+                if (!SetupDiGetDeviceInterfaceDetailW(set, ref data, detail, required, out _, IntPtr.Zero))
+                {
+                    queryError = Marshal.GetLastWin32Error();
+                    return null;
+                }
                 return Marshal.PtrToStringUni(IntPtr.Add(detail, 4));
             }
             finally { Marshal.FreeHGlobal(detail); }
@@ -363,12 +451,16 @@ public static class UsbDriverInstaller
 {
     private const uint SpCopyNewerOrSame = 0x00000004;
     private const uint SpdrpHardwareId = 0x00000001;
+    private const uint SpdrpService = 0x00000004;
+    private const uint SpdrpDriver = 0x00000009;
     private const uint DicdGenerateId = 0x00000001;
     private const uint DifRegisterDevice = 0x00000019;
     private const uint DifRemove = 0x00000005;
     private const uint InstallFlagForce = 0x00000001;
     private const uint InstallFlagNonInteractive = 0x00000004;
     private const uint DigcfAllClasses = 0x00000004;
+    private const uint CrSuccess = 0x00000000;
+    private const uint DnStarted = 0x00000008;
     private const int ErrorFileExists = 80;
     private const int ErrorNoMoreItems = 259;
     private static readonly IntPtr InvalidHandleValue = new(-1);
@@ -377,34 +469,96 @@ public static class UsbDriverInstaller
     {
         infPath = Path.GetFullPath(infPath);
         if (!File.Exists(infPath)) throw new FileNotFoundException("USB UDE INF 不存在。", infPath);
-        var published = new StringBuilder(512);
-        var copied = SetupCopyOEMInfW(infPath, null, 1, SpCopyNewerOrSame, published, published.Capacity, out _, IntPtr.Zero);
-        if (!copied && Marshal.GetLastWin32Error() != ErrorFileExists) UsbDeviceDiscovery.ThrowLastWin32("SetupCopyOEMInf");
-        var publishedPath = copied && published.Length > 0 ? published.ToString() : null;
+        var diagnostic = new UsbDriverInstallDiagnostic { Stage = "driver_store" };
+        string? publishedPath = null;
         try
         {
-            var rootId = FindRootInstanceId();
-            if (rootId is null) rootId = CreateRootDevice();
+            var published = new StringBuilder(512);
+            var copied = SetupCopyOEMInfW(infPath, null, 1, SpCopyNewerOrSame, published,
+                published.Capacity, out _, IntPtr.Zero);
+            var copyError = copied ? 0 : Marshal.GetLastWin32Error();
+            if (!copied && copyError != ErrorFileExists)
+            {
+                diagnostic.Win32Error = copyError;
+                throw Failure("Driver Store 导入失败", diagnostic, new Win32Exception(copyError));
+            }
+            publishedPath = ResolvePublishedInfPath(infPath, published.ToString());
+            diagnostic.PublishedInfPath = publishedPath;
+            diagnostic.DriverStorePresent = !string.IsNullOrWhiteSpace(publishedPath)
+                && File.Exists(publishedPath);
+            if (!diagnostic.DriverStorePresent)
+                throw Failure("SetupCopyOEMInf 返回后未能在 Driver Store 确认对应 OEM INF", diagnostic);
+
+            diagnostic.Stage = "root_devnode";
+            var root = FindRootDevNode();
+            var rootId = root?.InstanceId ?? CreateRootDevice();
+            root = FindRootDevNode(rootId);
+            ApplyRootSnapshot(diagnostic, root);
+            if (root is null)
+                throw Failure("DIF_REGISTERDEVICE 返回后未能确认 ROOT\\USB_UDE_TEST devnode", diagnostic);
+
+            ClearDriverInitializationDiagnostic();
+            diagnostic.Stage = "driver_binding_start";
             if (!UpdateDriverForPlugAndPlayDevicesW(IntPtr.Zero, UsbTestConstants.HardwareId, infPath,
                     InstallFlagForce | InstallFlagNonInteractive, out var rebootRequired))
-                UsbDeviceDiscovery.ThrowLastWin32("UpdateDriverForPlugAndPlayDevices");
-            _ = UsbUdeClient.WaitForInterface(15_000);
+            {
+                var error = Marshal.GetLastWin32Error();
+                diagnostic.Win32Error = error;
+                RefreshDiagnostic(diagnostic, rootId);
+                throw Failure("UpdateDriverForPlugAndPlayDevices 安装或启动驱动失败", diagnostic,
+                    new Win32Exception(error));
+            }
+            diagnostic.RebootRequired = rebootRequired;
+            RefreshDiagnostic(diagnostic, rootId);
+            if (!string.Equals(diagnostic.BoundService, "UsbUdeTest", StringComparison.OrdinalIgnoreCase))
+                throw Failure("ROOT devnode 未绑定 UsbUdeTest 服务", diagnostic);
+            if (!string.Equals(diagnostic.BoundInfName, Path.GetFileName(publishedPath), StringComparison.OrdinalIgnoreCase))
+                throw Failure("ROOT devnode 绑定的 OEM INF 与本轮 Driver Store 包不一致", diagnostic);
+            if (!diagnostic.DevNodeStarted)
+                throw Failure("UsbUdeTest devnode 未进入 Running，停止等待设备接口", diagnostic);
+            ValidateInterfaceGuid(diagnostic);
+
+            diagnostic.Stage = "device_interface";
+            var interfaceWait = System.Diagnostics.Stopwatch.StartNew();
+            while (interfaceWait.ElapsedMilliseconds < 15_000)
+            {
+                RefreshDiagnostic(diagnostic, rootId);
+                if (!diagnostic.RootDevNodePresent || !diagnostic.DevNodeStarted
+                    || diagnostic.DevNodeProblemCode is > 0)
+                    throw Failure("等待接口期间 UsbUdeTest devnode 停止或出现 PnP Problem", diagnostic);
+                ValidateInterfaceGuid(diagnostic);
+                var interfacePath = UsbUdeClient.TryGetInterfacePath(out var interfaceQueryError);
+                diagnostic.InterfaceQueryWin32Error = interfaceQueryError;
+                if (!string.IsNullOrWhiteSpace(interfacePath))
+                {
+                    diagnostic.InterfacePresent = true;
+                    diagnostic.InterfacePath = interfacePath;
+                    diagnostic.Stage = "ready";
+                    break;
+                }
+                Thread.Sleep(50);
+            }
+            if (!diagnostic.InterfacePresent)
+                throw Failure("devnode 已 Running，但指定 Device Interface GUID 未出现", diagnostic);
             return new UsbDriverPackageLease
             {
                 SourceInfPath = infPath,
                 PublishedInfPath = publishedPath,
                 RootInstanceId = rootId,
                 RebootRequired = rebootRequired,
+                Diagnostic = diagnostic,
             };
         }
-        catch
+        catch (Exception exception)
         {
+            try { RefreshDiagnostic(diagnostic, diagnostic.RootInstanceId); } catch { }
             try { RemoveRootDevices(); } catch { }
             if (!string.IsNullOrWhiteSpace(publishedPath))
             {
                 try { UninstallPublishedInf(publishedPath); } catch { }
             }
-            throw;
+            if (exception is UsbDriverInstallException) throw;
+            throw Failure("USB UDE 驱动安装发生未分类错误", diagnostic, exception);
         }
     }
 
@@ -441,7 +595,9 @@ public static class UsbDriverInstaller
         finally { UsbDeviceDiscovery.SetupDiDestroyDeviceInfoList(set); }
     }
 
-    private static string? FindRootInstanceId()
+    private static string? FindRootInstanceId() => FindRootDevNode()?.InstanceId;
+
+    private static RootDevNodeSnapshot? FindRootDevNode(string? requiredInstanceId = null)
     {
         var set = UsbDeviceDiscovery.SetupDiGetClassDevsW(IntPtr.Zero, "ROOT", IntPtr.Zero, DigcfAllClasses);
         if (set == InvalidHandleValue) return null;
@@ -456,8 +612,17 @@ public static class UsbDriverInstaller
                     UsbDeviceDiscovery.ThrowLastWin32("SetupDiEnumDeviceInfo(ROOT)");
                 }
                 var ids = GetMultiStringProperty(set, ref data, SpdrpHardwareId);
-                if (ids.Any(value => string.Equals(value, UsbTestConstants.HardwareId, StringComparison.OrdinalIgnoreCase)))
-                    return UsbDeviceDiscovery.GetInstanceId(set, ref data);
+                if (!ids.Any(value => string.Equals(value, UsbTestConstants.HardwareId, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                var instanceId = UsbDeviceDiscovery.GetInstanceId(set, ref data);
+                if (!string.IsNullOrWhiteSpace(requiredInstanceId)
+                    && !string.Equals(instanceId, requiredInstanceId, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var service = UsbDeviceDiscovery.GetStringProperty(set, ref data, SpdrpService);
+                var driverKey = UsbDeviceDiscovery.GetStringProperty(set, ref data, SpdrpDriver);
+                var cmResult = CM_Get_DevNode_Status(out var status, out var problem, data.DevInst, 0);
+                return new RootDevNodeSnapshot(instanceId, service, driverKey, ReadBoundInfName(driverKey),
+                    cmResult, status, problem);
             }
         }
         finally { UsbDeviceDiscovery.SetupDiDestroyDeviceInfoList(set); }
@@ -508,6 +673,104 @@ public static class UsbDriverInstaller
         return Encoding.Unicode.GetString(buffer).Split('\0', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
+    private static string? ResolvePublishedInfPath(string sourceInfPath, string destination)
+    {
+        if (!string.IsNullOrWhiteSpace(destination))
+        {
+            var candidate = Path.IsPathRooted(destination)
+                ? destination
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "INF", destination);
+            if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+        }
+        var infDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "INF");
+        var sourceHash = Hashing.Sha256(sourceInfPath);
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(infDirectory, "oem*.inf", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    if (string.Equals(Hashing.Sha256(path), sourceHash, StringComparison.OrdinalIgnoreCase))
+                        return path;
+                }
+                catch { }
+            }
+            return null;
+        }
+        catch { return null; }
+    }
+
+    private static string? ReadBoundInfName(string? driverKey)
+    {
+        if (string.IsNullOrWhiteSpace(driverKey)) return null;
+        using var key = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Control\Class\{driverKey}");
+        return key?.GetValue("InfPath") as string;
+    }
+
+    private static void ClearDriverInitializationDiagnostic()
+    {
+        using var key = Registry.LocalMachine.OpenSubKey(
+            @"SYSTEM\CurrentControlSet\Services\UsbUdeTest\Parameters", writable: true);
+        if (key is null) return;
+        foreach (var name in new[] { "InitializationStage", "InitializationStatus", "InterfaceGuid" })
+            key.DeleteValue(name, throwOnMissingValue: false);
+    }
+
+    private static void RefreshDiagnostic(UsbDriverInstallDiagnostic diagnostic, string? rootInstanceId)
+    {
+        var root = FindRootDevNode(rootInstanceId);
+        ApplyRootSnapshot(diagnostic, root);
+        using var key = Registry.LocalMachine.OpenSubKey(
+            @"SYSTEM\CurrentControlSet\Services\UsbUdeTest\Parameters");
+        diagnostic.DriverInitializationStage = key?.GetValue("InitializationStage") as string;
+        diagnostic.DriverInitializationStatus = ToUInt32(key?.GetValue("InitializationStatus"));
+        diagnostic.DriverInterfaceGuid = key?.GetValue("InterfaceGuid") as string;
+    }
+
+    private static void ApplyRootSnapshot(UsbDriverInstallDiagnostic diagnostic, RootDevNodeSnapshot? root)
+    {
+        diagnostic.RootDevNodePresent = root is not null;
+        if (root is null)
+        {
+            diagnostic.DevNodeStarted = false;
+            return;
+        }
+        diagnostic.RootInstanceId = root.InstanceId;
+        diagnostic.BoundService = root.Service;
+        diagnostic.BoundDriverKey = root.DriverKey;
+        diagnostic.BoundInfName = root.InfName;
+        diagnostic.ConfigManagerResult = root.ConfigManagerResult;
+        diagnostic.DevNodeStatus = root.Status;
+        diagnostic.DevNodeProblemCode = root.ProblemCode;
+        diagnostic.DevNodeStarted = root.ConfigManagerResult == CrSuccess
+            && (root.Status & DnStarted) == DnStarted && root.ProblemCode == 0;
+    }
+
+    private static void ValidateInterfaceGuid(UsbDriverInstallDiagnostic diagnostic)
+    {
+        if (!string.IsNullOrWhiteSpace(diagnostic.DriverInterfaceGuid)
+            && !string.Equals(diagnostic.DriverInterfaceGuid, diagnostic.ExpectedInterfaceGuid,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            diagnostic.Stage = "interface_guid";
+            throw Failure("驱动与 Controller 使用的 Device Interface GUID 不一致", diagnostic);
+        }
+    }
+
+    private static UsbDriverInstallException Failure(string message, UsbDriverInstallDiagnostic diagnostic,
+        Exception? inner = null) => new(message, diagnostic, inner);
+
+    private static uint? ToUInt32(object? value) => value switch
+    {
+        int signed => unchecked((uint)signed),
+        long signed => unchecked((uint)signed),
+        uint unsigned => unsigned,
+        _ => null,
+    };
+
+    private sealed record RootDevNodeSnapshot(string InstanceId, string? Service, string? DriverKey,
+        string? InfName, uint ConfigManagerResult, uint Status, uint ProblemCode);
+
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetupCopyOEMInfW(string sourceInfFileName, string? oemSourceMediaLocation, uint oemSourceMediaType,
@@ -538,6 +801,10 @@ public static class UsbDriverInstaller
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetupUninstallOEMInfW(string infFileName, uint flags, IntPtr reserved);
+
+    [DllImport("cfgmgr32.dll")]
+    private static extern uint CM_Get_DevNode_Status(out uint status, out uint problemNumber,
+        uint devInst, uint flags);
 }
 
 public static class Hashing

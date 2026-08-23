@@ -3,7 +3,7 @@ Signature="$WINDOWS NT$"
 Class=USB
 ClassGuid={36FC9E60-C465-11CF-8056-444553540000}
 Provider=%ProviderName%
-DriverVer=08/23/2026,0.1.1.0
+DriverVer=08/23/2026,0.1.2.0
 CatalogFile=UsbUdeTest.cat
 PnpLockdown=1
 

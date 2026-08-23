@@ -91,6 +91,17 @@ BASELINE 文件：
 
 预构建目录中的 INF 是已签名 CAT 的成员，字节内容不可改变。仓库通过 `.gitattributes` 对 `drivers/**/prebuilt/**/*.inf` 禁用文本转换，避免 Windows 的 `core.autocrlf` 把 LF 转为 CRLF 后产生 `0xE000024B`（INF 哈希不在 CAT 中）。构建脚本会把四个文件的 SHA-256 与 `catalog_membership_verified` 写入元数据；启动脚本和 Controller 均拒绝继续使用任何不一致的包。
 
+驱动安装使用固定的 15 秒接口窗口，不通过增加 timeout 掩盖安装或启动失败。Controller 按以下层级验证，并在较早层失败时立即停止：
+
+1. `SetupCopyOEMInfW` 返回后，以 OEM INF 路径和源 INF 哈希确认 Driver Store 成员。
+2. `DIF_REGISTERDEVICE` 返回后重新枚举并确认 `ROOT\USB_UDE_TEST\xxxx` devnode。
+3. `UpdateDriverForPlugAndPlayDevicesW` 返回后核对绑定服务、OEM INF、Config Manager 状态、Problem Code 和 `DN_STARTED`。
+4. 驱动把 `DriverEntry`、`EvtDeviceAdd` 以及每个 UdeCx/WDF 初始化步骤的最后阶段和 NTSTATUS 写到 `HKLM\SYSTEM\CurrentControlSet\Services\UsbUdeTest\Parameters`。
+5. `WdfDeviceCreateDeviceInterface` 成功状态单独记录；只有 devnode 处于 Running 时才进入接口轮询。
+6. 驱动记录的 GUID 与 Controller 常量必须同为 `{77DC40F2-80FB-4F86-A6D4-793AB56D2D45}`。
+
+失败时会在本轮 work 目录生成 `usb-driver-install-diagnostic.json`，并以 `usb_driver_install_diagnostic` artifact 进入本地导出。错误消息同时包含 install stage、Win32 错误、OEM INF、服务绑定、CM status/problem、驱动初始化阶段/NTSTATUS、两侧 GUID 和接口状态；清理 ROOT devnode 与 OEM INF 之前完成快照。
+
 ## 6. 构建与验证
 
 构建能力包：

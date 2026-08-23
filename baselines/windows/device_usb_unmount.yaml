@@ -19,6 +19,22 @@ local_requirements:
   - { field: facts.usb.package.catalog_sha256, operator: present }
   - { field: facts.usb.package.certificate_sha256, operator: present }
   - { field: facts.usb.package.catalog_membership_verified, operator: equals, expected: true }
+  - { field: facts.usb.install.stage, operator: equals, expected: ready }
+  - { field: facts.usb.install.driver_store_present, operator: equals, expected: true }
+  - { field: facts.usb.install.published_inf_path, operator: present }
+  - { field: facts.usb.install.root_devnode_present, operator: equals, expected: true }
+  - { field: facts.usb.install.root_instance_id, operator: regex, expected: "^ROOT\\\\USB_UDE_TEST\\\\[0-9A-F]{4}$" }
+  - { field: facts.usb.install.bound_service, operator: equals, expected: UsbUdeTest, normalizers: [lowercase, trim] }
+  - { field: facts.usb.install.bound_inf_name, operator: present }
+  - { field: facts.usb.install.config_manager_result, operator: equals, expected: 0 }
+  - { field: facts.usb.install.devnode_problem_code, operator: equals, expected: 0 }
+  - { field: facts.usb.install.devnode_started, operator: equals, expected: true }
+  - { field: facts.usb.install.driver_initialization_stage, operator: equals, expected: evt_device_add_succeeded }
+  - { field: facts.usb.install.driver_initialization_status, operator: equals, expected: 0 }
+  - { field: facts.usb.install.driver_interface_guid, operator: equals, expected: "{77DC40F2-80FB-4F86-A6D4-793AB56D2D45}", normalizers: [lowercase, trim] }
+  - { field: facts.usb.install.expected_interface_guid, operator: equals, expected: "{77DC40F2-80FB-4F86-A6D4-793AB56D2D45}", normalizers: [lowercase, trim] }
+  - { field: facts.usb.install.interface_present, operator: equals, expected: true }
+  - { field: facts.usb.install.interface_path, operator: present }
   - { field: facts.usb.operation_succeeded, operator: equals, expected: true }
   - { field: facts.usb.operation, operator: equals, expected: unmount }
   - { field: facts.usb.method, operator: equals, expected: USB_UDE_PNP }

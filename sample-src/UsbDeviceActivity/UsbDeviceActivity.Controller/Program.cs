@@ -56,7 +56,17 @@ internal static class Program
                 return 10;
             }
 
-            lease = UsbDriverInstaller.Install(infPath);
+            try
+            {
+                lease = UsbDriverInstaller.Install(infPath);
+                AddInstallDiagnostic(database, invocation, lease.Diagnostic);
+            }
+            catch (UsbDriverInstallException exception)
+            {
+                AddInstallDiagnostic(database, invocation, exception.Diagnostic);
+                WriteInstallDiagnosticArtifact(database, invocation, exception.Diagnostic);
+                throw;
+            }
             var serial = UsbTestConstants.CreateSerial(invocation.Nonce);
             try { UsbUdeClient.Detach(ignoreMissing: true); } catch { }
             var before = UsbDeviceDiscovery.WaitFor(serial, present: false, 5_000);
@@ -362,6 +372,61 @@ internal static class Program
         AddFact(database, invocation, "usb.package.signature_valid", JsonValue.Create(environment.SignatureValid), null);
         AddFact(database, invocation, "usb.package.certificate_thumbprint", JsonValue.Create(environment.CertificateThumbprint), null);
         AddFact(database, invocation, "usb.package.requires_test_signing", JsonValue.Create(environment.RequiresTestSigning), null);
+    }
+
+    private static void AddInstallDiagnostic(RunDatabase database, ControllerInvocation invocation,
+        UsbDriverInstallDiagnostic diagnostic)
+    {
+        var values = new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
+        {
+            ["usb.install.stage"] = JsonValue.Create(diagnostic.Stage),
+            ["usb.install.win32_error"] = JsonValue.Create(diagnostic.Win32Error),
+            ["usb.install.driver_store_present"] = JsonValue.Create(diagnostic.DriverStorePresent),
+            ["usb.install.published_inf_path"] = JsonValue.Create(diagnostic.PublishedInfPath),
+            ["usb.install.root_devnode_present"] = JsonValue.Create(diagnostic.RootDevNodePresent),
+            ["usb.install.root_instance_id"] = JsonValue.Create(diagnostic.RootInstanceId),
+            ["usb.install.bound_service"] = JsonValue.Create(diagnostic.BoundService),
+            ["usb.install.bound_driver_key"] = JsonValue.Create(diagnostic.BoundDriverKey),
+            ["usb.install.bound_inf_name"] = JsonValue.Create(diagnostic.BoundInfName),
+            ["usb.install.config_manager_result"] = JsonValue.Create(diagnostic.ConfigManagerResult),
+            ["usb.install.devnode_status"] = JsonValue.Create(diagnostic.DevNodeStatus),
+            ["usb.install.devnode_problem_code"] = JsonValue.Create(diagnostic.DevNodeProblemCode),
+            ["usb.install.devnode_started"] = JsonValue.Create(diagnostic.DevNodeStarted),
+            ["usb.install.reboot_required"] = JsonValue.Create(diagnostic.RebootRequired),
+            ["usb.install.driver_initialization_stage"] = JsonValue.Create(diagnostic.DriverInitializationStage),
+            ["usb.install.driver_initialization_status"] = JsonValue.Create(diagnostic.DriverInitializationStatus),
+            ["usb.install.driver_interface_guid"] = JsonValue.Create(diagnostic.DriverInterfaceGuid),
+            ["usb.install.expected_interface_guid"] = JsonValue.Create(diagnostic.ExpectedInterfaceGuid),
+            ["usb.install.interface_query_win32_error"] = JsonValue.Create(diagnostic.InterfaceQueryWin32Error),
+            ["usb.install.interface_present"] = JsonValue.Create(diagnostic.InterfacePresent),
+            ["usb.install.interface_path"] = JsonValue.Create(diagnostic.InterfacePath),
+        };
+        foreach (var (key, value) in values) AddFact(database, invocation, key, value, null);
+    }
+
+    private static void WriteInstallDiagnosticArtifact(RunDatabase database, ControllerInvocation invocation,
+        UsbDriverInstallDiagnostic diagnostic)
+    {
+        var path = Path.Combine(invocation.WorkDir, "usb-driver-install-diagnostic.json");
+        ProtocolJson.WriteAtomic(path, diagnostic);
+        var runDirectory = Directory.GetParent(Directory.GetParent(invocation.WorkDir)!.FullName)!.FullName;
+        database.AddArtifact(new ArtifactObservation
+        {
+            CaseRunId = invocation.CaseRunId,
+            Kind = "usb_driver_install_diagnostic",
+            RelativePath = Path.GetRelativePath(runDirectory, path).Replace('\\', '/'),
+            MediaType = "application/json",
+            Sha256 = EdrTest.Hashing.FileSha256(path),
+            SizeBytes = new FileInfo(path).Length,
+            CreatedAtUtc = File.GetCreationTimeUtc(path),
+            Sensitive = false,
+            Metadata = new JsonObject
+            {
+                ["stage"] = diagnostic.Stage,
+                ["problem_code"] = diagnostic.DevNodeProblemCode,
+                ["driver_initialization_stage"] = diagnostic.DriverInitializationStage,
+            },
+        });
     }
 
     private static void AddOperationFacts(RunDatabase database, ControllerInvocation invocation, string operation,
