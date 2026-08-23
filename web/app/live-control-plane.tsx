@@ -340,6 +340,7 @@ const comparisonTimeStorageKey = "edrtest.comparisonTimeSettings.v1";
 const defaultStrongCorrelationTimeMs = 15;
 const defaultCandidateTimeLimitMs = 1000;
 const defaultActionNameInputs: Record<string, string> = {
+  "win.process.image_load": "LoadDll",
   "win.file.rename": "FileRename",
   "win.process.create": "ProcessCreate",
   "win.process.remote_thread": "RemoteThread",

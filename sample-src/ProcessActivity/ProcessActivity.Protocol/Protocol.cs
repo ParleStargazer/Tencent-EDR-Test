@@ -90,6 +90,10 @@ public sealed class ImageLoadAttempt
     public string? BaseAddress { get; init; }
     public long? SizeBytes { get; init; }
     public string? Sha256 { get; init; }
+    public string? ExportName { get; init; }
+    public bool? ExportResolved { get; init; }
+    public bool? ExportInvoked { get; init; }
+    public long? ExportResult { get; init; }
     public required bool BeforeLoaded { get; init; }
     public required bool AfterLoaded { get; init; }
     public required bool TemporaryCopy { get; init; }

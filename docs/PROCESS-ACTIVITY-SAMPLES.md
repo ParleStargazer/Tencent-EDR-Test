@@ -9,7 +9,7 @@ Process Activity 已实现六个 Windows 能力包。每个能力包对外均提
 | `win.process.create` | 进程创建 / Process Creation | Actor 创建带 nonce 的 Target，Controller 核验 PID、父子关系与存活状态 | L0 |
 | `win.process.terminate` | 进程终止 / Process Termination | Actor 对受控 Target 调用 `TerminateProcess`，Controller 核验退出码 | L1 |
 | `win.process.access` | 进程访问 / Process Access | Actor 使用 `OpenProcess` 和 `QueryFullProcessImageName` 访问受控 Target | L0 |
-| `win.process.image_load` | 加载镜像或动态库 / Image/Library Loaded | Target 执行三种原生 DLL 加载；`dotnet.exe` Helper 加载刚落盘的唯一命名托管程序集；Controller 对每个子项独立枚举 | L0 |
+| `win.process.image_load` | 加载镜像或动态库 / Image/Library Loaded | Target 执行四种原生 DLL 加载，其中新增应用私有无签名原生模块及导出调用；`dotnet.exe` Helper 加载刚落盘的唯一命名托管程序集；Controller 对每个子项独立枚举 | L0 |
 | `win.process.remote_thread` | 远程线程创建 / Remote Thread Creation | Actor 在受控 Target 中创建执行 `LoadLibraryW` 的远程线程 | L2 |
 | `win.process.tampering` | 进程篡改活动 / Process Tampering Activity | Actor 在受控 Target 中分配缓冲区、写入 nonce 数据、回读哈希并释放内存 | L2 |
 
@@ -64,7 +64,7 @@ pwsh -NoProfile -File scripts/Test-ProcessActivitySamples.ps1
 
 1. 轮次状态为 `COMPLETED`，六个能力均为 `LOCAL_PASS`；
 2. 保存 19 个程序实例：每项各一个 Controller、Actor、Target，`image_load` 另有一个 `dotnet.exe` Helper；
-3. 共保存 9 条高置信本地事件；其中 `image_load` 有 4 条子项事件，其余五项各 1 条；
+3. 共保存 10 条高置信本地事件；其中 `image_load` 有 5 条子项事件，其余五项各 1 条；
 4. 每项都有行为协议证据、nonce 事实和成功清理记录；
 5. 进程篡改样本必须确认远程缓冲区已释放；
 6. 六份 BASELINE 对自测夹具全部返回 `PASS`，不能出现 `PARTIAL`、`FAIL` 或 `INCONCLUSIVE`。
@@ -90,14 +90,15 @@ artifacts/process-activity-e2e/
 
 ### 4.1 DLL 加载子项
 
-`win.process.image_load@0.3.0` 一次执行四个子项，分别保存独立发生时间、目标角色与 PID、文件路径、文件名、加载方法、基址、大小和 SHA-256：
+`win.process.image_load@0.4.0` 一次执行五个子项，分别保存独立发生时间、目标角色与 PID、文件路径、文件名、加载方法、基址、大小和 SHA-256：
 
 1. `system_loadlibrary`：使用绝对路径加载 `System32\winhttp.dll`，保留与旧版本相同的系统 DLL 场景；
 2. `application_local_loadlibrary`：把 `version.dll` 复制为带本轮 nonce 的唯一文件名，再用 `LoadLibraryW` 从能力工作目录加载；
 3. `application_local_loadlibrary_ex`：把 `dbghelp.dll` 复制为另一唯一文件名，再使用带安全搜索标志的 `LoadLibraryExW` 加载；
-4. `managed_assembly_load_context`：由真实 `dotnet.exe` Helper 把 `ProcessActivity.Protocol.dll` 复制为 `edrtest_<nonce>_managed.dll`，再通过独立 `AssemblyLoadContext` 动态加载。
+4. `application_private_unsigned_native`：把能力包随附的 x64 `e_sqlite3.dll` 复制为 `edrtest_<nonce>_e_sqlite3.dll`，由 Target 使用 `LoadLibraryW` 加载，再解析并调用只读导出 `sqlite3_libversion_number`；只有模块前后枚举成立、导出解析成功、调用成功且版本号合理才通过；
+5. `managed_assembly_load_context`：由真实 `dotnet.exe` Helper 把 `ProcessActivity.Protocol.dll` 复制为 `edrtest_<nonce>_managed.dll`，再通过独立 `AssemblyLoadContext` 动态加载。
 
-后三个临时 DLL 在 Target/Helper 停止后删除。唯一文件名能减少系统 DLL 白名单或高频模块降噪造成的干扰，也便于在 EDR 导出中直接按本轮路径检索。第 4 个子项复现 `reference` 中 0807 导出所见的产品检出形态：父进程为 `dotnet.exe`，被加载文件是刚写入磁盘的托管 DLL。离线 BASELINE 为四个子项分别定义关联锚点和发生时间，并输出四种方法的独立通过情况；能力结论默认采用结果最好的方法，未被采用的失败或低置信结果仍会保留，且不会被其他 DLL 日志替代。
+后四个临时 DLL 在 Target/Helper 停止后删除。唯一文件名便于在 EDR 导出中按本轮绝对路径检索。`reference/load_dll/edr_LoadDll.json` 的 2813 条事件均为 `ModuleEvents / Module / LoadDll / KernelMon`：只有 29 条目标位于 `System32`，而应用私有目录、用户目录和临时目录占绝大多数；常见目标是无签名或第三方原生 DLL/PYD。日志没有暴露具体加载 API，因此不能断言产品只采集某个函数；第五方法优先复现可观察到的载荷属性和目录形态，并用真实导出调用证明不是仅映射文件。离线 BASELINE 为五个子项分别定义关联锚点和发生时间，能力结论默认采用结果最好的方法，其他方法的失败或低置信候选仍完整保留。
 
 比较器要求本地导出的 `capability_version` 与 BASELINE 的 `capability.version` 完全一致。旧运行（例如 `0.1.0`）没有对应基准时显示 `NOT_COMPARED` 和版本提示，新版新增条件不会计入旧版本的本地采集结论。
 
@@ -111,5 +112,7 @@ dotnet run --project src/EdrTest -- compare `
   --baseline baselines/windows/process_create.yaml `
   --out reports/validation-result.json
 ```
+
+`reference/load_dll` 的统计、字段角色与设计推断固化在 `docs/reference/tencent-edr-image-load-field-profile.json`。
 
 在没有真实云端导出时，本地 `LOCAL_PASS` 只证明行为成功发生且被 Controller 独立观察，不等于 EDR 产品能力已验证通过。

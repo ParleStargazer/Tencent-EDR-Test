@@ -210,8 +210,34 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
     new URL("baselines/windows/process_image_load.yaml", root),
     "utf8",
   );
+  const imageLoadManifest = await readJson(
+    "sample-src/ProcessActivity/manifests/win.process.image_load/capability.json",
+  );
+  const processBehavior = await readFile(
+    new URL("sample-src/ProcessActivity/ProcessActivity.Behavior/Program.cs", root),
+    "utf8",
+  );
+  const processController = await readFile(
+    new URL("sample-src/ProcessActivity/ProcessActivity.Controller/Program.cs", root),
+    "utf8",
+  );
+  const imageLoadProfile = await readJson(
+    "docs/reference/tencent-edr-image-load-field-profile.json",
+  );
+  const liveControlPlane = await readFile(
+    new URL("web/app/live-control-plane.tsx", root),
+    "utf8",
+  );
   assert.match(imageLoadBaseline, /method_selection:\s*\n\s*strategy: best/);
-  assert.equal((imageLoadBaseline.match(/^\s+method: /gm) ?? []).length, 4);
+  assert.equal((imageLoadBaseline.match(/^\s+method: /gm) ?? []).length, 5);
+  assert.equal(imageLoadManifest.version, "0.4.0");
+  assert.ok(imageLoadManifest.expected_fact_keys.includes("process.image_load.application_private_unsigned_native.export_invoked"));
+  assert.match(processBehavior, /application_private_unsigned_native/);
+  assert.match(processBehavior, /sqlite3_libversion_number/);
+  assert.match(processController, /ResolvePrivateNativeLibrary/);
+  assert.equal(imageLoadProfile.source.event_count, 2813);
+  assert.equal(imageLoadProfile.event_identity.action_name, "LoadDll");
+  assert.match(liveControlPlane, /"win\.process\.image_load": "LoadDll"/);
 
   [
     "old_path",

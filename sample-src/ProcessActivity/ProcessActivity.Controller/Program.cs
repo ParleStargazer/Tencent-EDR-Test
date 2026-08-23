@@ -165,6 +165,9 @@ internal static class Program
             }
 
             var targetLifetime = Math.Min(invocation.TimeoutMs + 5_000, 120_000);
+            var privateNativeLibraryPath = operation == "image_load"
+                ? ResolvePrivateNativeLibrary(package.PackageDirectory)
+                : null;
             state.TargetArguments = operation == "image_load"
                 ?
                 [
@@ -173,6 +176,7 @@ internal static class Program
                     "--library", ParameterString(parameters, "library_name", "winhttp.dll"),
                     "--application-local-library", ParameterString(parameters, "application_local_library_name", "version.dll"),
                     "--loadlibraryex-library", ParameterString(parameters, "loadlibraryex_library_name", "dbghelp.dll"),
+                    "--private-native-library", privateNativeLibraryPath!,
                     "--inter-load-delay-ms", ParameterInt(parameters, "inter_subtest_delay_ms", 750).ToString(),
                     "--hold-ms", ParameterInt(parameters, "post_load_hold_ms", 5_000).ToString(),
                     "--wait-ms", invocation.TimeoutMs.ToString(), "--nonce", invocation.Nonce,
@@ -399,6 +403,10 @@ internal static class Program
                     ["before_loaded"] = imageAttempt?.BeforeLoaded ?? result.BeforeLoaded,
                     ["after_loaded"] = imageAttempt?.AfterLoaded ?? result.AfterLoaded,
                     ["temporary_copy"] = imageAttempt?.TemporaryCopy,
+                    ["export_name"] = imageAttempt?.ExportName,
+                    ["export_resolved"] = imageAttempt?.ExportResolved,
+                    ["export_invoked"] = imageAttempt?.ExportInvoked,
+                    ["export_result"] = imageAttempt?.ExportResult,
                 };
                 break;
             case "remote_thread_create":
@@ -529,6 +537,10 @@ internal static class Program
                 [$"{prefix}.file_name"] = JsonValue.Create(attempt.FileName),
                 [$"{prefix}.sha256"] = JsonValue.Create(attempt.Sha256),
                 [$"{prefix}.occurred_at_utc"] = JsonValue.Create(Values.Utc(attempt.OccurredAtUtc)),
+                [$"{prefix}.export_name"] = JsonValue.Create(attempt.ExportName),
+                [$"{prefix}.export_resolved"] = JsonValue.Create(attempt.ExportResolved),
+                [$"{prefix}.export_invoked"] = JsonValue.Create(attempt.ExportInvoked),
+                [$"{prefix}.export_result"] = JsonValue.Create(attempt.ExportResult),
             };
             foreach (var (key, value) in values)
             {
@@ -557,7 +569,8 @@ internal static class Program
                 "access" => !state.TargetProcess.HasExited && state.Result.HandleObtained == true,
                 "image_load" => !state.TargetProcess.HasExited && !state.ImageWasLoadedBefore
                     && state.Result.ImageLoads.Select(value => value.SubtestId).ToHashSet(StringComparer.Ordinal).SetEquals(
-                        ["system_loadlibrary", "application_local_loadlibrary", "application_local_loadlibrary_ex", "managed_assembly_load_context"])
+                        ["system_loadlibrary", "application_local_loadlibrary", "application_local_loadlibrary_ex",
+                            "application_private_unsigned_native", "managed_assembly_load_context"])
                     && state.HelperProcess is not null && !state.HelperProcess.HasExited
                     && state.Result.ImageLoads.All(value => value.Succeeded && !value.BeforeLoaded && value.AfterLoaded
                         && ModuleLoaded(value.TargetRole == "helper" ? state.HelperProcess : state.TargetProcess, value.ImagePath)),
@@ -593,6 +606,17 @@ internal static class Program
         }
         var path = Path.Combine(Environment.SystemDirectory, name);
         if (!File.Exists(path)) throw new FileNotFoundException("找不到系统 DLL。", path);
+        return path;
+    }
+
+    private static string ResolvePrivateNativeLibrary(string packageDirectory)
+    {
+        var path = Path.GetFullPath(Path.Combine(packageDirectory, "runtimes", "win-x64", "native", "e_sqlite3.dll"));
+        var relative = Path.GetRelativePath(packageDirectory, path);
+        if (relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relative))
+            throw new InvalidDataException("应用私有原生 DLL 测试载荷越出能力包目录。");
+        if (!File.Exists(path))
+            throw new FileNotFoundException("能力包缺少应用私有原生 DLL 测试载荷。", path);
         return path;
     }
 

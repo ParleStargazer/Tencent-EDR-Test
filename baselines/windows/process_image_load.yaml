@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.process.image_load
-version: "0.3.1"
+version: "0.4.0"
 title: Windows 镜像或动态库加载遥测
-description: 验证三个原生 DLL 加载子项和一个复现腾讯 EDR 0807 LoadDll 事件形态的 dotnet 托管程序集加载子项。
+description: 验证三个微软 DLL 加载方法、一个应用私有无签名原生 DLL 加载并调用导出的方法，以及一个 dotnet 托管程序集加载方法；五个方法独立比较并保留结果。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,7 +10,7 @@ platform:
 risk_level: L0
 capability:
   id: win.process.image_load
-  version: "0.3.0"
+  version: "0.4.0"
   parameters:
     library_name: winhttp.dll
     application_local_library_name: version.dll
@@ -22,7 +22,7 @@ local_requirements:
     expected: true
   - field: facts.process.image_load_subtest_count
     operator: equals
-    expected: 4
+    expected: 5
   - field: facts.process.image_load.system_loadlibrary.succeeded
     operator: equals
     expected: true
@@ -43,6 +43,32 @@ local_requirements:
   - field: facts.process.image_load.application_local_loadlibrary_ex.path
     operator: present
   - field: facts.process.image_load.application_local_loadlibrary_ex.occurred_at_utc
+    operator: present
+  - field: facts.process.image_load.application_private_unsigned_native.succeeded
+    operator: equals
+    expected: true
+  - field: facts.process.image_load.application_private_unsigned_native.path
+    operator: present
+  - field: facts.process.image_load.application_private_unsigned_native.file_name
+    operator: present
+  - field: facts.process.image_load.application_private_unsigned_native.target_pid
+    operator: present
+  - field: facts.process.image_load.application_private_unsigned_native.target_executable
+    operator: present
+  - field: facts.process.image_load.application_private_unsigned_native.sha256
+    operator: present
+  - field: facts.process.image_load.application_private_unsigned_native.export_name
+    operator: equals
+    expected: sqlite3_libversion_number
+  - field: facts.process.image_load.application_private_unsigned_native.export_resolved
+    operator: equals
+    expected: true
+  - field: facts.process.image_load.application_private_unsigned_native.export_invoked
+    operator: equals
+    expected: true
+  - field: facts.process.image_load.application_private_unsigned_native.export_result
+    operator: present
+  - field: facts.process.image_load.application_private_unsigned_native.occurred_at_utc
     operator: present
   - field: facts.process.image_load.managed_assembly_load_context.succeeded
     operator: equals
@@ -204,9 +230,46 @@ cloud_expectations:
         expected_from_local: facts.process.image_load.managed_assembly_load_context.path
         severity: required
         normalizers: [windows_path]
+  - id: application-private-unsigned-native-load-event
+    method: { id: application-private-unsigned-native, title: 应用私有无签名原生 DLL · LoadLibraryW + 导出调用 }
+    event_type: process
+    event_actions: [image_load]
+    cardinality: { min: 1, max: 5 }
+    correlation:
+      time_from_local: facts.process.image_load.application_private_unsigned_native.occurred_at_utc
+      anchors:
+        - local_field: facts.process.image_load.application_private_unsigned_native.path
+          cloud_field: file.path
+          strength: strong
+          normalizers: [windows_path]
+        - local_field: facts.process.image_load.application_private_unsigned_native.file_name
+          cloud_field: file.name
+          strength: strong
+          normalizers: [lowercase]
+        - local_field: facts.process.image_load.application_private_unsigned_native.target_pid
+          cloud_field: process.pid
+          strength: medium
+    assertions:
+      - field: process.pid
+        operator: equals
+        expected_from_local: facts.process.image_load.application_private_unsigned_native.target_pid
+        severity: required
+      - field: process.executable
+        operator: equals
+        expected_from_local: facts.process.image_load.application_private_unsigned_native.target_executable
+        severity: required
+        normalizers: [windows_path]
+      - field: file.path
+        operator: equals
+        expected_from_local: facts.process.image_load.application_private_unsigned_native.path
+        severity: required
+        normalizers: [windows_path]
+      - { field: file.hash.md5, operator: present, severity: recommended }
+      - { field: image.base_address, operator: present, severity: recommended }
+      - { field: image.size_bytes, operator: present, severity: recommended }
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
-  status: draft
-  change_reason: 四种加载方法分别判定，能力结论默认采用 EDR 遥测结果最好的方法；所有方法仍保留完整条件、候选和状态。
-  references: [EDR-Telemetry / Windows / Process Activity / Image Library Loaded]
+  status: active
+  change_reason: reference/load_dll 的 2813 条 LoadDll 事件全部来自 KernelMon/ModuleEvents；仅 29 条目标位于 System32，绝大多数是应用私有、用户目录或临时目录中的第三方原生模块。新增无签名 e_sqlite3 应用私有副本及真实导出调用方法，避免继续只测试微软系统 DLL 或纯托管程序集。
+  references: [reference/load_dll/edr_LoadDll.json, reference/EDR日志-字段表.txt, Tencent EDR ModuleEvents / LoadDll]

@@ -95,7 +95,8 @@ internal static class Program
                 "LoadLibraryW",
                 ResolveSystemLibrary(options.Get("library", "winhttp.dll")),
                 null,
-                false),
+                false,
+                null),
             new ImageLoadPlan(
                 "application_local_loadlibrary",
                 "应用目录 DLL 加载",
@@ -103,7 +104,8 @@ internal static class Program
                 "LoadLibraryW",
                 ResolveSystemLibrary(options.Get("application-local-library", "version.dll")),
                 Path.Combine(workDirectory, $"edrtest_{nonceTag}_version.dll"),
-                false),
+                false,
+                null),
             new ImageLoadPlan(
                 "application_local_loadlibrary_ex",
                 "应用目录 DLL 扩展加载",
@@ -111,7 +113,17 @@ internal static class Program
                 "LoadLibraryExW(LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32)",
                 ResolveSystemLibrary(options.Get("loadlibraryex-library", "dbghelp.dll")),
                 Path.Combine(workDirectory, $"edrtest_{nonceTag}_dbghelp.dll"),
-                true),
+                true,
+                null),
+            new ImageLoadPlan(
+                "application_private_unsigned_native",
+                "应用私有无签名原生 DLL 加载并调用导出",
+                "Application-private Unsigned Native DLL Load and Export Call",
+                "LoadLibraryW + GetProcAddress(sqlite3_libversion_number)",
+                Path.GetFullPath(options.Require("private-native-library")),
+                Path.Combine(workDirectory, $"edrtest_{nonceTag}_e_sqlite3.dll"),
+                false,
+                "sqlite3_libversion_number"),
         };
         var interLoadDelay = options.GetInt("inter-load-delay-ms", 750, 0, 10_000);
         for (var index = 0; index < plans.Length; index++)
@@ -223,6 +235,38 @@ internal static class Program
         var error = module == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
         var loadedPath = module == IntPtr.Zero ? requestedPath : GetModulePath(module);
         var after = CurrentProcessModuleLoaded(loadedPath);
+        bool? exportResolved = null;
+        bool? exportInvoked = null;
+        long? exportResult = null;
+        string? exportError = null;
+        if (module != IntPtr.Zero && plan.ExportName is not null)
+        {
+            var exportAddress = NativeMethods.GetProcAddress(module, plan.ExportName);
+            exportResolved = exportAddress != IntPtr.Zero;
+            if (exportAddress == IntPtr.Zero)
+            {
+                exportInvoked = false;
+                exportError = $"未找到原生导出：{plan.ExportName}";
+            }
+            else
+            {
+                try
+                {
+                    var export = Marshal.GetDelegateForFunctionPointer<Sqlite3LibVersionNumber>(exportAddress);
+                    exportResult = export();
+                    exportInvoked = true;
+                    if (exportResult < 3_000_000)
+                        exportError = $"sqlite3_libversion_number 返回异常版本号：{exportResult}";
+                }
+                catch (Exception exception)
+                {
+                    exportInvoked = false;
+                    exportError = $"调用原生导出 {plan.ExportName} 失败：{exception.Message}";
+                }
+            }
+        }
+        var succeeded = module != IntPtr.Zero && !before && after
+            && (plan.ExportName is null || exportResolved == true && exportInvoked == true && exportResult >= 3_000_000);
         return new ImageLoadAttempt
         {
             SubtestId = plan.SubtestId,
@@ -234,14 +278,18 @@ internal static class Program
             ImagePath = loadedPath,
             FileName = Path.GetFileName(loadedPath),
             OccurredAtUtc = occurred,
-            Succeeded = module != IntPtr.Zero && !before && after,
+            Succeeded = succeeded,
             Win32Error = error,
             Error = module == IntPtr.Zero
                 ? new Win32Exception(error).Message
-                : before ? $"目标模块在触发加载前已经存在：{Path.GetFileName(requestedPath)}" : null,
+                : before ? $"目标模块在触发加载前已经存在：{Path.GetFileName(requestedPath)}" : exportError,
             BaseAddress = module == IntPtr.Zero ? null : Hex(module),
             SizeBytes = File.Exists(loadedPath) ? new FileInfo(loadedPath).Length : null,
             Sha256 = File.Exists(loadedPath) ? FileSha256(loadedPath) : null,
+            ExportName = plan.ExportName,
+            ExportResolved = exportResolved,
+            ExportInvoked = exportInvoked,
+            ExportResult = exportResult,
             BeforeLoaded = before,
             AfterLoaded = after,
             TemporaryCopy = plan.DestinationPath is not null,
@@ -599,5 +647,9 @@ internal static class Program
         string Method,
         string SourcePath,
         string? DestinationPath,
-        bool UseLoadLibraryEx);
+        bool UseLoadLibraryEx,
+        string? ExportName);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int Sqlite3LibVersionNumber();
 }

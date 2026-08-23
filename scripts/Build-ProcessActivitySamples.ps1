@@ -26,6 +26,15 @@ dotnet publish (Join-Path $repositoryRoot "sample-src\ProcessActivity\ProcessAct
     --configuration $Configuration --no-restore --output $behaviorPublish
 if ($LASTEXITCODE -ne 0) { throw "Behavior 发布失败。" }
 
+$privateNativeProbe = Join-Path $controllerPublish "runtimes\win-x64\native\e_sqlite3.dll"
+if (-not (Test-Path -LiteralPath $privateNativeProbe -PathType Leaf)) {
+    throw "Controller 发布结果缺少应用私有原生 DLL 测试载荷：$privateNativeProbe"
+}
+$privateNativeSignature = Get-AuthenticodeSignature -LiteralPath $privateNativeProbe
+if ($privateNativeSignature.Status -eq [System.Management.Automation.SignatureStatus]::Valid) {
+    throw "应用私有原生 DLL 测试载荷已具有有效 Authenticode 签名，不再符合无签名模块子测试设计：$privateNativeProbe"
+}
+
 $packages = @(
     @{ Id = "win.process.create"; Prefix = "ProcessCreate" },
     @{ Id = "win.process.terminate"; Prefix = "ProcessTerminate" },

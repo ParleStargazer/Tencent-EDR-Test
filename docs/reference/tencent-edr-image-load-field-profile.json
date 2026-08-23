@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "source": {
+    "path": "reference/load_dll/edr_LoadDll.json",
+    "sha256": "0f4f0e23d630e791e6545ba792b508c329f50e7f8cf272c0a4933fe73615e6e8",
+    "event_count": 2813,
+    "union_field_count": 131,
+    "analyzed_at": "2026-08-23"
+  },
+  "event_identity": {
+    "table": "ModuleEvents",
+    "action_type": "Module",
+    "action_name": "LoadDll",
+    "source": "KernelMon",
+    "monitor_name": "加载DLL",
+    "all_records_match_identity": true
+  },
+  "observed_distribution": {
+    "child_path_buckets": {
+      "program_files": 815,
+      "user_profile": 731,
+      "other_application_paths": 538,
+      "windows_non_system32": 454,
+      "user_temp": 246,
+      "windows_system32": 29
+    },
+    "child_signature_status": {
+      "verified": 1569,
+      "verification_failed": 1019,
+      "empty": 225
+    },
+    "child_file_format": {
+      "dynamic_link_library": 2588,
+      "empty": 225
+    },
+    "call_stack_present": 2813,
+    "examples": [
+      "应用私有 Zoom DLL",
+      "Git/curl 私有运行库",
+      "Python PYD 与第三方 DLL",
+      "临时目录中的 _psutil_windows.pyd"
+    ]
+  },
+  "baseline_fields": [
+    { "field": "Common.EventTime", "canonical": "event.created", "present": 2813, "role": "time_anchor", "meaning": "终端模块加载发生时间，Unix 毫秒" },
+    { "field": "Parent.ProcPid", "canonical": "process.pid", "present": 2813, "role": "correlation_anchor", "meaning": "加载模块的进程 PID" },
+    { "field": "Parent.FilePath", "canonical": "process.executable", "present": 2813, "role": "correlation_anchor", "meaning": "加载模块的进程路径" },
+    { "field": "Parent.ProcCmdline", "canonical": "process.command_line", "present": 2813, "role": "recommended_assertion", "meaning": "加载模块的进程命令行" },
+    { "field": "Parent.CallStack", "canonical": null, "present": 2813, "role": "diagnostic", "meaning": "采集到的原始调用栈地址；导出中没有符号，不能据此断言具体加载 API" },
+    { "field": "Child.FilePath", "canonical": "file.path", "present": 2813, "role": "correlation_anchor", "meaning": "被加载模块的绝对路径" },
+    { "field": "Child.FileName", "canonical": "file.name", "present": 2813, "role": "correlation_anchor", "meaning": "被加载模块文件名" },
+    { "field": "Child.FileMd5", "canonical": "file.hash.md5", "present": 2588, "role": "recommended_assertion", "meaning": "EDR 计算的模块 MD5；部分记录缺失" },
+    { "field": "Child.ModuleBase", "canonical": "image.base_address", "present": 2813, "role": "recommended_assertion", "meaning": "模块在进程中的加载基址" },
+    { "field": "Child.ModuleSize", "canonical": "image.size_bytes", "present": 2813, "role": "recommended_assertion", "meaning": "模块映射大小" },
+    { "field": "Child.FileSize", "canonical": "file.size", "present": 2813, "role": "recommended_assertion", "meaning": "磁盘文件大小" },
+    { "field": "Child.FileSignStatus", "canonical": null, "present": 2588, "role": "diagnostic", "meaning": "EDR 的签名验证结果，不作为能力语义必需条件" }
+  ],
+  "design_decisions": {
+    "api_limit": "日志没有导出已调用的 LoadLibrary/LdrLoadDll API 名称；不能从这些记录证明产品只采集某个具体函数。",
+    "filter_inference": "System32 目标仅占 29/2813。结合应用私有、用户目录、临时目录及第三方/签名失败模块的高占比，推断产品在上报阶段对高频微软系统模块进行了降噪。该结论是基于分布的推断，不是产品官方规则。",
+    "new_subtest": "新增 application_private_unsigned_native：复制随包无签名 x64 e_sqlite3.dll 为本轮唯一应用私有文件，LoadLibraryW 加载后解析并调用 sqlite3_libversion_number，以复现主要日志形态并证明模块代码可执行。",
+    "local_truth": "本地加载前后枚举、绝对路径、PID、基址、文件大小、SHA-256、导出解析和调用结果构成绝对基准；Action.Name=LoadDll 仅作为 EDR 候选筛选。"
+  }
+}
