@@ -50,6 +50,8 @@ test("驱动三项能力具备 L3 清单、本地绝对基准、直接映射与�
   assert.match(behavior, /AppendMarker\(imagePath, marker\)/);
   assert.match(protocol, /ServiceKernelDriver/);
   assert.match(protocol, /K32EnumDeviceDrivers/);
+  assert.match(protocol, /DllImport\("kernel32\.dll", SetLastError = true\)/);
+  assert.doesNotMatch(protocol, /DllImport\("psapi\.dll"/);
   assert.match(protocol, /ValidateDriverPath/);
   assert.match(nativeDriver, /DriverEntry/);
   assert.match(nativeDriver, /DriverUnload/);

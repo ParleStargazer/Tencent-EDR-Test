@@ -35,6 +35,8 @@
 
 加载通过 `CreateServiceW(SERVICE_KERNEL_DRIVER, DEMAND_START)` 后在调用 `StartServiceW` 前记录本地关联时间。卸载在调用 `ControlService(STOP)` 前记录时间。修改在追加确定性 ASCII 标记前记录时间。Controller 使用独立 SCM 查询、模块枚举和文件哈希复核 Actor 结果。
 
+模块枚举的 P/Invoke 固定使用 `kernel32.dll + K32EnumDeviceDrivers/K32GetDeviceDriverBaseNameW/K32GetDeviceDriverFileNameW`。`psapi.dll` 只导出不带 `K32` 前缀的兼容入口，禁止把 `K32*` 名称声明到 `psapi.dll`，否则运行时会触发 `EntryPointNotFoundException`。
+
 卸载使用两个 Actor 实例，`instance_index=0` 负责预置加载，`instance_index=1` 负责卸载，避免 `program_instance` 唯一键冲突。预置加载完成后至少等待 2000 ms，默认 2200 ms，使 `LoadDriver` 落在默认 1 秒候选范围之外。
 
 ## 4. 环境不就绪语义

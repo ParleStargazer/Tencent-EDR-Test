@@ -492,14 +492,14 @@ public static class DriverClient
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseServiceHandle(IntPtr serviceHandle);
 
-    [DllImport("psapi.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool K32EnumDeviceDrivers([Out] IntPtr[] imageBase, uint bufferSize, out uint bytesNeeded);
 
-    [DllImport("psapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint K32GetDeviceDriverBaseNameW(IntPtr imageBase, StringBuilder baseName, int size);
 
-    [DllImport("psapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint K32GetDeviceDriverFileNameW(IntPtr imageBase, StringBuilder fileName, int size);
 
     [DllImport("kernel32.dll")]
