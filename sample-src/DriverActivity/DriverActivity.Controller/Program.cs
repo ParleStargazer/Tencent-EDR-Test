@@ -108,7 +108,7 @@ internal static class Program
                 environment);
             database.AddEvent(localEvent);
             AddFacts(database, invocation, operation, result, actor, localEvent.LocalEventId,
-                succeeded, environment, setupResult, setupActor, parameters);
+                succeeded, setupResult, setupActor, parameters);
             AddFact(database, invocation, "correlation.nonce", JsonValue.Create(invocation.Nonce), null);
 
             var cleanup = Cleanup(invocation, serviceName, imagePath, actorProcesses);
@@ -372,8 +372,7 @@ internal static class Program
 
     private static void AddFacts(RunDatabase database, ControllerInvocation invocation, string operation,
         BehaviorResult result, ProgramObservation actor, string eventId, bool succeeded,
-        EnvironmentCheck environment, BehaviorResult? setupResult, ProgramObservation? setupActor,
-        JsonObject parameters)
+        BehaviorResult? setupResult, ProgramObservation? setupActor, JsonObject parameters)
     {
         var beforeFile = result.FileBefore;
         var afterFile = result.FileAfter;
@@ -415,9 +414,6 @@ internal static class Program
                 ? null : Values.Utc(setupResult.CompletedAtUtc)),
             ["driver.setup_actor_pid"] = JsonValue.Create(setupActor?.Pid),
             ["driver.load_isolation_ms"] = JsonValue.Create(parameters["load_isolation_ms"]?.GetValue<int>()),
-            ["driver.package.signer"] = JsonValue.Create(environment.Signer),
-            ["driver.package.signature_valid"] = JsonValue.Create(environment.SignatureValid),
-            ["driver.package.sha256"] = JsonValue.Create(environment.Sha256),
         };
         foreach (var (key, value) in values) AddFact(database, invocation, key, value, eventId);
     }

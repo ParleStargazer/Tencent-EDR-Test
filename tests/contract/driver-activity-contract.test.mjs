@@ -43,6 +43,10 @@ test("驱动三项能力具备 L3 清单、本地绝对基准、直接映射与�
   assert.match(controller, /InstanceIndex = instanceIndex/);
   assert.match(controller, /ENVIRONMENT_NOT_READY/);
   assert.match(controller, /stop_delete_exact_driver_service_and_work_copy/);
+  const packageFactKeys = [...controller.matchAll(/"(driver\.package\.[^"]+)"/g)]
+    .map((match) => match[1]);
+  assert.equal(packageFactKeys.length, new Set(packageFactKeys).size,
+    "同一 case_run 内的驱动包事实键只能写入一次");
   assert.match(behavior, /CreateServiceW\+StartServiceW/);
   assert.match(behavior, /ControlService\(STOP\)/);
   assert.match(controller, /EDRTEST_DRIVER_MODIFY\|\{invocation\.Nonce\}/);
