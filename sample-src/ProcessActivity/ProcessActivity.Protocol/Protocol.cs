@@ -83,6 +83,9 @@ public sealed class ImageLoadAttempt
     public required string SourcePath { get; init; }
     public required string ImagePath { get; init; }
     public required string FileName { get; init; }
+    public required DateTimeOffset StartedAtUtc { get; init; }
+    public required DateTimeOffset CompletedAtUtc { get; init; }
+    public required long DurationMs { get; init; }
     public required DateTimeOffset OccurredAtUtc { get; init; }
     public required bool Succeeded { get; init; }
     public int? Win32Error { get; init; }

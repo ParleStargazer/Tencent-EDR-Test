@@ -176,9 +176,12 @@ internal static class Program
         var before = AppDomain.CurrentDomain.GetAssemblies().Any(assembly =>
             !string.IsNullOrWhiteSpace(assembly.Location)
             && string.Equals(Path.GetFullPath(assembly.Location), imagePath, StringComparison.OrdinalIgnoreCase));
-        var occurred = DateTimeOffset.UtcNow;
+        var startedAtUtc = DateTimeOffset.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
         var loadContext = new AssemblyLoadContext($"EDRTest-{nonceTag}", isCollectible: false);
         var assembly = loadContext.LoadFromAssemblyPath(imagePath);
+        stopwatch.Stop();
+        var completedAtUtc = DateTimeOffset.UtcNow;
         var after = string.Equals(Path.GetFullPath(assembly.Location), imagePath, StringComparison.OrdinalIgnoreCase)
             && loadContext.Assemblies.Contains(assembly);
         var attempt = new ImageLoadAttempt
@@ -191,7 +194,10 @@ internal static class Program
             SourcePath = sourcePath,
             ImagePath = imagePath,
             FileName = Path.GetFileName(imagePath),
-            OccurredAtUtc = occurred,
+            StartedAtUtc = startedAtUtc,
+            CompletedAtUtc = completedAtUtc,
+            DurationMs = stopwatch.ElapsedMilliseconds,
+            OccurredAtUtc = completedAtUtc,
             Succeeded = !before && after,
             Win32Error = 0,
             Error = before ? "托管测试程序集在触发加载前已经存在。" : after ? null : "AssemblyLoadContext 未保留目标程序集。",
@@ -227,13 +233,16 @@ internal static class Program
     private static ImageLoadAttempt LoadImage(ImageLoadPlan plan, string requestedPath)
     {
         var before = CurrentProcessModuleLoaded(requestedPath);
-        var occurred = DateTimeOffset.UtcNow;
+        var startedAtUtc = DateTimeOffset.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
         var module = plan.UseLoadLibraryEx
             ? NativeMethods.LoadLibraryExW(
                 requestedPath,
                 IntPtr.Zero,
                 NativeMethods.LoadLibrarySearchDllLoadDir | NativeMethods.LoadLibrarySearchSystem32)
             : NativeMethods.LoadLibraryW(requestedPath);
+        stopwatch.Stop();
+        var completedAtUtc = DateTimeOffset.UtcNow;
         var error = module == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
         var loadedPath = module == IntPtr.Zero ? requestedPath : GetModulePath(module);
         var after = CurrentProcessModuleLoaded(loadedPath);
@@ -279,7 +288,10 @@ internal static class Program
             SourcePath = plan.SourcePath,
             ImagePath = loadedPath,
             FileName = Path.GetFileName(loadedPath),
-            OccurredAtUtc = occurred,
+            StartedAtUtc = startedAtUtc,
+            CompletedAtUtc = completedAtUtc,
+            DurationMs = stopwatch.ElapsedMilliseconds,
+            OccurredAtUtc = completedAtUtc,
             Succeeded = succeeded,
             Win32Error = error,
             Error = module == IntPtr.Zero

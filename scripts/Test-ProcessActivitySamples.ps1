@@ -80,6 +80,21 @@ $imageControllerOutput = @($localRun.execution_logs | Where-Object {
     $_.case_run_id -eq $imageCapability.case_run_id -and $_.phase -eq "controller.stdout"
 } | ForEach-Object { $_.message }) -join "`n"
 $imageWaitingLogCount = [regex]::Matches($imageControllerOutput, "SUBTEST_WAITING").Count
+$privateImageEvent = $imageEvents | Where-Object { $_.data.image.subtest_id -eq "application_private_unsigned_native" } | Select-Object -First 1
+$privateImageStartedFact = $localRun.local_facts | Where-Object {
+    $_.case_run_id -eq $imageCapability.case_run_id -and $_.key -eq "process.image_load.application_private_unsigned_native.started_at_utc"
+} | Select-Object -First 1
+$privateImageCompletedFact = $localRun.local_facts | Where-Object {
+    $_.case_run_id -eq $imageCapability.case_run_id -and $_.key -eq "process.image_load.application_private_unsigned_native.completed_at_utc"
+} | Select-Object -First 1
+$privateImageDurationFact = $localRun.local_facts | Where-Object {
+    $_.case_run_id -eq $imageCapability.case_run_id -and $_.key -eq "process.image_load.application_private_unsigned_native.duration_ms"
+} | Select-Object -First 1
+$privateImageTimestampsValid = $null -ne $privateImageEvent -and $null -ne $privateImageStartedFact `
+    -and $null -ne $privateImageCompletedFact -and $null -ne $privateImageDurationFact `
+    -and ([DateTimeOffset]$privateImageCompletedFact.value -ge [DateTimeOffset]$privateImageStartedFact.value) `
+    -and ([DateTimeOffset]$privateImageEvent.occurred_at_utc -eq [DateTimeOffset]$privateImageCompletedFact.value) `
+    -and ([long]$privateImageDurationFact.value -ge 0)
 $artifactIds = @($localRun.artifacts | ForEach-Object { $_.artifact_id })
 $invalidEvidenceRefs = @($localRun.local_events | ForEach-Object {
     foreach ($evidenceRef in $_.evidence_refs) {
@@ -164,6 +179,7 @@ $assertions = [ordered]@{
     image_load_intervals_respect_delay = $null -ne $imageDelayFact -and $imageEventDeltas.Count -eq 4 -and `
         @($imageEventDeltas | Where-Object { $_ -lt [double]$imageDelayFact.value }).Count -eq 0
     image_load_waiting_log_count_is_4 = $imageWaitingLogCount -eq 4
+    private_image_load_uses_completed_time_anchor = $privateImageTimestampsValid
     all_manifest_expected_facts_present = $missingExpectedFacts.Count -eq 0
     tamper_memory_was_released = $null -ne $memoryReleaseFact -and $memoryReleaseFact.value -eq $true
     synthetic_compare_exit_code_is_0 = $comparisonExitCode -eq 0

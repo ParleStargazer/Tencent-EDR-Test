@@ -1,6 +1,6 @@
 schema_version: "1.1"
 baseline_id: win.process.image_load
-version: "0.4.0"
+version: "0.4.1"
 title: Windows 镜像或动态库加载遥测
 description: 验证三个微软 DLL 加载方法、一个应用私有无签名原生 DLL 加载并调用导出的方法，以及一个 dotnet 托管程序集加载方法；五个方法独立比较并保留结果。
 platform:
@@ -10,7 +10,7 @@ platform:
 risk_level: L0
 capability:
   id: win.process.image_load
-  version: "0.4.0"
+  version: "0.4.1"
   parameters:
     library_name: winhttp.dll
     application_local_library_name: version.dll
@@ -68,6 +68,12 @@ local_requirements:
   - field: facts.process.image_load.application_private_unsigned_native.export_result
     operator: present
   - field: facts.process.image_load.application_private_unsigned_native.occurred_at_utc
+    operator: present
+  - field: facts.process.image_load.application_private_unsigned_native.started_at_utc
+    operator: present
+  - field: facts.process.image_load.application_private_unsigned_native.completed_at_utc
+    operator: present
+  - field: facts.process.image_load.application_private_unsigned_native.duration_ms
     operator: present
   - field: facts.process.image_load.managed_assembly_load_context.succeeded
     operator: equals
@@ -235,7 +241,7 @@ cloud_expectations:
     event_actions: [image_load]
     cardinality: { min: 1, max: 5 }
     correlation:
-      time_from_local: facts.process.image_load.application_private_unsigned_native.occurred_at_utc
+      time_from_local: facts.process.image_load.application_private_unsigned_native.completed_at_utc
       anchors:
         - local_field: facts.process.image_load.application_private_unsigned_native.path
           cloud_field: file.path
@@ -270,5 +276,5 @@ scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: reference/load_dll 的 2813 条 LoadDll 事件全部来自 KernelMon/ModuleEvents；仅 29 条目标位于 System32，绝大多数是应用私有、用户目录或临时目录中的第三方原生模块。新增无签名 e_sqlite3 应用私有副本及真实导出调用方法，避免继续只测试微软系统 DLL 或纯托管程序集。
+  change_reason: 20260823 两轮实测中，应用私有 e_sqlite3 的 LoadDll 记录与本地 PID、完整路径精确一致，但 Common.EventTime 相对调用前时间分别为 +64.637 ms、+59.184 ms；同路径文件复制事件仅约 -3 ms，排除整机时钟偏移。样本现记录 LoadLibrary 调用起止时间，并以测试机上受 EDR Hook 影响后的调用返回时刻作为成功装载事件及强时间关联锚点，继续严格使用全局 15 ms 基准。
   references: [reference/load_dll/edr_LoadDll.json, reference/EDR日志-字段表.txt, Tencent EDR ModuleEvents / LoadDll]
