@@ -44,6 +44,7 @@ public static class Program
         await RunTest("命名管道格式归一化与完整候选优先", TestNamedPipeComparison, failures);
         await RunTest("计划任务三项 BASELINE 与通用/腾讯映射闭环", TestScheduledTaskComparison, failures);
         await RunTest("服务活动三项 BASELINE 与通用/腾讯映射闭环", TestServiceComparison, failures);
+        await RunTest("驱动三项 BASELINE、LoadDriver 映射与未实现结论", TestDriverComparison, failures);
         await RunTest("哈希算法三项 BASELINE 与通用/腾讯映射闭环", TestHashAlgorithmsComparison, failures);
         if (failures.Count == 0)
         {
@@ -1317,6 +1318,203 @@ public static class Program
                 match?["canonical_field"]?.GetValue<string>() == "scheduled_task.content"
                 && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.TaskContent") == true) == true,
             "4698 方法必须把 Child.TaskContent 映射回 JSON 对照高亮。");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestDriverComparison()
+    {
+        using var fixture = TestDirectory.Create();
+        var repository = FindRepositoryRoot();
+        var local = new JsonObject
+        {
+            ["schema_version"] = "1.1",
+            ["run"] = new JsonObject
+            {
+                ["run_id"] = Ids.NewUuid7(),
+                ["host"] = new JsonObject { ["hostname"] = "DRIVER-FIXTURE", ["machine_id"] = "driver-fixture-host" },
+            },
+            ["capabilities"] = new JsonArray(),
+            ["programs"] = new JsonArray(),
+            ["local_events"] = new JsonArray(),
+            ["local_facts"] = new JsonArray(),
+            ["artifacts"] = new JsonArray(),
+            ["cleanup_results"] = new JsonArray(),
+            ["execution_logs"] = new JsonArray(),
+        };
+        var genericCloud = new JsonArray();
+        var tencentCloud = new JsonArray();
+        var baselinePaths = new List<string>();
+        var baseTime = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var sourceHash = "1111111111111111111111111111111111111111111111111111111111111111";
+        var modifiedHash = "2222222222222222222222222222222222222222222222222222222222222222";
+        var sourceMd5 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        var modifiedMd5 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        var driverPath = @"C:\EDR-Test\EdrTestDriver_fixture.sys";
+        var driverName = Path.GetFileName(driverPath);
+        foreach (var (operation, index) in new[] { "load", "modify", "unload" }.Select((value, index) => (value, index)))
+        {
+            var caseRunId = Ids.NewUuid7();
+            var eventId = Ids.NewUuid7();
+            var occurredAt = baseTime.AddSeconds(index * 10);
+            var serviceName = $"EdrTestDrv_fixture_{operation}";
+            local["capabilities"]!.AsArray().Add(new JsonObject
+            {
+                ["case_run_id"] = caseRunId,
+                ["capability_id"] = $"win.driver.{operation}",
+                ["capability_version"] = "0.1.0",
+                ["display_name_zh"] = operation,
+                ["display_name_en"] = operation,
+                ["status"] = "LOCAL_PASS",
+                ["nonce"] = $"driver-fixture-{index}",
+                ["started_at_utc"] = Values.Utc(occurredAt.AddSeconds(-1)),
+                ["ended_at_utc"] = Values.Utc(occurredAt.AddSeconds(2)),
+            });
+            local["local_events"]!.AsArray().Add(new JsonObject
+            {
+                ["local_event_id"] = eventId,
+                ["case_run_id"] = caseRunId,
+                ["sequence"] = 1,
+                ["event_type"] = "driver",
+                ["event_action"] = operation,
+                ["occurred_at_utc"] = Values.Utc(occurredAt),
+                ["data"] = new JsonObject { ["kind"] = "driver", ["operation"] = operation, ["driver_name"] = driverName },
+            });
+            var facts = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["driver.environment.ready"] = true,
+                [$"driver.{operation}_succeeded"] = true,
+                ["driver.occurred_at_utc"] = Values.Utc(occurredAt),
+                ["driver.name"] = driverName,
+                ["driver.service_name"] = serviceName,
+                ["driver.image_path"] = driverPath,
+            };
+            if (operation == "load")
+            {
+                facts["driver.native_api"] = "CreateServiceW+StartServiceW";
+                facts["driver.before.loaded"] = false;
+                facts["driver.after.loaded"] = true;
+                facts["driver.after.service_state"] = "running";
+                facts["driver.after.base_address"] = "0xfffff80123450000";
+                facts["driver.after.size_bytes"] = 16384L;
+                facts["driver.after.module_size_bytes"] = 20480L;
+                facts["driver.after.hashes.md5"] = sourceMd5;
+                facts["driver.after.hashes.sha256"] = sourceHash;
+                facts["driver.package.signature_valid"] = true;
+                facts["driver.package.sha256"] = sourceHash;
+            }
+            else if (operation == "modify")
+            {
+                facts["driver.native_api"] = "FileStream.Write";
+                facts["driver.before.loaded"] = false;
+                facts["driver.after.loaded"] = false;
+                facts["driver.before.service_exists"] = false;
+                facts["driver.after.service_exists"] = false;
+                facts["driver.before.size_bytes"] = 16384L;
+                facts["driver.after.size_bytes"] = 16440L;
+                facts["driver.before.hashes.md5"] = sourceMd5;
+                facts["driver.after.hashes.md5"] = modifiedMd5;
+                facts["driver.before.hashes.sha256"] = sourceHash;
+                facts["driver.after.hashes.sha256"] = modifiedHash;
+                facts["driver.modification.marker"] = "EDRTEST_DRIVER_MODIFY|fixture";
+            }
+            else
+            {
+                facts["driver.setup_load_succeeded"] = true;
+                facts["driver.load_isolation_ms"] = 2200;
+                facts["driver.native_api"] = "ControlService(STOP)";
+                facts["driver.before.loaded"] = true;
+                facts["driver.before.base_address"] = "0xfffff80123450000";
+                facts["driver.before.module_size_bytes"] = 20480L;
+                facts["driver.before.hashes.md5"] = sourceMd5;
+                facts["driver.before.hashes.sha256"] = sourceHash;
+                facts["driver.after.loaded"] = false;
+                facts["driver.after.service_exists"] = true;
+                facts["driver.after.service_state"] = "stopped";
+            }
+            foreach (var (key, value) in facts) local["local_facts"]!.AsArray().Add(Fact(caseRunId, key, value!));
+
+            genericCloud.Add(new JsonObject
+            {
+                ["event_type"] = "driver",
+                ["event_id"] = eventId + "-generic",
+                ["host_id"] = "driver-fixture-host",
+                ["hostname"] = "DRIVER-FIXTURE",
+                ["occurred_at_utc"] = Values.Utc(occurredAt),
+                ["operation"] = operation,
+                ["driver_name"] = driverName,
+                ["service_name"] = serviceName,
+                ["image_path"] = driverPath,
+                ["base_address"] = "0xfffff80123450000",
+                ["size_bytes"] = operation == "modify" ? 16440 : 16384,
+                ["module_size_bytes"] = 20480,
+                ["md5"] = operation == "modify" ? modifiedMd5 : sourceMd5,
+                ["sha256"] = operation == "modify" ? modifiedHash : sourceHash,
+                ["signer"] = "Tencent EDR Test Driver",
+                ["signature_valid"] = true,
+            });
+            baselinePaths.Add(Path.Combine(repository, "baselines", "windows", $"driver_{operation}.yaml"));
+        }
+
+        var loadTime = baseTime;
+        const long signedModuleBase = -8790327230464;
+        tencentCloud.Add(new JsonObject
+        {
+            ["OS"] = "Windows",
+            ["@table"] = "ModuleEvents",
+            ["@timestamp"] = Values.Utc(loadTime.AddMilliseconds(3)),
+            ["Action.Type"] = "Module",
+            ["Action.Name"] = "LoadDriver",
+            ["Common.Source"] = "KernelMon",
+            ["Common.MonitorName"] = "加载驱动",
+            ["Common.EventUUId"] = Ids.NewUuid7(),
+            ["Common.EventTime"] = loadTime.ToUnixTimeMilliseconds(),
+            ["Common.Mid"] = "driver-fixture-host",
+            ["Environment.HostName"] = "DRIVER-FIXTURE",
+            ["Parent.ProcPid"] = 0,
+            ["Parent.FileName"] = "SystemIdle",
+            ["Parent.FilePath"] = "SystemIdle",
+            ["Parent.ProcCmdline"] = "SystemIdle",
+            ["Child.FileName"] = driverName,
+            ["Child.FilePath"] = driverPath,
+            ["Child.FileMd5"] = sourceMd5,
+            ["Child.FileSize"] = 16384,
+            ["Child.ModuleBase"] = signedModuleBase,
+            ["Child.ModuleSize"] = 20480,
+            ["Child.FileSign"] = "Tencent EDR Test Driver",
+            ["Child.FileSignStatus"] = "验证通过",
+            ["Child.FileSignWhite"] = "是",
+        });
+
+        var localPath = Path.Combine(fixture.Path, "driver-local.json");
+        var genericPath = Path.Combine(fixture.Path, "driver-generic.json");
+        var tencentPath = Path.Combine(fixture.Path, "driver-tencent.json");
+        File.WriteAllText(localPath, local.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(genericPath, genericCloud.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(tencentPath, tencentCloud.ToJsonString(JsonDefaults.Options));
+        var generic = CompareService.Compare(new CompareRequest(localPath, [genericPath],
+            Path.Combine(repository, "mappings", "generic-driver-activity-v1.yaml"), baselinePaths,
+            Path.Combine(fixture.Path, "driver-generic-validation.json")));
+        var tencent = CompareService.Compare(new CompareRequest(localPath, [tencentPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"), baselinePaths,
+            Path.Combine(fixture.Path, "driver-tencent-validation.json")));
+        Assert(generic["summary"]?["pass"]?.GetValue<int>() == 3,
+            $"通用驱动直接事件应使三项 BASELINE 全部通过：{generic.ToJsonString(JsonDefaults.Options)}");
+        Assert(tencent["summary"]?["pass"]?.GetValue<int>() == 1,
+            $"腾讯实测 LoadDriver 只能使加载通过：{tencent.ToJsonString(JsonDefaults.Options)}");
+        var capabilities = tencent["capabilities"]?.AsArray()
+            ?? throw new InvalidOperationException("腾讯驱动比较结果缺少能力数组。");
+        Assert(capabilities.Single(value => value?["capability_id"]?.GetValue<string>() == "win.driver.load")?
+                ["validation_status"]?.GetValue<string>() == "PASS",
+            "ModuleEvents/LoadDriver 应使驱动加载通过。");
+        Assert(capabilities.Where(value => value?["capability_id"]?.GetValue<string>() is "win.driver.modify" or "win.driver.unload")
+                .All(value => value?["validation_status"]?.GetValue<string>() != "PASS"),
+            "LoadDriver 预置或侧面事件不能使驱动修改、卸载通过。");
+        var load = capabilities.Single(value => value?["capability_id"]?.GetValue<string>() == "win.driver.load")?.AsObject()
+            ?? throw new InvalidOperationException("腾讯驱动比较结果缺少加载能力。");
+        Assert(load["edr_candidates"]?.AsArray().Any(candidate => candidate?["baseline_matches"]?.AsArray().Any(match =>
+                match?["canonical_field"]?.GetValue<string>() == "driver.base_address"
+                && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.ModuleBase") == true) == true,
+            "Child.ModuleBase 应映射并参与 JSON 对照高亮。");
         return Task.CompletedTask;
     }
 

@@ -1,0 +1,61 @@
+schema_version: "1.1"
+baseline_id: win.driver.unload
+version: "0.1.0"
+title: Windows 驱动卸载遥测
+description: 本地先加载并确认受控驱动，等待至少两秒后通过 ControlService(STOP) 卸载并确认模块消失；云端仅接受未来出现的驱动卸载专属事件，预置加载事件不能使本能力通过。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L3
+capability:
+  id: win.driver.unload
+  version: "0.1.0"
+  parameters: { load_isolation_ms: 2200, post_operation_hold_ms: 1500 }
+local_requirements:
+  - { field: facts.driver.environment.ready, operator: equals, expected: true }
+  - { field: facts.driver.setup_load_succeeded, operator: equals, expected: true }
+  - { field: facts.driver.load_isolation_ms, operator: present }
+  - { field: facts.driver.unload_succeeded, operator: equals, expected: true }
+  - { field: facts.driver.native_api, operator: equals, expected: ControlService(STOP) }
+  - { field: facts.driver.service_name, operator: present }
+  - { field: facts.driver.image_path, operator: present }
+  - { field: facts.driver.before.loaded, operator: equals, expected: true }
+  - { field: facts.driver.before.base_address, operator: present }
+  - { field: facts.driver.before.module_size_bytes, operator: present }
+  - { field: facts.driver.before.hashes.md5, operator: present }
+  - { field: facts.driver.before.hashes.sha256, operator: present }
+  - { field: facts.driver.after.loaded, operator: equals, expected: false }
+  - { field: facts.driver.after.service_exists, operator: equals, expected: true }
+  - { field: facts.driver.after.service_state, operator: equals, expected: stopped }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.driver.image_path, cloud_field: driver.image_path, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.driver.before.hashes.md5, cloud_field: driver.hash.md5, strength: strong, normalizers: [lowercase] }
+method_selection: { strategy: best }
+cloud_expectations:
+  - id: driver-unload-direct-planned
+    method: { id: dedicated_driver_unload, title: 驱动卸载直接事件 }
+    event_type: driver
+    event_actions: [unload]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.driver.occurred_at_utc
+      max_time_difference_ms: 15
+      anchors:
+        - { local_field: facts.driver.image_path, cloud_field: driver.image_path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.driver.before.hashes.md5, cloud_field: driver.hash.md5, strength: strong, normalizers: [lowercase] }
+    assertions:
+      - { field: event.action, operator: equals, expected: unload, severity: required }
+      - { field: driver.image_path, operator: equals, expected_from_local: facts.driver.image_path, severity: required, normalizers: [windows_path] }
+      - { field: driver.hash.md5, operator: equals, expected_from_local: facts.driver.before.hashes.md5, severity: required, normalizers: [lowercase] }
+      - { field: driver.name, operator: equals, expected_from_local: facts.driver.name, severity: recommended, normalizers: [lowercase] }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: active
+  expected_product_result: 当前产品只有 LoadDriver，预置加载事件与卸载时间隔离且动作不符，预期 EDR 条件失败；本地样本仍必须通过。
+  references: [reference/驱动三能力实现可行性评估.md]

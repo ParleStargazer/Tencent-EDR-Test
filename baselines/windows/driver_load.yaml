@@ -1,0 +1,70 @@
+schema_version: "1.1"
+baseline_id: win.driver.load
+version: "0.1.0"
+title: Windows 驱动加载遥测
+description: 本地由 SCM 状态与 K32EnumDeviceDrivers 双重确认受控驱动已加载；云端必须提供 ModuleEvents/LoadDriver 直接证据。腾讯事件的 Parent 固定为 SystemIdle/PID 0，不要求 Actor 调用链。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L3
+capability:
+  id: win.driver.load
+  version: "0.1.0"
+  parameters: { post_operation_hold_ms: 1500 }
+local_requirements:
+  - { field: facts.driver.environment.ready, operator: equals, expected: true }
+  - { field: facts.driver.load_succeeded, operator: equals, expected: true }
+  - { field: facts.driver.native_api, operator: equals, expected: CreateServiceW+StartServiceW }
+  - { field: facts.driver.service_name, operator: present }
+  - { field: facts.driver.image_path, operator: present }
+  - { field: facts.driver.before.loaded, operator: equals, expected: false }
+  - { field: facts.driver.after.loaded, operator: equals, expected: true }
+  - { field: facts.driver.after.service_state, operator: equals, expected: running }
+  - { field: facts.driver.after.base_address, operator: present }
+  - { field: facts.driver.after.size_bytes, operator: present }
+  - { field: facts.driver.after.module_size_bytes, operator: present }
+  - { field: facts.driver.after.hashes.md5, operator: present }
+  - { field: facts.driver.after.hashes.sha256, operator: present }
+  - { field: facts.driver.package.signature_valid, operator: equals, expected: true }
+  - { field: facts.driver.package.sha256, operator: equals, expected_from_local: facts.driver.after.hashes.sha256, normalizers: [lowercase] }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.driver.image_path, cloud_field: driver.image_path, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.driver.after.hashes.md5, cloud_field: driver.hash.md5, strength: strong, normalizers: [lowercase] }
+    - { local_field: facts.driver.after.size_bytes, cloud_field: driver.size, strength: medium }
+method_selection: { strategy: best }
+cloud_expectations:
+  - id: driver-load-kernelmon
+    method: { id: kernelmon_load_driver, title: KernelMon LoadDriver }
+    event_type: driver
+    event_actions: [load]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.driver.occurred_at_utc
+      max_time_difference_ms: 15
+      anchors:
+        - { local_field: facts.driver.image_path, cloud_field: driver.image_path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.driver.after.hashes.md5, cloud_field: driver.hash.md5, strength: strong, normalizers: [lowercase] }
+        - { local_field: facts.driver.after.size_bytes, cloud_field: driver.size, strength: medium }
+    assertions:
+      - { field: event.action, operator: equals, expected: load, severity: required }
+      - { field: driver.image_path, operator: equals, expected_from_local: facts.driver.image_path, severity: required, normalizers: [windows_path] }
+      - { field: driver.hash.md5, operator: equals, expected_from_local: facts.driver.after.hashes.md5, severity: required, normalizers: [lowercase] }
+      - { field: driver.size, operator: equals, expected_from_local: facts.driver.after.size_bytes, severity: required }
+      - { field: driver.module_size, operator: present, severity: required }
+      - { field: driver.base_address, operator: present, severity: required }
+      - { field: driver.module_size, operator: equals, expected_from_local: facts.driver.after.module_size_bytes, severity: recommended }
+      - { field: driver.name, operator: equals, expected_from_local: facts.driver.name, severity: recommended, normalizers: [lowercase] }
+      - { field: driver.signer, operator: present, severity: informational }
+      - { field: driver.signature_status, operator: present, severity: informational }
+      - { field: source_process.pid, operator: equals, expected: 0, severity: informational }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: active
+  change_reason: reference/driver_and_usb/edr_log_loaddriver.json 实测为 ModuleEvents、Action.Name=LoadDriver、Common.Source=KernelMon；强关联时间使用 Common.EventTime，默认 15 ms。
+  references: [reference/driver_and_usb/edr_log_loaddriver.json, reference/驱动三能力实现可行性评估.md]

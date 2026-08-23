@@ -64,7 +64,7 @@
 - 不调用腾讯 EDR API，不保存腾讯 EDR 账号或密钥；
 - 不自动登录或操作 EDR 控制台；
 - 不验证拦截、告警、处置或 MDR 服务质量；
-- 首期不测试进程注入、驱动、凭据访问、VSS 删除或 Agent 停止等高风险能力；
+- 进程注入、凭据访问、VSS 删除或 Agent 停止等高风险能力仍不进入当前实现；驱动三项已作为 L3 隔离测试能力接入，默认跳过且必须显式确认；
 - 不把用户导入的原始云端日志复制进 Git 仓库；
 - 不在首期提供集中式服务器、PostgreSQL 或远程 Worker。
 
@@ -588,7 +588,7 @@ BASELINE 不包含腾讯字段名；腾讯字段只出现在 Mapping Profile 中
 | L0 | 用户目录、短生命周期进程、回环网络 | 可自动运行 |
 | L1 | HKCU、命名管道、内网测试服务 | 实验室可自动运行 |
 | L2 | 管理员权限、服务、计划任务、账户 | 审批并要求 VM 快照 |
-| L3 | 注入、驱动、凭据、VSS、Agent 变更 | 首期不实现 |
+| L3 | 注入、驱动、凭据、VSS、Agent 变更 | 仅驱动三项已实现；默认跳过，隔离 VM 中显式确认后执行 |
 
 强制要求：
 
@@ -649,6 +649,8 @@ Scheduled Task Activity 三项能力操作本轮唯一的 `\EdrTest_<nonce>_<ope
 WMI Activity 三项能力使用 C# `System.Management` 在 `ROOT\subscription` 创建本轮唯一 `__EventFilter`、`LogFileEventConsumer` 和 `__FilterToConsumerBinding`。Filter 查询指向永不出现的 nonce 进程名，Consumer 不执行命令；Actor 与 Controller 分别查询 repository 形成绝对本地基准，清理严格按 Binding、Consumer、Filter 顺序并复核不存在。腾讯现有 `WmiOperation/ExecMethod` 和 ScriptScan 不属于三项直接事件，规划映射只接受未来精确动作，故当前产品预期为本地通过、云端未匹配。完整约束见 `docs/WMI-ACTIVITY-SAMPLES.md`。
 
 Virtual Disk Mount 使用两个独立子测试：Windows PowerShell `Mount-DiskImage` 与 VirtDisk `OpenVirtualDisk + AttachVirtualDisk`。Controller 为各方法创建独立的 16 MiB 动态 VHD；镜像保持未初始化、只读、无盘符，Actor 和 Controller 通过不同句柄取得同一 PhysicalDrive 路径后才认定本地挂载成立。正常与异常路径均按完整镜像路径卸载并删除。腾讯现有字段中没有虚拟磁盘直接 telemetry，规划映射不接受进程、脚本或文件侧面事件替代。完整约束见 `docs/VIRTUAL-DISK-ACTIVITY-SAMPLES.md`。
+
+Driver Activity 三项能力使用 `F:\EWDK` 构建的最小 x64 WDM 驱动。加载以 SCM 和内核模块枚举为绝对本地基准，并映射腾讯 `ModuleEvents/LoadDriver`；修改只操作从未加载的工作副本；卸载将预置加载与卸载动作至少隔离两秒。三项均为 L3，严格锁定服务名、工作目录、包哈希与签名环境，清理失败进入 `CLEANUP_ERROR`。当前产品预期只有加载可能通过，修改与卸载只接受未来专属直接事件。完整约束见 `docs/DRIVER-ACTIVITY-SAMPLES.md`。
 
 Service Activity 三项能力使用原生 SCM API 操作本轮唯一的 `EdrTestSvc_<nonce>_<operation>` 临时服务。创建使用 `CreateServiceW`，修改使用 `ChangeServiceConfigW` 同时改变显示名、Binary Path 标记和手动→禁用启动类型，删除使用 `DeleteService`；Controller 以独立 `QueryServiceConfigW`/`QueryServiceStatusEx` 查询作为绝对本地基准。服务 Binary Path 只允许系统 `cmd.exe` 的无害命令，服务始终停止且测试过程从不启动，清理仅删除本轮精确名称。三项均输出具名方法结果：创建和修改分别比较 SCM API Hook 与 System 7045/7040 两条候选方法，删除比较 DeleteService API Hook；各能力采用最佳方法形成结论。腾讯 CreateService 路径已按参考轮次校准，修改与删除保留兼容路由。完整约束见 `docs/SERVICE-ACTIVITY-SAMPLES.md`。
 

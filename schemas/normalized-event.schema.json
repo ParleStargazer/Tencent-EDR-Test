@@ -164,6 +164,31 @@
       },
       "additionalProperties": false
     },
+    "driver": {
+      "type": ["object", "null"],
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "service_name": { "type": ["string", "null"] },
+        "image_path": { "type": ["string", "null"] },
+        "base_address": { "type": ["string", "null"], "pattern": "^0x[0-9a-fA-F]+$" },
+        "size": { "type": ["integer", "null"], "minimum": 0 },
+        "module_size": { "type": ["integer", "null"], "minimum": 0 },
+        "hash": {
+          "type": ["object", "null"],
+          "properties": {
+            "md5": { "type": ["string", "null"] },
+            "sha1": { "type": ["string", "null"] },
+            "sha256": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "signer": { "type": ["string", "null"] },
+        "signature_valid": { "type": ["boolean", "null"] },
+        "signature_status": { "type": ["string", "integer", "null"] },
+        "signature_type": { "type": ["string", "integer", "null"] }
+      },
+      "additionalProperties": false
+    },
     "device": {
       "type": ["object", "null"],
       "properties": {

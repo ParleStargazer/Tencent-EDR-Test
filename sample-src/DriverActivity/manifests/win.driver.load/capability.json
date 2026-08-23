@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.driver.load",
+  "version": "0.1.0",
+  "display_name_zh": "驱动加载",
+  "display_name_en": "Driver Loaded",
+  "description": "Actor 通过 CreateServiceW/StartServiceW 加载本轮唯一、签名且哈希锁定的最小 WDM 驱动；Controller 通过 SCM 与内核模块枚举独立确认，随后精确卸载和删除。",
+  "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
+  "risk_level": "L3",
+  "required_privilege": "administrator",
+  "controller": { "executable": "DriverLoad.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "DriverLoad.Actor.exe" }],
+  "parameters": {
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 90, "cleanup_seconds": 45 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "driver.environment.ready", "driver.environment.reason", "driver.load_succeeded", "driver.occurred_at_utc",
+    "driver.completed_at_utc", "driver.name", "driver.service_name", "driver.image_path", "driver.native_api",
+    "driver.actor_pid", "driver.actor_executable", "driver.before.loaded", "driver.after.loaded",
+    "driver.after.base_address", "driver.after.size_bytes", "driver.after.module_size_bytes", "driver.after.hashes.md5",
+    "driver.after.hashes.sha256", "driver.package.signature_valid", "driver.package.signer",
+    "driver.package.sha256", "correlation.nonce"
+  ]
+}

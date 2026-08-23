@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>DriverActivity.Behavior</AssemblyName>
+    <RootNamespace>DriverActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DriverActivity.Protocol\DriverActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

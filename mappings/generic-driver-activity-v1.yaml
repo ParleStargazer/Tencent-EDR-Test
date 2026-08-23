@@ -1,0 +1,37 @@
+schema_version: "1.0"
+profile_id: generic-driver-activity-v1
+vendor: Generic
+product: Driver Activity Fixture
+description: 理论测试使用的驱动直接事件映射；不把服务或普通文件事件转换成驱动能力。
+
+input:
+  containers: [json-array, jsonl]
+  encoding: utf-8
+  record_selector:
+    all: { event_type: driver }
+  event_id_field: event_id
+  host_id_field: host_id
+  host_name_field: hostname
+  event_time: { field: occurred_at_utc, format: iso8601 }
+
+routes:
+  - route_id: driver-direct
+    when: { event_type: driver }
+    canonical:
+      "event.type": { constant: driver }
+      "event.action": { source: operation }
+      "event.category": { constant: module }
+      "event.id": { source: event_id }
+      "event.created": { source: occurred_at_utc, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "host.hostname": { source: hostname, on_empty: null }
+      "driver.name": { source: driver_name, on_empty: null }
+      "driver.service_name": { source: service_name, on_empty: null }
+      "driver.image_path": { source: image_path, transform: [windows_path], on_empty: null }
+      "driver.base_address": { source: base_address, on_empty: null }
+      "driver.size": { source: size_bytes, on_zero: 0 }
+      "driver.module_size": { source: module_size_bytes, on_zero: 0 }
+      "driver.hash.md5": { source: md5, transform: [lowercase], on_empty: null }
+      "driver.hash.sha256": { source: sha256, transform: [lowercase], on_empty: null }
+      "driver.signer": { source: signer, on_empty: null }
+      "driver.signature_valid": { source: signature_valid, on_empty: null }

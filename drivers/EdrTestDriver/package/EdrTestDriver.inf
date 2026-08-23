@@ -1,0 +1,38 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4d36e97d-e325-11ce-bfc1-08002be10318}
+Provider=%ProviderName%
+DriverVer=08/23/2026,0.1.0.0
+CatalogFile=EdrTestDriver.cat
+PnpLockdown=1
+
+[DefaultInstall.NTamd64]
+CopyFiles=DriverCopyFiles
+
+[DefaultInstall.NTamd64.Services]
+AddService=EdrTestDriver,0x00000002,ServiceInstall
+
+[DestinationDirs]
+DriverCopyFiles=12
+
+[DriverCopyFiles]
+EdrTestDriver.sys
+
+[ServiceInstall]
+DisplayName=%ServiceDisplayName%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%12%\EdrTestDriver.sys
+
+[SourceDisksNames]
+1=%DiskName%,,,
+
+[SourceDisksFiles]
+EdrTestDriver.sys=1
+
+[Strings]
+ProviderName="Tencent EDR Test"
+ServiceDisplayName="Tencent EDR Test Minimal Driver"
+DiskName="Tencent EDR Test Driver Package"

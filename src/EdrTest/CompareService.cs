@@ -1644,6 +1644,7 @@ public static class CompareService
         "named_pipe_path" => NormalizeNamedPipePath(value?.ToString()),
         "network_direction" => NormalizeNetworkDirection(value?.ToString()),
         "http_method" => NormalizeHttpMethod(value?.ToString()),
+        "signed_int64_to_hex" => SignedInt64ToHex(value),
         "unix_ms_to_utc" when TryInt64(value, out var milliseconds) => Values.Utc(DateTimeOffset.FromUnixTimeMilliseconds(milliseconds)),
         "unix_s_to_utc" when TryInt64(value, out var seconds) => Values.Utc(DateTimeOffset.FromUnixTimeSeconds(seconds)),
         "parse_datetime_to_utc" when DateTimeOffset.TryParse(value?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var timestamp) => Values.Utc(timestamp),
@@ -1673,6 +1674,15 @@ public static class CompareService
     private static string? NormalizeWindowsPath(string? value) => string.IsNullOrWhiteSpace(value)
         ? value
         : value.Trim().Replace('/', '\\').TrimEnd('\\').ToLowerInvariant();
+
+    private static string? SignedInt64ToHex(object? value)
+    {
+        if (value is null) return null;
+        if (TryInt64(value, out var signed)) return $"0x{unchecked((ulong)signed):x16}";
+        return ulong.TryParse(value.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var unsigned)
+            ? $"0x{unsigned:x16}"
+            : value.ToString();
+    }
 
     private static string? NormalizeNamedPipePath(string? value)
     {

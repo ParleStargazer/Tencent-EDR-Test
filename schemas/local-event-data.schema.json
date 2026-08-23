@@ -585,6 +585,7 @@
         "image_path": { "type": ["string", "null"] },
         "base_address": { "$ref": "#/$defs/hex_address" },
         "size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "module_size_bytes": { "type": ["integer", "null"], "minimum": 0 },
         "hashes": {
           "oneOf": [{ "$ref": "#/$defs/hashes" }, { "type": "null" }]
         },

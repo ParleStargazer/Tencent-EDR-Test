@@ -1,0 +1,62 @@
+schema_version: "1.1"
+baseline_id: win.driver.modify
+version: "0.1.0"
+title: Windows 驱动文件修改遥测
+description: 本地只修改从未加载的独立工作副本并核验前后 MD5、SHA256、大小与时间；云端仅接受未来出现的驱动修改专属事件，普通 FileWriteClose 不足以证明驱动修改能力。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L3
+capability:
+  id: win.driver.modify
+  version: "0.1.0"
+  parameters: { post_operation_hold_ms: 1500 }
+local_requirements:
+  - { field: facts.driver.environment.ready, operator: equals, expected: true }
+  - { field: facts.driver.modify_succeeded, operator: equals, expected: true }
+  - { field: facts.driver.native_api, operator: equals, expected: FileStream.Write }
+  - { field: facts.driver.image_path, operator: present }
+  - { field: facts.driver.before.loaded, operator: equals, expected: false }
+  - { field: facts.driver.after.loaded, operator: equals, expected: false }
+  - { field: facts.driver.before.service_exists, operator: equals, expected: false }
+  - { field: facts.driver.after.service_exists, operator: equals, expected: false }
+  - { field: facts.driver.before.size_bytes, operator: present }
+  - { field: facts.driver.after.size_bytes, operator: present }
+  - { field: facts.driver.before.hashes.md5, operator: present }
+  - { field: facts.driver.after.hashes.md5, operator: present }
+  - { field: facts.driver.before.hashes.sha256, operator: present }
+  - { field: facts.driver.after.hashes.sha256, operator: present }
+  - { field: facts.driver.modification.marker, operator: present }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.driver.image_path, cloud_field: driver.image_path, strength: strong, normalizers: [windows_path] }
+    - { local_field: facts.driver.after.hashes.md5, cloud_field: driver.hash.md5, strength: strong, normalizers: [lowercase] }
+method_selection: { strategy: best }
+cloud_expectations:
+  - id: driver-modify-direct-planned
+    method: { id: dedicated_driver_modify, title: 驱动修改直接事件 }
+    event_type: driver
+    event_actions: [modify]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.driver.occurred_at_utc
+      max_time_difference_ms: 15
+      anchors:
+        - { local_field: facts.driver.image_path, cloud_field: driver.image_path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.driver.after.hashes.md5, cloud_field: driver.hash.md5, strength: strong, normalizers: [lowercase] }
+    assertions:
+      - { field: event.action, operator: equals, expected: modify, severity: required }
+      - { field: driver.image_path, operator: equals, expected_from_local: facts.driver.image_path, severity: required, normalizers: [windows_path] }
+      - { field: driver.hash.md5, operator: equals, expected_from_local: facts.driver.after.hashes.md5, severity: required, normalizers: [lowercase] }
+      - { field: driver.size, operator: equals, expected_from_local: facts.driver.after.size_bytes, severity: required }
+      - { field: driver.hash.sha256, operator: equals, expected_from_local: facts.driver.after.hashes.sha256, severity: recommended, normalizers: [lowercase] }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: active
+  expected_product_result: 当前产品缺少驱动修改专属 telemetry，预期 EDR 条件失败；本地样本仍必须通过。
+  references: [reference/驱动三能力实现可行性评估.md]

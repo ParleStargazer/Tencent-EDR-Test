@@ -20,6 +20,88 @@ input:
     format: unix_ms
 
 routes:
+  # reference/driver_and_usb 实测：内核驱动加载由 ModuleEvents/LoadDriver 直接记录。
+  # Parent 固定为 SystemIdle/PID 0，不能把测试 Actor 路径/PID列为云端必需条件；
+  # Child.ModuleBase 是有符号 int64 表示的内核地址，统一转换为无符号 0x 十六进制。
+  - route_id: driver-load-kernelmon
+    when:
+      "@table": ModuleEvents
+      "Action.Type": Module
+      "Action.Name": LoadDriver
+    canonical:
+      "event.type": { constant: driver }
+      "event.action": { constant: load }
+      "event.category": { constant: module }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "host.os": { source: "Environment.OsVersion", on_empty: null }
+      "host.agent_id": { source: "Common.Guid", on_empty: null }
+      "host.agent_version": { source: "Common.ClientVer", on_empty: null }
+      "source_process.pid": { source: "Parent.ProcPid", on_zero: 0 }
+      "source_process.entity_id": { source: "Parent.ProcGuid", on_empty: null }
+      "source_process.name": { source: "Parent.FileName", on_empty: null }
+      "source_process.executable": { source: "Parent.FilePath", on_empty: null }
+      "source_process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "driver.name": { source: "Child.FileName", on_empty: null }
+      "driver.image_path": { source: "Child.FilePath", transform: [windows_path], on_empty: null }
+      "driver.base_address": { source: "Child.ModuleBase", transform: [signed_int64_to_hex], on_empty: null }
+      "driver.size": { source: "Child.FileSize", on_zero: 0 }
+      "driver.module_size": { source: "Child.ModuleSize", on_zero: 0 }
+      "driver.hash.md5": { source: "Child.FileMd5", transform: [lowercase], on_empty: null }
+      "driver.signer": { source: "Child.FileSign", on_empty: null }
+      "driver.signature_status": { source: "Child.FileSignStatus", on_empty: null }
+      "driver.signature_type": { source: "Child.FileSignWhite", on_empty: null }
+      "file.path": { source: "Child.FilePath", transform: [windows_path], on_empty: null }
+      "file.name": { source: "Child.FileName", on_empty: null }
+      "file.size": { source: "Child.FileSize", on_zero: 0 }
+      "file.hash.md5": { source: "Child.FileMd5", transform: [lowercase], on_empty: null }
+      "file.driver_type": { source: "Child.FileDriverType", on_empty: null }
+
+  # 规划路由：现有字段全集没有驱动修改/卸载专属动作。只接受未来出现的直接事件；
+  # FileWriteClose、ServiceEvents 和预置 LoadDriver 都不会映射为修改或卸载。
+  - route_id: driver-modify-direct-planned
+    when:
+      "@table": [DriverEvents, ModuleEvents]
+      "Action.Type": [Driver, Module]
+      "Action.Name": [DriverModify, ModifyDriver]
+    canonical:
+      "event.type": { constant: driver }
+      "event.action": { constant: modify }
+      "event.category": { constant: module }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "driver.name": { source: "Child.FileName", on_empty: null }
+      "driver.image_path": { source: "Child.FilePath", transform: [windows_path], on_empty: null }
+      "driver.size": { source: "Child.FileSize", on_zero: 0 }
+      "driver.module_size": { source: "Child.ModuleSize", on_zero: 0 }
+      "driver.hash.md5": { source: "Child.FileMd5", transform: [lowercase], on_empty: null }
+      "driver.hash.sha256": { source: "Child.FileSha256", transform: [lowercase], on_empty: null }
+
+  - route_id: driver-unload-direct-planned
+    when:
+      "@table": [DriverEvents, ModuleEvents]
+      "Action.Type": [Driver, Module]
+      "Action.Name": [DriverUnload, UnloadDriver]
+    canonical:
+      "event.type": { constant: driver }
+      "event.action": { constant: unload }
+      "event.category": { constant: module }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "driver.name": { source: "Child.FileName", on_empty: null }
+      "driver.image_path": { source: "Child.FilePath", transform: [windows_path], on_empty: null }
+      "driver.base_address": { source: "Child.ModuleBase", transform: [signed_int64_to_hex], on_empty: null }
+      "driver.size": { source: "Child.FileSize", on_zero: 0 }
+      "driver.module_size": { source: "Child.ModuleSize", on_zero: 0 }
+      "driver.hash.md5": { source: "Child.FileMd5", transform: [lowercase], on_empty: null }
+
   # 规划路由：当前腾讯 EDR 字段全集与已知 run 中没有虚拟磁盘专属表、动作或对象字段。
   # 只接受未来可能出现的专属 Device/VirtualDisk 表和精确挂载动作；普通 PowerShell、
   # ProcEvents、FileEvents 或磁盘文件写入不能进入本能力，以免用侧面行为冒充直接观测。

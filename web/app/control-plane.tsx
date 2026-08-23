@@ -167,9 +167,9 @@ export const capabilityCatalog: CapabilityCategory[] = [
     nameZh: "驱动/模块活动",
     nameEn: "Driver/Module Activity",
     capabilities: [
-      defineCapability("win.driver.load", "驱动加载", "Driver Loaded", "L1"),
-      defineCapability("win.driver.modify", "驱动修改", "Driver Modification", "L1"),
-      defineCapability("win.driver.unload", "驱动卸载", "Driver Unloaded", "L1"),
+      defineCapability("win.driver.load", "驱动加载", "Driver Loaded", "L3"),
+      defineCapability("win.driver.modify", "驱动修改", "Driver Modification", "L3"),
+      defineCapability("win.driver.unload", "驱动卸载", "Driver Unloaded", "L3"),
     ],
   },
   {

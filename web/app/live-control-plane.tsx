@@ -358,6 +358,7 @@ const defaultActionNameInputs: Record<string, string> = {
   "win.group_policy.modify": "RegSetValue",
   "win.named_pipe.create": "NamedPipe",
   "win.named_pipe.connect": "NamedPipe",
+  "win.driver.load": "LoadDriver",
   "win.powershell.script_block": "ScriptScan",
   "win.file.create": "FileWriteClose",
   "win.file.modify": "FileWriteClose",

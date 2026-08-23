@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.driver.unload",
+  "version": "0.1.0",
+  "display_name_zh": "驱动卸载",
+  "display_name_en": "Driver Unloaded",
+  "description": "先加载并独立确认本轮驱动，等待至少两秒隔离加载事件，再由第二个 Actor 通过 ControlService(STOP) 卸载；Controller 确认模块消失并删除服务和副本。",
+  "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
+  "risk_level": "L3",
+  "required_privilege": "administrator",
+  "controller": { "executable": "DriverUnload.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "DriverUnload.Actor.exe" }],
+  "parameters": {
+    "load_isolation_ms": { "type": "integer", "required": true, "default": 2200, "minimum": 2000, "maximum": 30000 },
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 120, "cleanup_seconds": 45 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "driver.environment.ready", "driver.unload_succeeded", "driver.setup_load_succeeded",
+    "driver.setup_load_completed_at_utc", "driver.load_isolation_ms", "driver.occurred_at_utc",
+    "driver.completed_at_utc", "driver.name", "driver.service_name", "driver.image_path", "driver.native_api",
+    "driver.actor_pid", "driver.actor_executable", "driver.before.loaded", "driver.after.loaded",
+    "driver.before.base_address", "driver.before.module_size_bytes", "driver.before.hashes.md5", "driver.before.hashes.sha256",
+    "correlation.nonce"
+  ]
+}

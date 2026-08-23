@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.driver.modify",
+  "version": "0.1.0",
+  "display_name_zh": "驱动修改",
+  "display_name_en": "Driver Modification",
+  "description": "Actor 仅修改从签名原件复制出的、从未加载的本轮工作副本，追加确定性标记；Controller 独立核验前后哈希、大小和时间并删除副本。",
+  "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
+  "risk_level": "L3",
+  "required_privilege": "administrator",
+  "controller": { "executable": "DriverModify.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "DriverModify.Actor.exe" }],
+  "parameters": {
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 60, "cleanup_seconds": 30 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "driver.environment.ready", "driver.modify_succeeded", "driver.occurred_at_utc", "driver.completed_at_utc",
+    "driver.name", "driver.service_name", "driver.image_path", "driver.native_api", "driver.actor_pid",
+    "driver.actor_executable", "driver.before.loaded", "driver.after.loaded", "driver.before.size_bytes",
+    "driver.after.size_bytes", "driver.before.hashes.md5", "driver.after.hashes.md5",
+    "driver.before.hashes.sha256", "driver.after.hashes.sha256", "driver.modification.marker",
+    "correlation.nonce"
+  ]
+}
