@@ -6,21 +6,27 @@
 
 `reference/260814140000run` 已证明 COM 注册可以命中 `ServiceEvents / InjectHook / RpcSchedTaskCreate`。该动作同时承载创建与更新注册调用，不能单独区分语义，因此继续作为独立 RPC 方法保留，但不会替代 4698/4702 直接语义子测试。
 
-此前的非 RPC 子测试只读取 `auditpol` 状态，然后执行普通 `schtasks.exe` 命令。即使系统没有启用“其他对象访问事件”成功审核，命令和任务状态仍会成功，本地也不会因缺少 4698/4702 而失败。这会产生“行为成功、EDR 没有可采集源”的假阳性。
+原有 `schtasks_cli` 子测试只读取 `auditpol` 状态，然后执行普通 `schtasks.exe` 命令。它仍有独立的对照价值，因此保持原行为和本地通过规则不变；即使本机没有 4698/4702/4699，只要任务状态符合预期，该方法仍可通过本地自验证。新增方法不会覆盖或改写它。
 
-## 两类独立方法
+## 三个独立方法
 
-每项能力保留 Task Scheduler COM 方法，并增加各自独立的安全审计方法：
+每项能力并行运行三种方法，各自使用不同任务路径、方法 ID、程序实例、事件、事实、证据和清理记录：
 
 | 能力 | 方法 ID | 激发操作 | 本机直接证据 | 腾讯动作 |
 |---|---|---|---|---|
+| 创建 | `task_scheduler_com` | Task Scheduler COM 注册 | 任务创建状态 | `RpcSchedTaskCreate` |
+| 创建 | `schtasks_cli` | `schtasks.exe /Create /SC ONCE` | 任务创建状态；4698 仅作诊断 | `SchedTaskCreate` |
 | 创建 | `security_audit_create` | `schtasks.exe /Create /TN <唯一任务> /XML <定义> /F` | Security 4698 | `SchedTaskCreate` |
+| 修改 | `task_scheduler_com` | Task Scheduler COM 覆盖注册 | 定义变化 | `RpcSchedTaskCreate` |
+| 修改 | `schtasks_cli` | `schtasks.exe /Change /ENABLE` | 禁用变启用；4702 仅作诊断 | `SchedTaskUpdate` |
 | 修改 | `security_audit_update` | 预置禁用任务后，以 `/Create /XML /F` 覆盖完整定义 | Security 4702 | `SchedTaskUpdate` |
+| 删除 | `task_scheduler_com` | Task Scheduler COM 删除 | 任务消失 | 腾讯侧尚未实现 |
+| 删除 | `schtasks_cli` | `schtasks.exe /Delete /F` | 任务消失；4699 仅作诊断 | 腾讯侧尚未实现 |
 | 删除 | `security_audit_delete` | 预置任务后执行 `schtasks.exe /Delete /F` | Security 4699 | 腾讯侧尚未实现 |
 
 安全审计方法通过原生 Audit Policy API 精确保存“其他对象访问事件”子类别的位掩码，仅在行为窗口内补充成功审核位，并在读取证据后恢复原值。它不解析本地化的 `auditpol.exe` 文本，也不备份或覆盖其他审核子类别。三项能力因此需要管理员权限并标记为 L2。
 
-Actor 只有同时满足以下条件才报告本地成功：
+安全审计方法的 Actor 只有同时满足以下条件才报告本地成功：
 
 1. 计划任务操作前后状态符合创建、修改或删除语义；
 2. Security 日志出现本轮唯一任务路径对应的 4698、4702 或 4699；
@@ -29,14 +35,14 @@ Actor 只有同时满足以下条件才报告本地成功：
 
 ## BASELINE 与关联
 
-本地运行日志仍是绝对基准。创建与修改的云端必需条件是任务路径、任务 XML 中的本轮唯一标记和 Windows 事件 ID。关联时间使用本机 Security 事件自身的 `System/TimeCreated/@SystemTime`，而不是 `schtasks.exe` 退出时间，因此可继续使用 15 ms 强关联阈值。进程路径和命令行只作推荐证据，避免 EDR 仅保留服务侧调用链时误判。
+本地运行日志仍是绝对基准。三个方法分别形成 `method_results`，比较器按最佳方法得出能力结论，但不会隐藏另外两种方法。原 CLI 方法沿用行为完成时间；安全审计方法使用本机 Security 事件自身的 `System/TimeCreated/@SystemTime`，而不是 `schtasks.exe` 退出时间，因此可继续使用 15 ms 强关联阈值。创建与修改安全审计方法的云端必需条件是任务路径、任务 XML 中的本轮唯一标记和 Windows 事件 ID；进程路径和命令行只作推荐证据。
 
 腾讯 EDR 当前没有可验证的 `SchedTaskDelete` 导出样本。删除能力仍执行与创建、修改相同完整度的本地激发、自验证、证据保存和策略恢复；腾讯云端要求保留为规划项，真实离线比较预计显示未通过，不作为本轮样本实现验收目标。
 
 ## 安全与清理
 
 - 每个方法使用 `\EdrTest_<nonce>_<operation>_<method>` 唯一路径，拒绝操作该命名范围外的任务。
-- 任务动作只包含不会被调度执行的 `cmd.exe /c rem` 标记，安全审计创建与更新使用一年后的时间触发器。
+- 任务动作只包含不会产生业务影响的 `cmd.exe /c rem` 标记；原 CLI 创建与安全审计创建/更新使用一年后的时间触发器，测试结束前不会执行。
 - Controller 在每个方法结束后精确删除对应任务；审核策略由 Actor 在退出前恢复。
 - 审核策略设置、实际启用值、恢复值、事件 XML、事件时间和记录号均写入本地事实或证据文件，便于前端展开排查。
 - Security 事件 XML 可能包含当前账号、域和 SID，对应证据文件标记为敏感；导出或共享运行结果前应按平台规范脱敏。

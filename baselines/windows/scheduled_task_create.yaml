@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.scheduled_task.create
-version: "0.3.0"
+version: "0.3.1"
 title: Windows 计划任务创建遥测
-description: 以 Task Scheduler COM/RPC Hook 和受控 Windows 安全审计 XML 创建作为两个独立方法；后者必须在本机生成 4698，腾讯云端应映射为 SchedTaskCreate，并以任务路径、XML 标记和安全事件时间形成直接证据。
+description: 同轮独立执行 Task Scheduler COM/RPC Hook、原生 schtasks.exe 创建和受控 Windows 安全审计 XML 创建三种方法；分别保留行为与结论，以最佳方法形成能力结论。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,7 +10,7 @@ platform:
 risk_level: L2
 capability:
   id: win.scheduled_task.create
-  version: "0.3.0"
+  version: "0.3.1"
   parameters: { post_operation_hold_ms: 1500 }
 local_requirements:
   - { field: facts.scheduled_task.create_succeeded, operator: equals, expected: true }
@@ -20,6 +20,14 @@ local_requirements:
   - { field: facts.scheduled_task.task_scheduler_com.after.exists, operator: equals, expected: true }
   - { field: facts.scheduled_task.task_scheduler_com.after.enabled, operator: equals, expected: false }
   - { field: facts.scheduled_task.task_scheduler_com.actor_pid, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.create_succeeded, operator: equals, expected: true }
+  - { field: facts.scheduled_task.schtasks_cli.task_path, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.before.exists, operator: equals, expected: false }
+  - { field: facts.scheduled_task.schtasks_cli.after.exists, operator: equals, expected: true }
+  - { field: facts.scheduled_task.schtasks_cli.after.enabled, operator: equals, expected: true }
+  - { field: facts.scheduled_task.schtasks_cli.after.triggers, operator: contains, expected: TimeTrigger }
+  - { field: facts.scheduled_task.schtasks_cli.actor_pid, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.security_event_4698_found, operator: present }
   - { field: facts.scheduled_task.security_audit_create.create_succeeded, operator: equals, expected: true }
   - { field: facts.scheduled_task.security_audit_create.task_path, operator: present }
   - { field: facts.scheduled_task.security_audit_create.before.exists, operator: equals, expected: false }
@@ -60,6 +68,29 @@ cloud_expectations:
       - { field: process.executable, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.actor_executable, severity: required, normalizers: [windows_path] }
       - { field: scheduled_task.command, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.after.action_command, severity: recommended, normalizers: [windows_path] }
       - { field: scheduled_task.arguments, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.after.action_arguments, severity: recommended }
+  - id: scheduled-task-create-security-event
+    method: { id: schtasks_cli, title: 原生 schtasks.exe 创建 + Windows 4698 }
+    event_type: scheduled_task
+    event_actions: [create]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.scheduled_task.schtasks_cli.completed_at_utc
+      anchors:
+        - { local_field: facts.scheduled_task.schtasks_cli.task_path, cloud_field: scheduled_task.name, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.scheduled_task.schtasks_cli.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+        - { local_field: facts.scheduled_task.schtasks_cli.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: scheduled_task.name, operator: equals, expected_from_local: facts.scheduled_task.schtasks_cli.task_path, severity: required, normalizers: [lowercase, trim] }
+      - { field: scheduled_task.content, operator: contains, expected_from_local: facts.scheduled_task.schtasks_cli.after.action_arguments, severity: required }
+      - { field: winlog.event_id, operator: equals, expected: 4698, severity: required }
+      - field: process.executable
+        operator: equals
+        expected_from_local: facts.scheduled_task.schtasks_cli.actor_executable
+        accepted_values:
+          - { value: 'C:\Windows\System32\svchost.exe', message: EDR 仅保留 Task Scheduler 服务侧调用链，需要补充客户端调用链 }
+        severity: recommended
+        normalizers: [windows_path]
+      - { field: user.id, operator: present, severity: recommended }
   - id: scheduled-task-create-security-audit-event
     method: { id: security_audit_create, title: Windows 安全审计 XML 创建（4698） }
     event_type: scheduled_task
@@ -82,5 +113,5 @@ scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: reference/scheduled_task 的 105 条 SchedTaskCreate 均为 ScheduleTaskEvents/WinEventLog/4698；其中存在 schtasks.exe /Create /XML 直接样本。旧非 RPC 方法只读取审核策略且不要求 4698 存在，现改为临时启用精确子类别、导入带唯一标记的 XML 并以本机 4698 时间关联云端。
+  change_reason: 保留原 schtasks.exe /Create 方法用于长期对照，并新增独立的安全审计 XML 方法；新方法临时启用精确审核子类别，以本机 4698 时间关联云端，不改变原方法的本地通过规则。
   references: [reference/scheduled_task/edr_SchedTaskCreate.json, Windows Security Event 4698, Tencent EDR SchedTaskCreate]

@@ -64,8 +64,9 @@ foreach ($capability in $localRun.capabilities) {
         $operation = $event.event_action
         $method = if ($event.data.method) { [string]$event.data.method } else { "task_scheduler_com" }
         $prefix = "scheduled_task.$method"
-        $isSecurityAudit = $method -ne "task_scheduler_com"
-        $eventType = if ($operation -in @("create", "modify") -and -not $isSecurityAudit) { "scheduled_task_rpc" } else { "scheduled_task" }
+        $isSecurityAudit = $method -like "security_audit_*"
+        $isRpc = $method -eq "task_scheduler_com"
+        $eventType = if ($operation -in @("create", "modify") -and $isRpc) { "scheduled_task_rpc" } else { "scheduled_task" }
         $cloudAction = if ($eventType -eq "scheduled_task_rpc") { "register" } else { $operation }
         $eventLogId = switch ($operation) { "create" { 4698 } "modify" { 4702 } "delete" { 4699 } }
         $actionName = switch ($operation) {
@@ -74,13 +75,14 @@ foreach ($capability in $localRun.capabilities) {
             "delete" { "SchedTaskDelete" }
         }
         $taskPath = $facts["$prefix.task_path"]
-        $marker = if ($operation -eq "delete") {
+        $marker = if ($operation -eq "delete" -or ($operation -eq "modify" -and $method -eq "schtasks_cli")) {
             $facts["$prefix.before.marker"]
         } else {
             $facts["$prefix.marker"]
         }
-        $actionArguments = if ($operation -eq "delete") { $facts["$prefix.before.action_arguments"] } else { $facts["$prefix.after.action_arguments"] }
-        $actionCommand = if ($operation -eq "delete") { $facts["$prefix.before.action_command"] } else { $facts["$prefix.after.action_command"] }
+        $useBeforeDefinition = $operation -eq "delete" -or ($operation -eq "modify" -and $method -eq "schtasks_cli")
+        $actionArguments = if ($useBeforeDefinition) { $facts["$prefix.before.action_arguments"] } else { $facts["$prefix.after.action_arguments"] }
+        $actionCommand = if ($useBeforeDefinition) { $facts["$prefix.before.action_command"] } else { $facts["$prefix.after.action_command"] }
         $taskContent = "<Task><RegistrationInfo><Description>$marker</Description></RegistrationInfo><Actions><Exec><Arguments>$actionArguments</Arguments></Exec></Actions></Task>"
         $subjectSid = if ($operation -eq "delete") { $facts["$prefix.before.principal"] } else { $facts["$prefix.after.principal"] }
         $genericCloud += [ordered]@{
@@ -157,19 +159,19 @@ $assertions = [ordered]@{
     run_completed = $localRun.run.status -eq "COMPLETED"
     capability_count_is_3 = @($localRun.capabilities).Count -eq 3
     all_capabilities_local_pass = $failedCapabilities.Count -eq 0
-    program_count_is_12 = @($localRun.programs).Count -eq 12
-    event_count_is_6 = @($localRun.local_events).Count -eq 6
-    artifact_count_is_6 = @($localRun.artifacts).Count -eq 6
-    cleanup_count_is_6 = @($localRun.cleanup_results).Count -eq 6
+    program_count_is_18 = @($localRun.programs).Count -eq 18
+    event_count_is_9 = @($localRun.local_events).Count -eq 9
+    artifact_count_is_9 = @($localRun.artifacts).Count -eq 9
+    cleanup_count_is_9 = @($localRun.cleanup_results).Count -eq 9
     all_cleanup_succeeded = $failedCleanup.Count -eq 0
     all_manifest_expected_facts_present = $missingFacts.Count -eq 0
     all_exact_test_tasks_removed = $tasksRemoved
     generic_compare_exit_code_is_0 = $genericExit -eq 0
     generic_compare_pass_count_is_3 = $genericResult.summary.pass -eq 3
-    generic_all_expected_methods_pass = $genericMethods.Count -eq 5 -and @($genericMethods | Where-Object status -ne "PASS").Count -eq 0
+    generic_all_expected_methods_pass = $genericMethods.Count -eq 9 -and @($genericMethods | Where-Object status -ne "PASS").Count -eq 0
     tencent_compare_exit_code_is_0 = $tencentExit -eq 0
     tencent_compare_pass_count_is_3 = $tencentResult.summary.pass -eq 3
-    tencent_all_expected_methods_pass = $tencentMethods.Count -eq 5 -and @($tencentMethods | Where-Object status -ne "PASS").Count -eq 0
+    tencent_all_expected_methods_pass = $tencentMethods.Count -eq 9 -and @($tencentMethods | Where-Object status -ne "PASS").Count -eq 0
 }
 $failedAssertions = @($assertions.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object Key)
 $summary = [ordered]@{

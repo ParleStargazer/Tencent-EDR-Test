@@ -136,7 +136,8 @@
     "action_name_filter": "创建默认提供 SchedTaskCreate 与 RpcSchedTaskCreate，修改为 SchedTaskUpdate 与 RpcSchedTaskCreate，删除为 SchedTaskDelete；仍只作用于 EDR JSON。",
     "primary_anchors": ["本轮唯一任务路径", "任务 XML 中 nonce 标记", "相对本地行为时间（强关联默认 15 ms）"],
     "process_chain": "Parent.* 可能表示直接客户端，也可能表示 Task Scheduler 或其他系统服务侧进程；创建/修改的直接方法只要求进程字段存在并作为推荐证据，不以客户端路径相等作为通过前提。",
-    "audit_diagnostic": "非 RPC 方法通过原生 Audit Policy API 只修改‘其他对象访问事件’子类别：保存原位掩码、临时启用成功审核、以 XML 创建或覆盖更新激发事件、读取精确任务路径对应的事件时间和记录号，然后恢复原位掩码。缺少对应 4698/4702/4699 时本地子测试直接失败。",
+    "method_separation": "每项能力保留 task_scheduler_com 与原 schtasks_cli，并新增 operation-specific security_audit_* 第三方法；三者具有独立任务路径、事实、候选和方法结论。",
+    "audit_diagnostic": "仅 security_audit_* 方法通过原生 Audit Policy API 修改‘其他对象访问事件’子类别：保存原位掩码、临时启用成功审核、以 XML 创建或覆盖更新激发事件、读取精确任务路径对应的事件时间和记录号，然后恢复原位掩码。缺少对应 4698/4702/4699 时该安全审计子测试直接失败；原 schtasks_cli 只把安全事件作为诊断，不改变本地通过规则。",
     "delete_status": "4699 为 Windows 标准删除事件，本地安全审计删除子测试必须成功激发；reference/scheduled_task 没有 SchedTaskDelete，腾讯侧按尚未实现处理，不以云端通过作为样本验收目标。"
   }
 }

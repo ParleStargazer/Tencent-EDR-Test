@@ -1141,34 +1141,38 @@ public static class Program
             local["capabilities"]!.AsArray().Add(new JsonObject
             {
                 ["case_run_id"] = caseRunId, ["capability_id"] = $"win.scheduled_task.{definition.Operation}",
-                ["capability_version"] = "0.3.0", ["display_name_zh"] = definition.Operation,
+                ["capability_version"] = "0.3.1", ["display_name_zh"] = definition.Operation,
                 ["display_name_en"] = definition.Operation, ["status"] = "LOCAL_PASS",
                 ["nonce"] = $"scheduled-task-fixture-{index}", ["started_at_utc"] = Values.Utc(capabilityTime.AddSeconds(-1)),
                 ["ended_at_utc"] = Values.Utc(capabilityTime.AddSeconds(3)),
             });
             var auditMethod = definition.Operation == "modify" ? "security_audit_update" : $"security_audit_{definition.Operation}";
-            var methods = new[] { "task_scheduler_com", auditMethod };
+            var methods = new[] { "task_scheduler_com", "schtasks_cli", auditMethod };
             foreach (var (method, methodIndex) in methods.Select((value, index) => (value, index)))
             {
                 var eventId = Ids.NewUuid7();
                 var occurredAt = capabilityTime.AddSeconds(methodIndex);
-                var isSecurityAudit = method != "task_scheduler_com";
-                var methodSuffix = isSecurityAudit ? "audit" : "rpc";
+                var isSecurityAudit = method == auditMethod;
+                var isSchtasksCli = method == "schtasks_cli";
+                var methodSuffix = isSecurityAudit ? "audit" : isSchtasksCli ? "cli" : "com";
                 var taskPath = $@"\EdrTest_fixture{index}_{definition.Operation}_{methodSuffix}";
                 var marker = $"EDRTEST|scheduled-task-fixture-{index}|SCHEDULED_TASK|{method}|{definition.Operation.ToUpperInvariant()}";
                 var beforeMarker = $"EDRTEST|scheduled-task-fixture-{index}|SCHEDULED_TASK|{method}|BEFORE";
                 var actorPid = 9300 + index * 10 + methodIndex;
-                var actorPath = isSecurityAudit
+                var actorPath = isSecurityAudit || isSchtasksCli
                     ? @"C:\Windows\System32\schtasks.exe"
                     : $@"C:\EDR-Test\ScheduledTask{definition.Operation}.Actor.exe";
                 var beforeExists = definition.Operation != "create";
                 var afterExists = definition.Operation != "delete";
-                var afterEnabled = isSecurityAudit && definition.Operation is "create" or "modify";
+                var afterEnabled = (isSecurityAudit && definition.Operation is "create" or "modify")
+                    || (isSchtasksCli && definition.Operation is "create" or "modify");
                 var prefix = $"scheduled_task.{method}";
                 var afterArguments = $"/d /c rem EDRTEST_fixture{index}_{methodSuffix}";
                 var beforeArguments = "/d /c exit 0";
-                var cloudArguments = definition.Operation == "delete" ? beforeArguments : afterArguments;
-                var cloudMarker = definition.Operation == "delete" ? beforeMarker : marker;
+                var preserveBeforeDefinition = definition.Operation == "delete"
+                    || isSchtasksCli && definition.Operation == "modify";
+                var cloudArguments = preserveBeforeDefinition ? beforeArguments : afterArguments;
+                var cloudMarker = preserveBeforeDefinition ? beforeMarker : marker;
                 var taskContent = $"<Task><RegistrationInfo><Description>{cloudMarker}</Description></RegistrationInfo>"
                     + $"<Actions><Exec><Arguments>{cloudArguments}</Arguments></Exec></Actions></Task>";
                 local["local_events"]!.AsArray().Add(new JsonObject
@@ -1202,16 +1206,19 @@ public static class Program
                     [$"{prefix}.after.action_command"] = afterExists ? @"C:\Windows\System32\cmd.exe" : null,
                     [$"{prefix}.after.action_arguments"] = afterExists ? cloudArguments : null,
                 };
-                if (isSecurityAudit)
+                if (isSecurityAudit || isSchtasksCli)
                 {
                     facts[$"{prefix}.security_event_id"] = definition.EventId;
                     facts[$"{prefix}.security_event_found"] = true;
                     facts[$"{prefix}.security_event_occurred_at_utc"] = Values.Utc(occurredAt);
                     facts[$"{prefix}.security_event_record_id"] = 8000 + index;
-                    facts[$"{prefix}.audit_policy_active"] = 1;
-                    facts[$"{prefix}.audit_success_enabled"] = true;
-                    facts[$"{prefix}.audit_policy_restore_succeeded"] = true;
-                    if (definition.Operation is "create" or "modify")
+                    if (isSecurityAudit)
+                    {
+                        facts[$"{prefix}.audit_policy_active"] = 1;
+                        facts[$"{prefix}.audit_success_enabled"] = true;
+                        facts[$"{prefix}.audit_policy_restore_succeeded"] = true;
+                    }
+                    if (definition.Operation == "create" || isSecurityAudit && definition.Operation == "modify")
                         facts[$"{prefix}.after.triggers"] = new JsonArray("TimeTrigger");
                     if (definition.Operation == "create")
                     {
@@ -1255,7 +1262,7 @@ public static class Program
                 }
                 else
                 {
-                    var useServiceSideProcess = definition.Operation == "modify" && isSecurityAudit;
+                    var useServiceSideProcess = definition.Operation == "modify" && (isSecurityAudit || isSchtasksCli);
                     var tencentProcess = useServiceSideProcess ? @"C:\Windows\System32\svchost.exe" : actorPath;
                     var tencent = new JsonObject
                     {
@@ -1313,9 +1320,10 @@ public static class Program
                 value?["capability_id"]?.GetValue<string>() == $"win.scheduled_task.{operation}")?.AsObject()
                 ?? throw new InvalidOperationException($"腾讯比较结果缺少计划任务 {operation} 能力。");
             var auditMethod = operation == "modify" ? "security_audit_update" : $"security_audit_{operation}";
-            var expectedMethodCount = operation == "delete" ? 1 : 2;
+            var expectedMethodCount = 3;
             Assert(capability["method_results"]?.AsArray().Count == expectedMethodCount
-                && (operation == "delete" || capability["method_results"]?.AsArray().Any(value => value?["method_id"]?.GetValue<string>() == "task_scheduler_com") == true)
+                && capability["method_results"]?.AsArray().Any(value => value?["method_id"]?.GetValue<string>() == "task_scheduler_com") == true
+                && capability["method_results"]?.AsArray().Any(value => value?["method_id"]?.GetValue<string>() == "schtasks_cli") == true
                 && capability["method_results"]?.AsArray().Any(value => value?["method_id"]?.GetValue<string>() == auditMethod) == true
                 && capability["method_results"]?.AsArray().All(value => value?["status"]?.GetValue<string>() == "PASS") == true,
                 $"计划任务 {operation} 必须输出对应的通过方法结果。");

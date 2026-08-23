@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.scheduled_task.modify
-version: "0.3.0"
+version: "0.3.1"
 title: Windows 计划任务修改遥测
-description: 以 Task Scheduler COM/RPC Hook 和受控 Windows 安全审计 XML 覆盖更新作为两个独立方法；后者必须在本机生成 4702，腾讯云端应映射为 SchedTaskUpdate，并以任务路径、更新后 XML 标记和安全事件时间形成直接证据。
+description: 同轮独立执行 Task Scheduler COM 更新、原生 schtasks.exe /Change /ENABLE 和受控 Windows 安全审计 XML 覆盖更新三种方法；分别保留行为与结论，以最佳方法形成能力结论。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,7 +10,7 @@ platform:
 risk_level: L2
 capability:
   id: win.scheduled_task.modify
-  version: "0.3.0"
+  version: "0.3.1"
   parameters: { post_operation_hold_ms: 1500 }
 local_requirements:
   - { field: facts.scheduled_task.modify_succeeded, operator: equals, expected: true }
@@ -22,6 +22,17 @@ local_requirements:
   - { field: facts.scheduled_task.task_scheduler_com.after.xml_sha256, operator: present }
   - { field: facts.scheduled_task.task_scheduler_com.after.marker, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.marker }
   - { field: facts.scheduled_task.task_scheduler_com.actor_pid, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.modify_succeeded, operator: equals, expected: true }
+  - { field: facts.scheduled_task.schtasks_cli.task_path, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.before.exists, operator: equals, expected: true }
+  - { field: facts.scheduled_task.schtasks_cli.before.xml_sha256, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.before.enabled, operator: equals, expected: false }
+  - { field: facts.scheduled_task.schtasks_cli.after.exists, operator: equals, expected: true }
+  - { field: facts.scheduled_task.schtasks_cli.after.xml_sha256, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.after.enabled, operator: equals, expected: true }
+  - { field: facts.scheduled_task.schtasks_cli.after.action_arguments, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.actor_pid, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.security_event_id, operator: equals, expected: 4702 }
   - { field: facts.scheduled_task.security_audit_update.modify_succeeded, operator: equals, expected: true }
   - { field: facts.scheduled_task.security_audit_update.task_path, operator: present }
   - { field: facts.scheduled_task.security_audit_update.before.exists, operator: equals, expected: true }
@@ -65,6 +76,29 @@ cloud_expectations:
       - { field: process.executable, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.actor_executable, severity: required, normalizers: [windows_path] }
       - { field: scheduled_task.command, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.after.action_command, severity: recommended, normalizers: [windows_path] }
       - { field: scheduled_task.arguments, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.after.action_arguments, severity: recommended }
+  - id: scheduled-task-modify-security-event
+    method: { id: schtasks_cli, title: 原生 schtasks.exe /Change /ENABLE + Windows 4702 }
+    event_type: scheduled_task
+    event_actions: [modify]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.scheduled_task.schtasks_cli.completed_at_utc
+      anchors:
+        - { local_field: facts.scheduled_task.schtasks_cli.task_path, cloud_field: scheduled_task.name, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.scheduled_task.schtasks_cli.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+        - { local_field: facts.scheduled_task.schtasks_cli.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: scheduled_task.name, operator: equals, expected_from_local: facts.scheduled_task.schtasks_cli.task_path, severity: required, normalizers: [lowercase, trim] }
+      - { field: scheduled_task.content, operator: contains, expected_from_local: facts.scheduled_task.schtasks_cli.before.marker, severity: required }
+      - { field: winlog.event_id, operator: equals, expected: 4702, severity: required }
+      - field: process.executable
+        operator: equals
+        expected_from_local: facts.scheduled_task.schtasks_cli.actor_executable
+        accepted_values:
+          - { value: 'C:\Windows\System32\svchost.exe', message: EDR 仅保留 Task Scheduler 服务侧调用链，需要补充客户端调用链 }
+        severity: recommended
+        normalizers: [windows_path]
+      - { field: user.id, operator: present, severity: recommended }
   - id: scheduled-task-modify-security-audit-event
     method: { id: security_audit_update, title: Windows 安全审计 XML 覆盖更新（4702） }
     event_type: scheduled_task
@@ -87,5 +121,5 @@ scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: reference/scheduled_task 的 887 条 SchedTaskUpdate 均为 ScheduleTaskEvents/WinEventLog/4702，更新后的完整 XML 位于 Child.TaskContentNew。旧 /Change /ENABLE 方法不保证本机审核事件存在，现改为在受控审核窗口内用 /Create /XML /F 覆盖完整定义，并直接关联本机 4702 时间。
+  change_reason: 保留原 schtasks.exe /Change /ENABLE 方法用于长期对照，并新增独立的安全审计 XML 覆盖更新方法；新方法严格关联本机 4702，不改变原方法的本地通过规则。
   references: [reference/scheduled_task/edr_SchedTaskUpdate.json, Windows Security Event 4702, Tencent EDR SchedTaskUpdate]

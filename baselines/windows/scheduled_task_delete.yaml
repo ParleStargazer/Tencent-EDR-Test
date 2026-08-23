@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.scheduled_task.delete
-version: "0.3.0"
+version: "0.3.1"
 title: Windows 计划任务删除遥测
-description: 以 COM 删除和受控 Windows 安全审计删除作为两个独立本地激发方法；安全审计方法必须生成 4699 并恢复策略。腾讯 EDR 尚无已实现的删除导出动作，因此保留规划性云端要求，不以云端通过作为本轮样本验收目标。
+description: 同轮独立执行 Task Scheduler COM 删除、原生 schtasks.exe /Delete 和受控 Windows 安全审计删除三种方法；分别保留行为与结论。腾讯 EDR 尚无已实现的删除导出动作，因此不以云端通过作为样本验收目标。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,7 +10,7 @@ platform:
 risk_level: L2
 capability:
   id: win.scheduled_task.delete
-  version: "0.3.0"
+  version: "0.3.1"
   parameters: { post_operation_hold_ms: 1500 }
 local_requirements:
   - { field: facts.scheduled_task.delete_succeeded, operator: equals, expected: true }
@@ -20,6 +20,15 @@ local_requirements:
   - { field: facts.scheduled_task.task_scheduler_com.before.xml_sha256, operator: present }
   - { field: facts.scheduled_task.task_scheduler_com.after.exists, operator: equals, expected: false }
   - { field: facts.scheduled_task.task_scheduler_com.actor_pid, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.delete_succeeded, operator: equals, expected: true }
+  - { field: facts.scheduled_task.schtasks_cli.task_path, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.before.exists, operator: equals, expected: true }
+  - { field: facts.scheduled_task.schtasks_cli.before.xml_sha256, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.before.principal, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.before.enabled, operator: equals, expected: false }
+  - { field: facts.scheduled_task.schtasks_cli.after.exists, operator: equals, expected: false }
+  - { field: facts.scheduled_task.schtasks_cli.actor_pid, operator: present }
+  - { field: facts.scheduled_task.schtasks_cli.security_event_id, operator: equals, expected: 4699 }
   - { field: facts.scheduled_task.security_audit_delete.delete_succeeded, operator: equals, expected: true }
   - { field: facts.scheduled_task.security_audit_delete.task_path, operator: present }
   - { field: facts.scheduled_task.security_audit_delete.before.exists, operator: equals, expected: true }
@@ -41,6 +50,50 @@ correlation:
     - { local_field: facts.scheduled_task.security_audit_delete.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
 method_selection: { strategy: best }
 cloud_expectations:
+  - id: scheduled-task-delete-com-security-event
+    method: { id: task_scheduler_com, title: Task Scheduler COM 删除 + Windows 4699 }
+    event_type: scheduled_task
+    event_actions: [delete]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.scheduled_task.task_scheduler_com.correlation_at_utc
+      anchors:
+        - { local_field: facts.scheduled_task.task_scheduler_com.task_path, cloud_field: scheduled_task.name, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.scheduled_task.task_scheduler_com.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+        - { local_field: facts.scheduled_task.task_scheduler_com.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: scheduled_task.name, operator: equals, expected_from_local: facts.scheduled_task.task_scheduler_com.task_path, severity: required, normalizers: [lowercase, trim] }
+      - { field: winlog.event_id, operator: equals, expected: 4699, severity: required }
+      - field: process.executable
+        operator: equals
+        expected_from_local: facts.scheduled_task.task_scheduler_com.actor_executable
+        accepted_values:
+          - { value: 'C:\Windows\System32\svchost.exe', message: EDR 仅保留 Task Scheduler 服务侧调用链，需要补充客户端调用链 }
+        severity: recommended
+        normalizers: [windows_path]
+      - { field: user.id, operator: present, severity: recommended }
+  - id: scheduled-task-delete-cli-security-event
+    method: { id: schtasks_cli, title: 原生 schtasks.exe /Delete + Windows 4699 }
+    event_type: scheduled_task
+    event_actions: [delete]
+    cardinality: { min: 1, max: 10 }
+    correlation:
+      time_from_local: facts.scheduled_task.schtasks_cli.completed_at_utc
+      anchors:
+        - { local_field: facts.scheduled_task.schtasks_cli.task_path, cloud_field: scheduled_task.name, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.scheduled_task.schtasks_cli.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+        - { local_field: facts.scheduled_task.schtasks_cli.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: scheduled_task.name, operator: equals, expected_from_local: facts.scheduled_task.schtasks_cli.task_path, severity: required, normalizers: [lowercase, trim] }
+      - { field: winlog.event_id, operator: equals, expected: 4699, severity: required }
+      - field: process.executable
+        operator: equals
+        expected_from_local: facts.scheduled_task.schtasks_cli.actor_executable
+        accepted_values:
+          - { value: 'C:\Windows\System32\svchost.exe', message: EDR 仅保留 Task Scheduler 服务侧调用链，需要补充客户端调用链 }
+        severity: recommended
+        normalizers: [windows_path]
+      - { field: user.id, operator: present, severity: recommended }
   - id: scheduled-task-delete-security-audit-event
     method: { id: security_audit_delete, title: Windows 安全审计删除（4699，腾讯侧规划） }
     event_type: scheduled_task
@@ -60,5 +113,5 @@ scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.
 metadata:
   owner: edr-validation-team
   status: planned
-  change_reason: 删除子测试与创建/修改使用相同的受控审核激发链并以本机 4699 自验证；reference/scheduled_task 未出现 SchedTaskDelete，腾讯 EDR 当前按未实现处理，云端要求仅保留字段与映射规划。
+  change_reason: 保留 COM 与原生 schtasks.exe /Delete 两种方法，并新增独立的受控安全审计删除方法；新方法以本机 4699 自验证。reference/scheduled_task 未出现 SchedTaskDelete，腾讯 EDR 当前按未实现处理。
   references: [reference/scheduled_task, Windows Security Event 4699, Tencent EDR planned SchedTaskDelete]

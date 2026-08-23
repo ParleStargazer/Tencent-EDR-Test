@@ -34,7 +34,7 @@ internal static class Program
             var completedAtUtc = DateTimeOffset.UtcNow;
             var after = ScheduledTaskClient.Snapshot(taskPath);
             var securityEventId = SecurityEventId(operation);
-            var diagnostic = IsSecurityAuditMethod(method)
+            var diagnostic = UsesSecurityEventDiagnostic(method)
                 ? CollectEventLogDiagnostic(taskPath, securityEventId, occurredAtUtc)
                 : new DiagnosticResult(null, null, null, null);
             auditScope?.Restore();
@@ -50,7 +50,7 @@ internal static class Program
                 ClientCommandLine = client?.CommandLine, ClientStartedAtUtc = client?.StartedAtUtc,
                 ClientEndedAtUtc = client?.EndedAtUtc, ClientExitCode = client?.ExitCode,
                 ClientStandardOutput = client?.StandardOutput, ClientStandardError = client?.StandardError,
-                SecurityEventId = IsSecurityAuditMethod(method) ? securityEventId : null,
+                SecurityEventId = UsesSecurityEventDiagnostic(method) ? securityEventId : null,
                 SecurityEventFound = diagnostic.SecurityEventFound,
                 SecurityEventOccurredAtUtc = diagnostic.SecurityEventOccurredAtUtc,
                 SecurityEventRecordId = diagnostic.SecurityEventRecordId,
@@ -93,6 +93,18 @@ internal static class Program
     private static CommandResult? Execute(string method, string operation, string taskPath, string definitionPath,
         string actionArguments)
     {
+        if (method == "schtasks_cli")
+        {
+            return operation switch
+            {
+                "create" => RunSchtasksCreate(taskPath, Path.Combine(Environment.SystemDirectory, "cmd.exe"), actionArguments),
+                "modify" => RunCommand(Path.Combine(Environment.SystemDirectory, "schtasks.exe"),
+                    ["/Change", "/TN", taskPath, "/ENABLE"], 15_000, requireSuccess: true),
+                "delete" => RunCommand(Path.Combine(Environment.SystemDirectory, "schtasks.exe"),
+                    ["/Delete", "/TN", taskPath, "/F"], 15_000, requireSuccess: true),
+                _ => throw new ArgumentException($"schtasks.exe 子测试不支持的计划任务操作：{operation}"),
+            };
+        }
         if (IsSecurityAuditMethod(method))
         {
             switch (operation)
@@ -129,14 +141,19 @@ internal static class Program
     private static bool Verify(string method, string operation, string marker, string actionArguments,
         TaskSnapshot before, TaskSnapshot after) => operation switch
     {
-        "create" => !before.Exists && after.Exists && after.Enabled == IsSecurityAuditMethod(method)
-            && (IsSecurityAuditMethod(method)
+        "create" => !before.Exists && after.Exists
+            && after.Enabled == (method == "schtasks_cli" || IsSecurityAuditMethod(method))
+            && (method == "schtasks_cli" || IsSecurityAuditMethod(method)
                 ? string.Equals(after.ActionArguments, actionArguments, StringComparison.OrdinalIgnoreCase)
                 : after.Marker == marker)
             && (!IsSecurityAuditMethod(method) || after.Marker == marker)
-            && (!IsSecurityAuditMethod(method) || after.Triggers?.Contains("TimeTrigger", StringComparer.Ordinal) == true),
+            && (method != "schtasks_cli" && !IsSecurityAuditMethod(method)
+                || after.Triggers?.Contains("TimeTrigger", StringComparer.Ordinal) == true),
         "modify" => before.Exists && after.Exists && before.XmlSha256 != after.XmlSha256
-            && (IsSecurityAuditMethod(method)
+            && (method == "schtasks_cli"
+                ? before.Enabled == false && after.Enabled == true
+                    && string.Equals(after.ActionArguments, before.ActionArguments, StringComparison.OrdinalIgnoreCase)
+                : IsSecurityAuditMethod(method)
                 ? before.Enabled == false && after.Enabled == true
                     && after.Marker == marker
                     && string.Equals(after.ActionArguments, actionArguments, StringComparison.OrdinalIgnoreCase)
@@ -148,6 +165,33 @@ internal static class Program
 
     private static bool IsSecurityAuditMethod(string method) =>
         method is "security_audit_create" or "security_audit_update" or "security_audit_delete";
+
+    private static bool UsesSecurityEventDiagnostic(string method) =>
+        method == "schtasks_cli" || IsSecurityAuditMethod(method);
+
+    private static CommandResult RunSchtasksCreate(string taskPath, string command, string actionArguments)
+    {
+        var future = DateTime.Now.AddYears(1).AddMinutes(1);
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        var dateCandidates = new[]
+        {
+            future.ToString(culture.DateTimeFormat.ShortDatePattern, culture),
+            future.ToString("yyyy/MM/dd", System.Globalization.CultureInfo.InvariantCulture),
+            future.ToString("MM/dd/yyyy", System.Globalization.CultureInfo.InvariantCulture),
+            future.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture),
+        }.Distinct(StringComparer.Ordinal).ToArray();
+        CommandResult? last = null;
+        foreach (var startDate in dateCandidates)
+        {
+            last = RunCommand(Path.Combine(Environment.SystemDirectory, "schtasks.exe"),
+                ["/Create", "/TN", taskPath, "/SC", "ONCE", "/SD", startDate,
+                    "/ST", future.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture),
+                    "/TR", $"{command} {actionArguments}", "/RL", "LIMITED", "/F"],
+                15_000, requireSuccess: false);
+            if (last.ExitCode == 0) return last;
+        }
+        throw new InvalidOperationException($"schtasks.exe 无法使用本机或兼容日期格式创建任务：{JoinOutput(last!)}");
+    }
 
     private static int SecurityEventId(string operation) => operation switch
     {
