@@ -946,11 +946,15 @@ internal sealed class ApiRunCoordinator
                         var capabilityId = caseRunId is not null && capabilityByCaseRunId.TryGetValue(caseRunId, out var mappedCapabilityId)
                             ? mappedCapabilityId
                             : null;
+                        var rawMessage = value["message"]?.GetValue<string>() ?? string.Empty;
+                        var displayMessage = phase == "controller.stdout"
+                            ? ControllerOutputFormatter.FormatPersistedOutput(rawMessage)
+                            : rawMessage;
                         return new ApiRunLogEntry(
                             DateTimeOffset.Parse(value["timestamp_utc"]?.GetValue<string>() ?? throw new InvalidDataException()),
                             level,
                             phase,
-                            value["message"]?.GetValue<string>() ?? string.Empty,
+                            displayMessage,
                             capabilityId,
                             level is "warning" or "error" or "critical" || phase is "precheck");
                     })

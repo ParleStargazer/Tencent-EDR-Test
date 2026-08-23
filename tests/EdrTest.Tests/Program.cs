@@ -30,6 +30,7 @@ public static class Program
         await RunTest("云端导出 JSON/JSONL 统一解析与凭据隔离", TestCloudExportFile, failures);
         await RunTest("协议 JSON 遇到短暂文件独占时可靠重试", TestReliableProtocolFile, failures);
         await RunTest("多子测试使用独立程序与事件序号入库", TestMultipleObservationIndexes, failures);
+        await RunTest("Controller 结构化状态转换为可读进度", TestControllerOutputFormatting, failures);
         await RunTest("L2/L3 默认风险门禁", TestHighRiskGate, failures);
         await RunTest("同一轮按顺序执行多个能力", TestMultipleCapabilities, failures);
         await RunTest("Runner 与 SQLite 完整保留长日志", TestLongControllerOutput, failures);
@@ -1533,6 +1534,22 @@ public static class Program
                 match?["canonical_field"]?.GetValue<string>() == "driver.base_address"
                 && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.ModuleBase") == true) == true,
             "Child.ModuleBase 应映射并参与 JSON 对照高亮。");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestControllerOutputFormatting()
+    {
+        const string waiting = "{\"schema_version\":\"1.0\",\"status\":\"SUBTEST_WAITING\",\"completed_subtest\":\"Mount-DiskImage\",\"next_subtest\":\"OpenVirtualDisk \\u002B AttachVirtualDisk\",\"completed_index\":1,\"total_subtests\":2,\"delay_ms\":1000,\"message\":\"\\u5B50\\u6D4B\\u8BD5\\u201CMount-DiskImage\\u201D\\u5DF2\\u5B8C\\u6210\\uFF0C\\u7B49\\u5F85 1000 ms \\u540E\\u6267\\u884C\\u201COpenVirtualDisk \\u002B AttachVirtualDisk\\u201D\\u3002\"}";
+        var realtime = ControllerOutputFormatter.FormatLine(waiting);
+        Assert(realtime.Structured && realtime.Kind == "subtest_waiting", "SUBTEST_WAITING 应识别为子测试等待进度。 ");
+        Assert(realtime.Message == "子测试“Mount-DiskImage”已完成，等待 1000 ms 后执行“OpenVirtualDisk + AttachVirtualDisk”。", "实时进度应解码中文与 Unicode 符号。 ");
+
+        var persisted = waiting + Environment.NewLine + "{\n  \"schema_version\": \"1.0\",\n  \"status\": \"LOCAL_PASS\"\n}";
+        var display = ControllerOutputFormatter.FormatPersistedOutput(persisted);
+        Assert(display.Contains(realtime.Message, StringComparison.Ordinal), "历史日志应转换子测试等待消息。 ");
+        Assert(display.Contains("Controller 报告：本地自验证通过。", StringComparison.Ordinal), "历史日志应转换多行 Controller 终态。 ");
+        Assert(!display.Contains("schema_version", StringComparison.Ordinal) && !display.Contains("\\u5B50", StringComparison.Ordinal), "历史界面不应直接展示结构化 JSON 或 Unicode 转义。 ");
+        Assert(waiting.Contains("\\u5B50", StringComparison.Ordinal), "格式化不得修改用于持久化的原始输出。 ");
         return Task.CompletedTask;
     }
 

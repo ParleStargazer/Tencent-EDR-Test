@@ -190,7 +190,11 @@ public sealed class RunnerService
             using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Controller 启动返回空进程。");
             var capabilityName = package.Manifest.DisplayNameZh ?? package.Manifest.DisplayName ?? package.Manifest.CapabilityId;
             Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "controller_started", "info", $"控制程序已启动（PID {process.Id}）。", 8 + (int)Math.Floor(capabilityIndex * 90d / totalCapabilities), totalCapabilities, package.Manifest.CapabilityId, capabilityName, capabilityIndex + 1));
-            var stdoutTask = CaptureOutputAsync(process.StandardOutput, line => Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "controller_stdout", "info", line, 8 + (int)Math.Floor(capabilityIndex * 90d / totalCapabilities), totalCapabilities, package.Manifest.CapabilityId, capabilityName, capabilityIndex + 1)));
+            var stdoutTask = CaptureOutputAsync(process.StandardOutput, line =>
+            {
+                var display = ControllerOutputFormatter.FormatLine(line);
+                Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, display.Kind, display.Level, display.Message, 8 + (int)Math.Floor(capabilityIndex * 90d / totalCapabilities), totalCapabilities, package.Manifest.CapabilityId, capabilityName, capabilityIndex + 1, display.Status, Important: display.Level != "info"));
+            });
             var stderrTask = CaptureOutputAsync(process.StandardError, line => Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "controller_stderr", "warning", line, 8 + (int)Math.Floor(capabilityIndex * 90d / totalCapabilities), totalCapabilities, package.Manifest.CapabilityId, capabilityName, capabilityIndex + 1, Important: true)));
             var timeout = TimeSpan.FromSeconds(package.Manifest.Timeouts.ExecuteSeconds + package.Manifest.Timeouts.CleanupSeconds);
             using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
