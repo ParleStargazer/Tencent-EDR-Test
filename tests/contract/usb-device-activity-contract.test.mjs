@@ -1,0 +1,106 @@
+import assert from "node:assert/strict";
+import { readFile, stat } from "node:fs/promises";
+import test from "node:test";
+
+const root = new URL("../../", import.meta.url);
+const readText = (path) => readFile(new URL(path, root), "utf8");
+const readJson = async (path) => JSON.parse(await readText(path));
+
+test("USB 挂载卸载使用 UDE 真 PnP 行为、完整本地基准与直接遥测契约", async () => {
+  const manifests = await Promise.all(["mount", "unmount"].map((operation) =>
+    readJson(`sample-src/UsbDeviceActivity/manifests/win.device.usb.${operation}/capability.json`)));
+  const baselines = await Promise.all(["mount", "unmount"].map((operation) =>
+    readText(`baselines/windows/device_usb_${operation}.yaml`)));
+  const controller = await readText("sample-src/UsbDeviceActivity/UsbDeviceActivity.Controller/Program.cs");
+  const actor = await readText("sample-src/UsbDeviceActivity/UsbDeviceActivity.Behavior/Program.cs");
+  const protocol = await readText("sample-src/UsbDeviceActivity/UsbDeviceActivity.Protocol/Protocol.cs");
+  const driver = await readText("drivers/UsbUdeTest/src/driver.c");
+  const inf = await readText("drivers/UsbUdeTest/package/UsbUdeTest.inf");
+  const generic = await readText("mappings/generic-usb-device-activity-v1.yaml");
+  const tencent = await readText("mappings/tencent-edr-proc-events-v1.yaml");
+  const normalized = await readJson("schemas/normalized-event.schema.json");
+
+  assert.deepEqual(manifests.map((value) => value.capability_id), [
+    "win.device.usb.mount",
+    "win.device.usb.unmount",
+  ]);
+  for (const manifest of manifests) {
+    assert.equal(manifest.version, "0.1.0");
+    assert.equal(manifest.risk_level, "L3");
+    assert.equal(manifest.required_privilege, "administrator");
+    assert.equal(manifest.participants.length, 1);
+    assert.equal(manifest.participants[0].role, "actor");
+    assert.ok(manifest.expected_fact_keys.includes("usb.instance_id"));
+    assert.ok(manifest.expected_fact_keys.includes("usb.controller_pnp_verified"));
+  }
+  for (const baseline of baselines) {
+    assert.match(baseline, /risk_level: L3/);
+    assert.match(baseline, /max_time_difference_ms: 15/);
+    assert.match(baseline, /facts\.usb\.instance_id/);
+    assert.match(baseline, /facts\.usb\.serial_number/);
+    assert.match(baseline, /facts\.usb\.controller_pnp_verified/);
+    assert.match(baseline, /device\.instance_id/);
+    assert.match(baseline, /device\.serial_number/);
+  }
+  assert.match(controller, /UsbDriverInstaller\.Install/);
+  assert.match(controller, /UsbDeviceDiscovery\.WaitFor/);
+  assert.match(controller, /"setup-attach", 0, actors/);
+  assert.match(controller, /"operation-unmount", 1, actors/);
+  assert.match(controller, /detach_usb_remove_ude_root_and_driver_package/);
+  assert.match(actor, /UsbUdeClient\.Attach/);
+  assert.match(actor, /UsbUdeClient\.Detach/);
+  assert.match(actor, /UsbTestConstants\.IsValidSerial/);
+  assert.match(protocol, /ROOT\\USB_UDE_TEST/);
+  assert.match(protocol, /SetupDiGetDeviceInstanceIdW/);
+  assert.match(protocol, /UpdateDriverForPlugAndPlayDevicesW/);
+  assert.match(driver, /UdecxInitializeWdfDeviceInit/);
+  assert.match(driver, /UdecxUsbDevicePlugIn/);
+  assert.match(driver, /UdecxUsbDevicePlugOutAndDelete/);
+  assert.match(driver, /0xED1D/);
+  assert.match(driver, /0x0001/);
+  assert.doesNotMatch(driver, /USB_DEVICE_CLASS_STORAGE|USB_DEVICE_CLASS_HUMAN_INTERFACE|IRP_MJ_WRITE/);
+  assert.match(inf, /Class=USB/);
+  assert.match(inf, /Dependencies=ucx01000,udecx/);
+  assert.match(generic, /route_id: usb-device-mount-direct/);
+  assert.match(generic, /route_id: usb-device-unmount-direct/);
+  assert.match(tencent, /route_id: usb-device-mount-planned-telemetry/);
+  assert.match(tencent, /route_id: usb-device-unmount-planned-telemetry/);
+  assert.ok(normalized.properties.device.properties.instance_id);
+  assert.ok(normalized.properties.device.properties.vendor_id);
+  assert.ok(normalized.properties.device.properties.product_id);
+  assert.ok(normalized.properties.device.properties.serial_number);
+});
+
+test("USB UDE 预构建包已签名且仓库只分发公钥证书，启动流程优先仓库包", async () => {
+  const metadata = await readJson("drivers/UsbUdeTest/prebuilt/x64/usb-driver-package.json");
+  const buildDriver = await readText("script/driver/Build-UsbUdeDriverPackage.ps1");
+  const buildSamples = await readText("scripts/Build-UsbDeviceActivitySamples.ps1");
+  const start = await readText("scripts/Start-EdrTest.ps1");
+  const front = await readText("web/app/control-plane.tsx");
+  const [driverFile, catalogFile, certificateFile] = await Promise.all([
+    stat(new URL("drivers/UsbUdeTest/prebuilt/x64/UsbUdeTest.sys", root)),
+    stat(new URL("drivers/UsbUdeTest/prebuilt/x64/UsbUdeTest.cat", root)),
+    stat(new URL("drivers/cert/EdrTestDriverTest.cer", root)),
+  ]);
+
+  assert.equal(metadata.signature_valid, true);
+  assert.equal(metadata.private_key_in_package, false);
+  assert.equal(metadata.hardware_id, "ROOT\\USB_UDE_TEST");
+  assert.equal(metadata.emulated_vendor_id, "ED1D");
+  assert.equal(metadata.emulated_product_id, "0001");
+  assert.match(metadata.certificate_thumbprint, /^[0-9A-F]{40}$/);
+  assert.ok(driverFile.size > 0 && catalogFile.size > 0 && certificateFile.size > 0);
+  assert.match(buildDriver, /\[string\]\$EwdkRoot = "F:\\EWDK"/);
+  assert.match(buildDriver, /\$UpdatePrebuilt/);
+  assert.match(buildSamples, /Get-AuthenticodeSignature/);
+  assert.match(buildSamples, /HasPrivateKey/);
+  assert.match(buildSamples, /UsbUdeTest\.sys/);
+  assert.match(start, /Resolve-UsbUdeTestPackage/);
+  assert.match(start, /drivers\\UsbUdeTest\\prebuilt\\x64/);
+  assert.match(start, /Build-UsbDeviceActivitySamples\.ps1/);
+  assert.match(start, /repository-prebuilt/);
+  assert.match(start, /ewdk-fallback/);
+  assert.ok(start.indexOf("drivers\\UsbUdeTest\\prebuilt\\x64") < start.indexOf("Build-UsbUdeDriverPackage.ps1"));
+  assert.match(front, /"win\.device\.usb\.mount", "USB 设备挂载", "USB Device Mount", "L3"/);
+  assert.match(front, /"win\.device\.usb\.unmount", "USB 设备卸载", "USB Device Unmount", "L3"/);
+});

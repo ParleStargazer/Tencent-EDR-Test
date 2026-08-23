@@ -1,0 +1,76 @@
+schema_version: "1.1"
+baseline_id: win.device.usb.mount
+version: "0.1.0"
+title: Windows USB 设备挂载遥测
+description: UDE 驱动在准备阶段保持加载，Actor 发送 Attach IOCTL 后由 Controller 使用 SetupAPI 独立确认固定 VID/PID 与本轮序列号对应的 USB PnP Instance 出现。当前腾讯 EDR 没有直接 USB/PnP 事件，云端允许保持未匹配，驱动加载、PnP 安装、注册表或进程事件不能替代本能力。
+platform:
+  os: windows
+  versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
+  architectures: [x64]
+risk_level: L3
+capability:
+  id: win.device.usb.mount
+  version: "0.1.0"
+  parameters: { post_operation_hold_ms: 1500, setup_isolation_ms: 1000 }
+local_requirements:
+  - { field: facts.usb.environment.ready, operator: equals, expected: true }
+  - { field: facts.usb.package.signature_valid, operator: equals, expected: true }
+  - { field: facts.usb.operation_succeeded, operator: equals, expected: true }
+  - { field: facts.usb.operation, operator: equals, expected: mount }
+  - { field: facts.usb.method, operator: equals, expected: USB_UDE_PNP }
+  - { field: facts.usb.occurred_at_utc, operator: present }
+  - { field: facts.usb.completed_at_utc, operator: present }
+  - { field: facts.usb.instance_id, operator: regex, expected: "^USB\\\\VID_ED1D&PID_0001\\\\EDR_USB_[0-9A-F]{16,24}$" }
+  - { field: facts.usb.class_guid, operator: present }
+  - { field: facts.usb.vendor_id, operator: equals, expected: ED1D, normalizers: [lowercase, trim] }
+  - { field: facts.usb.product_id, operator: equals, expected: "0001", normalizers: [lowercase, trim] }
+  - { field: facts.usb.serial_number, operator: regex, expected: "^EDR_USB_[0-9A-F]{16,24}$" }
+  - { field: facts.usb.before_present, operator: equals, expected: false }
+  - { field: facts.usb.after_present, operator: equals, expected: true }
+  - { field: facts.usb.ioctl_succeeded, operator: equals, expected: true }
+  - { field: facts.usb.controller_pnp_verified, operator: equals, expected: true }
+  - { field: facts.usb.actor_pid, operator: present }
+  - { field: facts.usb.actor_executable, operator: present }
+  - { field: facts.usb.actor_command_line, operator: contains, expected: "--operation attach" }
+  - { field: facts.usb.volume_guid, operator: equals, expected: null }
+  - { field: facts.usb.drive_letter, operator: equals, expected: null }
+  - { field: facts.usb.mount_point, operator: equals, expected: null }
+correlation:
+  time_before_seconds: 60
+  time_after_seconds: 300
+  max_time_difference_ms: 15
+  anchors:
+    - { local_field: facts.usb.instance_id, cloud_field: device.instance_id, strength: strong, normalizers: [lowercase, trim] }
+    - { local_field: facts.usb.serial_number, cloud_field: device.serial_number, strength: strong, normalizers: [lowercase, trim] }
+    - { local_field: facts.usb.vendor_id, cloud_field: device.vendor_id, strength: strong, normalizers: [lowercase, trim] }
+    - { local_field: facts.usb.product_id, cloud_field: device.product_id, strength: strong, normalizers: [lowercase, trim] }
+    - { local_field: facts.usb.actor_executable, cloud_field: process.executable, strength: medium, normalizers: [windows_path] }
+cloud_expectations:
+  - id: usb-device-mount-direct
+    method: { id: USB_UDE_PNP, title: UDE PlugIn + SetupAPI PnP 验证 }
+    event_type: device
+    event_actions: [usb_mount]
+    cardinality: { min: 1, max: 20 }
+    correlation:
+      time_from_local: facts.usb.occurred_at_utc
+      max_time_difference_ms: 15
+      anchors:
+        - { local_field: facts.usb.instance_id, cloud_field: device.instance_id, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.usb.serial_number, cloud_field: device.serial_number, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.usb.vendor_id, cloud_field: device.vendor_id, strength: strong, normalizers: [lowercase, trim] }
+        - { local_field: facts.usb.product_id, cloud_field: device.product_id, strength: strong, normalizers: [lowercase, trim] }
+    assertions:
+      - { field: device.type, operator: equals, expected: usb, severity: required }
+      - { field: device.instance_id, operator: equals, expected_from_local: facts.usb.instance_id, severity: required, normalizers: [lowercase, trim] }
+      - { field: device.serial_number, operator: equals, expected_from_local: facts.usb.serial_number, severity: required, normalizers: [lowercase, trim] }
+      - { field: device.vendor_id, operator: equals, expected_from_local: facts.usb.vendor_id, severity: required, normalizers: [lowercase, trim] }
+      - { field: device.product_id, operator: equals, expected_from_local: facts.usb.product_id, severity: required, normalizers: [lowercase, trim] }
+      - { field: device.class_guid, operator: equals, expected_from_local: facts.usb.class_guid, severity: recommended, normalizers: [lowercase, trim] }
+      - { field: device.method, operator: equals, expected: USB_UDE_PNP, severity: informational }
+      - { field: process.executable, operator: equals, expected_from_local: facts.usb.actor_executable, severity: informational, normalizers: [windows_path] }
+scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
+metadata:
+  owner: edr-validation-team
+  status: draft
+  change_reason: 腾讯 EDR 字段全集与已知运行日志没有 USB/PnP 设备接入专属表、动作或字段。本基准先固定完整本地 ground truth 和未来直接 telemetry 契约；没有专属记录时保持未匹配。
+  references: [docs/reference/tencent-edr-field-catalog.json, reference/driver_and_usb/驱动与USB能力开发需求 (1).md]

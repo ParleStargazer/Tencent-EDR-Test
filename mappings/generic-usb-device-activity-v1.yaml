@@ -1,0 +1,76 @@
+schema_version: "1.0"
+profile_id: generic-usb-device-activity-v1
+vendor: Generic
+product: USB Device Activity Self-Test Fixture
+description: 用于验证 USB UDE 挂载/卸载 BASELINE 与比较器的扁平 JSON 适配；不是任何 EDR 厂商的生产映射。
+
+input:
+  containers: [json-array, jsonl]
+  encoding: utf-8
+  record_selector:
+    all: { table: UsbDeviceActivity }
+  event_id_field: event_id
+  host_id_field: host_id
+  event_time: { field: event_time, format: iso8601 }
+
+routes:
+  - route_id: usb-device-mount-direct
+    when: { table: UsbDeviceActivity, action: [UsbDeviceMount, UsbDeviceConnected, PnpDeviceConnected] }
+    canonical:
+      "event.type": { constant: device }
+      "event.action": { constant: usb_mount }
+      "event.category": { constant: configuration }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "host.hostname": { source: host_name, on_empty: null }
+      "process.pid": { source: actor_pid, on_zero: null }
+      "process.executable": { source: actor_executable, transform: [windows_path], on_empty: null }
+      "process.command_line": { source: actor_command_line, on_empty: null }
+      "device.type": { constant: usb }
+      "device.instance_id": { source: instance_id }
+      "device.class_guid": { source: class_guid }
+      "device.vendor_id": { source: vendor_id, transform: [lowercase, trim] }
+      "device.product_id": { source: product_id, transform: [lowercase, trim] }
+      "device.serial_number": { source: serial_number, transform: [lowercase, trim] }
+      "device.description": { source: description, on_empty: null }
+      "device.manufacturer": { source: manufacturer, on_empty: null }
+      "device.service": { source: service, on_empty: null }
+      "device.driver_key": { source: driver_key, on_empty: null }
+      "device.volume_guid": { source: volume_guid, on_empty: null }
+      "device.drive_letter": { source: drive_letter, on_empty: null }
+      "device.mount_point": { source: mount_point, transform: [windows_path], on_empty: null }
+      "device.method": { source: method, on_empty: null }
+      "device.provider": { source: provider, on_empty: null }
+
+  - route_id: usb-device-unmount-direct
+    when: { table: UsbDeviceActivity, action: [UsbDeviceUnmount, UsbDeviceDisconnected, PnpDeviceDisconnected] }
+    canonical:
+      "event.type": { constant: device }
+      "event.action": { constant: usb_unmount }
+      "event.category": { constant: configuration }
+      "event.id": { source: event_id }
+      "event.created": { source: event_time, transform: [parse_datetime_to_utc] }
+      "host.id": { source: host_id }
+      "host.hostname": { source: host_name, on_empty: null }
+      "process.pid": { source: actor_pid, on_zero: null }
+      "process.executable": { source: actor_executable, transform: [windows_path], on_empty: null }
+      "process.command_line": { source: actor_command_line, on_empty: null }
+      "device.type": { constant: usb }
+      "device.instance_id": { source: instance_id }
+      "device.class_guid": { source: class_guid }
+      "device.vendor_id": { source: vendor_id, transform: [lowercase, trim] }
+      "device.product_id": { source: product_id, transform: [lowercase, trim] }
+      "device.serial_number": { source: serial_number, transform: [lowercase, trim] }
+      "device.description": { source: description, on_empty: null }
+      "device.manufacturer": { source: manufacturer, on_empty: null }
+      "device.service": { source: service, on_empty: null }
+      "device.driver_key": { source: driver_key, on_empty: null }
+      "device.volume_guid": { source: volume_guid, on_empty: null }
+      "device.drive_letter": { source: drive_letter, on_empty: null }
+      "device.mount_point": { source: mount_point, transform: [windows_path], on_empty: null }
+      "device.method": { source: method, on_empty: null }
+      "device.provider": { source: provider, on_empty: null }
+
+raw_reference: { id_field: event_id, ordinal_base: 0 }
+unmapped_fields: { policy: count-and-ignore, preserve_in_report: false }

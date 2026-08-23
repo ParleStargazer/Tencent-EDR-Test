@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.1",
+  "capability_id": "win.device.usb.unmount",
+  "version": "0.1.0",
+  "display_name_zh": "USB 设备卸载",
+  "display_name_en": "USB Device Unmount",
+  "description": "准备阶段先通过独立 Actor 创建并确认本轮虚拟 USB PnP Instance，UDE 驱动保持加载；操作 Actor 只发送 Detach IOCTL，驱动调用 UdecxUsbDevicePlugOutAndDelete，Controller 使用 SetupAPI 独立确认同一 Instance 消失。",
+  "platform": { "os": "windows", "minimum_version": "10.0.17763", "architectures": ["x64"] },
+  "risk_level": "L3",
+  "required_privilege": "administrator",
+  "controller": { "executable": "UsbDeviceUnmount.Controller.exe" },
+  "participants": [{ "role": "actor", "executable": "UsbDeviceUnmount.Actor.exe" }],
+  "parameters": {
+    "post_operation_hold_ms": { "type": "integer", "required": true, "default": 1500, "minimum": 0, "maximum": 30000 },
+    "setup_isolation_ms": { "type": "integer", "required": true, "default": 1000, "minimum": 500, "maximum": 30000 }
+  },
+  "timeouts": { "execute_seconds": 120, "cleanup_seconds": 60 },
+  "network": { "required": false },
+  "expected_fact_keys": [
+    "usb.environment.ready", "usb.environment.reason", "usb.package.sha256", "usb.package.signer",
+    "usb.package.signature_valid", "usb.package.certificate_thumbprint", "usb.package.requires_test_signing",
+    "usb.operation_succeeded", "usb.operation", "usb.method", "usb.occurred_at_utc", "usb.completed_at_utc",
+    "usb.instance_id", "usb.class_guid", "usb.vendor_id", "usb.product_id", "usb.serial_number",
+    "usb.description", "usb.manufacturer", "usb.service", "usb.driver_key", "usb.volume_guid",
+    "usb.drive_letter", "usb.mount_point", "usb.before_present", "usb.after_present", "usb.ioctl_succeeded",
+    "usb.actor_pid", "usb.actor_executable", "usb.actor_command_line", "usb.controller_pnp_verified",
+    "usb.setup_attach_succeeded", "usb.setup_actor_pid", "usb.root_instance_id", "usb.published_inf_path",
+    "correlation.nonce"
+  ]
+}

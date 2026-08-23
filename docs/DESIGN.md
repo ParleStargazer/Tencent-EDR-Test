@@ -650,6 +650,8 @@ WMI Activity 三项能力使用 C# `System.Management` 在 `ROOT\subscription` �
 
 Virtual Disk Mount 使用两个独立子测试：Windows PowerShell `Mount-DiskImage` 与 VirtDisk `OpenVirtualDisk + AttachVirtualDisk`。Controller 为各方法创建独立的 16 MiB 动态 VHD；镜像保持未初始化、只读、无盘符，Actor 和 Controller 通过不同句柄取得同一 PhysicalDrive 路径后才认定本地挂载成立。正常与异常路径均按完整镜像路径卸载并删除。腾讯现有字段中没有虚拟磁盘直接 telemetry，规划映射不接受进程、脚本或文件侧面事件替代。完整约束见 `docs/VIRTUAL-DISK-ACTIVITY-SAMPLES.md`。
 
+USB Device Mount/Unmount 使用仓库预构建并测试签名的最小 x64 KMDF/UDE 驱动。驱动保持加载，Actor 仅发送受控 Attach/Detach IOCTL，驱动分别调用 `UdecxUsbDevicePlugIn` 与 `UdecxUsbDevicePlugOutAndDelete`；Controller 通过 SetupAPI 独立确认固定 VID/PID 与本轮 nonce 序列号对应的 USB PnP Instance 出现或消失。卸载的准备 Actor 与操作 Actor 使用不同实例序号。模拟设备为无数据端点的 vendor-specific USB 设备，不创建卷、盘符、挂载点或输入功能。两项均为 L3，当前腾讯字段没有直接 USB/PnP telemetry，驱动加载、PnP 安装、注册表和进程事件都不能替代直接证据。完整约束见 `docs/USB-DEVICE-ACTIVITY-SAMPLES.md`。
+
 Driver Activity 三项能力使用 `F:\EWDK` 构建的最小 x64 WDM 驱动。加载以 SCM 和内核模块枚举为绝对本地基准，并映射腾讯 `ModuleEvents/LoadDriver`；修改只操作从未加载的工作副本；卸载将预置加载与卸载动作至少隔离两秒。三项均为 L3，严格锁定服务名、工作目录、包哈希与签名环境，清理失败进入 `CLEANUP_ERROR`。当前产品预期只有加载可能通过，修改与卸载只接受未来专属直接事件。完整约束见 `docs/DRIVER-ACTIVITY-SAMPLES.md`。
 
 Service Activity 三项能力使用原生 SCM API 操作本轮唯一的 `EdrTestSvc_<nonce>_<operation>` 临时服务。创建使用 `CreateServiceW`，修改使用 `ChangeServiceConfigW` 同时改变显示名、Binary Path 标记和手动→禁用启动类型，删除使用 `DeleteService`；Controller 以独立 `QueryServiceConfigW`/`QueryServiceStatusEx` 查询作为绝对本地基准。服务 Binary Path 只允许系统 `cmd.exe` 的无害命令，服务始终停止且测试过程从不启动，清理仅删除本轮精确名称。三项均输出具名方法结果：创建和修改分别比较 SCM API Hook 与 System 7045/7040 两条候选方法，删除比较 DeleteService API Hook；各能力采用最佳方法形成结论。腾讯 CreateService 路径已按参考轮次校准，修改与删除保留兼容路由。完整约束见 `docs/SERVICE-ACTIVITY-SAMPLES.md`。

@@ -45,6 +45,7 @@ public static class Program
         await RunTest("计划任务三项 BASELINE 与通用/腾讯映射闭环", TestScheduledTaskComparison, failures);
         await RunTest("服务活动三项 BASELINE 与通用/腾讯映射闭环", TestServiceComparison, failures);
         await RunTest("驱动三项 BASELINE、LoadDriver 映射与未实现结论", TestDriverComparison, failures);
+        await RunTest("USB 挂载卸载 BASELINE、直接映射与腾讯未实现结论", TestUsbDeviceComparison, failures);
         await RunTest("哈希算法三项 BASELINE 与通用/腾讯映射闭环", TestHashAlgorithmsComparison, failures);
         if (failures.Count == 0)
         {
@@ -1515,6 +1516,160 @@ public static class Program
                 match?["canonical_field"]?.GetValue<string>() == "driver.base_address"
                 && match?["raw_json_pointer"]?.GetValue<string>() == "/Child.ModuleBase") == true) == true,
             "Child.ModuleBase 应映射并参与 JSON 对照高亮。");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestUsbDeviceComparison()
+    {
+        using var fixture = TestDirectory.Create();
+        var repository = FindRepositoryRoot();
+        var local = new JsonObject
+        {
+            ["schema_version"] = "1.1",
+            ["run"] = new JsonObject
+            {
+                ["run_id"] = Ids.NewUuid7(),
+                ["host"] = new JsonObject { ["hostname"] = "USB-FIXTURE", ["machine_id"] = "usb-fixture-host" },
+            },
+            ["capabilities"] = new JsonArray(),
+            ["programs"] = new JsonArray(),
+            ["local_events"] = new JsonArray(),
+            ["local_facts"] = new JsonArray(),
+            ["artifacts"] = new JsonArray(),
+            ["cleanup_results"] = new JsonArray(),
+            ["execution_logs"] = new JsonArray(),
+        };
+        var genericCloud = new JsonArray();
+        var tencentSideEvidence = new JsonArray();
+        var baselinePaths = new List<string>();
+        var baseTime = DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+        foreach (var (operation, index) in new[] { "mount", "unmount" }.Select((value, index) => (value, index)))
+        {
+            var caseRunId = Ids.NewUuid7();
+            var eventId = Ids.NewUuid7();
+            var occurredAt = baseTime.AddSeconds(index * 10);
+            var serial = $"EDR_USB_{new string(index == 0 ? 'A' : 'B', 24)}";
+            var instanceId = $@"USB\VID_ED1D&PID_0001\{serial}";
+            var actorPath = operation == "mount"
+                ? @"C:\EDR-Test\UsbDeviceMount.Actor.exe"
+                : @"C:\EDR-Test\UsbDeviceUnmount.Actor.exe";
+            local["capabilities"]!.AsArray().Add(new JsonObject
+            {
+                ["case_run_id"] = caseRunId,
+                ["capability_id"] = $"win.device.usb.{operation}",
+                ["capability_version"] = "0.1.0",
+                ["display_name_zh"] = operation,
+                ["display_name_en"] = operation,
+                ["status"] = "LOCAL_PASS",
+                ["nonce"] = $"usb-fixture-{index}",
+                ["started_at_utc"] = Values.Utc(occurredAt.AddSeconds(-2)),
+                ["ended_at_utc"] = Values.Utc(occurredAt.AddSeconds(2)),
+            });
+            local["local_events"]!.AsArray().Add(new JsonObject
+            {
+                ["local_event_id"] = eventId,
+                ["case_run_id"] = caseRunId,
+                ["sequence"] = 1,
+                ["event_type"] = "device",
+                ["event_action"] = $"usb_{operation}",
+                ["occurred_at_utc"] = Values.Utc(occurredAt),
+                ["data"] = new JsonObject { ["kind"] = "device", ["operation"] = $"usb_{operation}" },
+            });
+            var facts = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["usb.environment.ready"] = true,
+                ["usb.package.signature_valid"] = true,
+                ["usb.operation_succeeded"] = true,
+                ["usb.operation"] = operation,
+                ["usb.method"] = "USB_UDE_PNP",
+                ["usb.occurred_at_utc"] = Values.Utc(occurredAt),
+                ["usb.completed_at_utc"] = Values.Utc(occurredAt.AddMilliseconds(6)),
+                ["usb.instance_id"] = instanceId,
+                ["usb.class_guid"] = "{36FC9E60-C465-11CF-8056-444553540000}",
+                ["usb.vendor_id"] = "ED1D",
+                ["usb.product_id"] = "0001",
+                ["usb.serial_number"] = serial,
+                ["usb.before_present"] = operation == "unmount",
+                ["usb.after_present"] = operation == "mount",
+                ["usb.ioctl_succeeded"] = true,
+                ["usb.controller_pnp_verified"] = true,
+                ["usb.actor_pid"] = 8200 + index,
+                ["usb.actor_executable"] = actorPath,
+                ["usb.actor_command_line"] = $"\"{actorPath}\" --operation {(operation == "mount" ? "attach" : "detach")}",
+                ["usb.volume_guid"] = null,
+                ["usb.drive_letter"] = null,
+                ["usb.mount_point"] = null,
+            };
+            if (operation == "unmount")
+            {
+                facts["usb.setup_attach_succeeded"] = true;
+                facts["usb.setup_actor_pid"] = 8100;
+            }
+            foreach (var (key, value) in facts)
+                local["local_facts"]!.AsArray().Add(Fact(caseRunId, key, value!));
+
+            genericCloud.Add(new JsonObject
+            {
+                ["table"] = "UsbDeviceActivity",
+                ["action"] = operation == "mount" ? "UsbDeviceMount" : "UsbDeviceUnmount",
+                ["event_id"] = eventId + "-generic",
+                ["host_id"] = "usb-fixture-host",
+                ["host_name"] = "USB-FIXTURE",
+                ["event_time"] = Values.Utc(occurredAt.AddMilliseconds(4)),
+                ["actor_pid"] = 8200 + index,
+                ["actor_executable"] = actorPath,
+                ["actor_command_line"] = $"\"{actorPath}\" --operation {(operation == "mount" ? "attach" : "detach")}",
+                ["instance_id"] = instanceId,
+                ["class_guid"] = "{36FC9E60-C465-11CF-8056-444553540000}",
+                ["vendor_id"] = "ED1D",
+                ["product_id"] = "0001",
+                ["serial_number"] = serial,
+                ["description"] = "EDR USB Telemetry Device",
+                ["manufacturer"] = "Tencent EDR Test",
+                ["service"] = "UsbUdeTest",
+                ["driver_key"] = "{usb-fixture-driver-key}",
+                ["method"] = "USB_UDE_PNP",
+                ["provider"] = "UsbUdeTest/UdeCx",
+            });
+            baselinePaths.Add(Path.Combine(repository, "baselines", "windows", $"device_usb_{operation}.yaml"));
+        }
+
+        tencentSideEvidence.Add(new JsonObject
+        {
+            ["OS"] = "Windows",
+            ["@table"] = "ModuleEvents",
+            ["@timestamp"] = Values.Utc(baseTime.AddMilliseconds(3)),
+            ["Action.Type"] = "Module",
+            ["Action.Name"] = "LoadDriver",
+            ["Common.Source"] = "KernelMon",
+            ["Common.EventUUId"] = Ids.NewUuid7(),
+            ["Common.EventTime"] = baseTime.ToUnixTimeMilliseconds(),
+            ["Common.Mid"] = "usb-fixture-host",
+            ["Environment.HostName"] = "USB-FIXTURE",
+            ["Child.FileName"] = "UsbUdeTest.sys",
+            ["Child.FilePath"] = @"C:\Windows\System32\drivers\UsbUdeTest.sys",
+        });
+
+        var localPath = Path.Combine(fixture.Path, "usb-local.json");
+        var genericPath = Path.Combine(fixture.Path, "usb-generic.json");
+        var tencentPath = Path.Combine(fixture.Path, "usb-tencent.json");
+        File.WriteAllText(localPath, local.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(genericPath, genericCloud.ToJsonString(JsonDefaults.Options));
+        File.WriteAllText(tencentPath, tencentSideEvidence.ToJsonString(JsonDefaults.Options));
+        var generic = CompareService.Compare(new CompareRequest(localPath, [genericPath],
+            Path.Combine(repository, "mappings", "generic-usb-device-activity-v1.yaml"), baselinePaths,
+            Path.Combine(fixture.Path, "usb-generic-validation.json")));
+        var tencent = CompareService.Compare(new CompareRequest(localPath, [tencentPath],
+            Path.Combine(repository, "mappings", "tencent-edr-proc-events-v1.yaml"), baselinePaths,
+            Path.Combine(fixture.Path, "usb-tencent-validation.json")));
+        Assert(generic["summary"]?["pass"]?.GetValue<int>() == 2,
+            $"通用 USB 直接事件应使挂载和卸载 BASELINE 通过：{generic.ToJsonString(JsonDefaults.Options)}");
+        Assert(tencent["summary"]?["pass"]?.GetValue<int>() == 0,
+            "腾讯侧的驱动加载记录不能替代 USB 挂载或卸载直接 telemetry。");
+        Assert(tencent["capabilities"]?.AsArray().All(value =>
+            value?["validation_status"]?.GetValue<string>() != "PASS") == true,
+            "腾讯 EDR 没有 USB 专属事件时，两项能力必须保持未通过。" );
         return Task.CompletedTask;
     }
 

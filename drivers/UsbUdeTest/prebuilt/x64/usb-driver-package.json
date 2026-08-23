@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "package_name": "UsbUdeTest",
+  "architecture": "x64",
+  "configuration": "Release",
+  "ewdk_root": "F:\\EWDK",
+  "wdk_version": "10.0.28000.0",
+  "built_at_utc": "2026-08-23T06:29:37.7826808+00:00",
+  "sha256": "ecd6e40a321301e5ac317e8d1eba4900af8384f246db43f9fb3da90208d955cb",
+  "size_bytes": 18704,
+  "signature_valid": true,
+  "signer": "CN=Tencent EDR Test Driver",
+  "certificate_thumbprint": "23D27473BE5FD8711578CD86F849FB6E88D5AF38",
+  "requires_test_signing": true,
+  "private_key_in_package": false,
+  "hardware_id": "ROOT\\USB_UDE_TEST",
+  "interface_guid": "{77DC40F2-80FB-4F86-A6D4-793AB56D2D45}",
+  "emulated_vendor_id": "ED1D",
+  "emulated_product_id": "0001"
+}

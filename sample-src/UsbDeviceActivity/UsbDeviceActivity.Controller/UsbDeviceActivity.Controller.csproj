@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>UsbDevice.Controller</AssemblyName>
+    <RootNamespace>UsbDeviceActivity</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\EdrTest\EdrTest.csproj" />
+    <ProjectReference Include="..\UsbDeviceActivity.Protocol\UsbDeviceActivity.Protocol.csproj" />
+  </ItemGroup>
+</Project>

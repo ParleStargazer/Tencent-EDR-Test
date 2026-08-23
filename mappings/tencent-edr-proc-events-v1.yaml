@@ -141,6 +141,71 @@ routes:
       "device.method": { sources: ["Child.VirtualDiskMethod", "Child.AttachMethod", "Child.Method"], on_empty: null }
       "device.provider": { sources: ["Child.VirtualDiskProvider", "Child.Provider"], on_empty: null }
 
+  # 规划路由：当前腾讯 EDR 字段全集和已知日志没有 USB/PnP 设备接入或移除的直接事件。
+  # 只接受未来出现的 Device/Usb/Pnp 专属表与明确动作。UDE 驱动加载、pnputil、注册表、
+  # 普通进程或文件事件均不能进入本能力，避免用准备/侧面活动冒充 USB Mount/Unmount。
+  - route_id: usb-device-mount-planned-telemetry
+    when:
+      "@table": [DeviceEvents, UsbDeviceEvents, PnpDeviceEvents]
+      "Action.Name": [UsbDeviceMount, UsbDeviceConnected, PnpDeviceConnected]
+    canonical:
+      "event.type": { constant: device }
+      "event.action": { constant: usb_mount }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "device.type": { constant: usb }
+      "device.instance_id": { sources: ["Child.DeviceInstanceId", "Child.InstanceId", "Child.PnpInstanceId"] }
+      "device.class_guid": { sources: ["Child.DeviceClassGuid", "Child.ClassGuid"], on_empty: null }
+      "device.vendor_id": { sources: ["Child.UsbVendorId", "Child.VendorId", "Child.Vid"], transform: [lowercase, trim], on_empty: null }
+      "device.product_id": { sources: ["Child.UsbProductId", "Child.ProductId", "Child.Pid"], transform: [lowercase, trim], on_empty: null }
+      "device.serial_number": { sources: ["Child.UsbSerialNumber", "Child.SerialNumber", "Child.DeviceSerial"], transform: [lowercase, trim], on_empty: null }
+      "device.description": { sources: ["Child.DeviceDescription", "Child.Description"], on_empty: null }
+      "device.manufacturer": { sources: ["Child.DeviceManufacturer", "Child.Manufacturer"], on_empty: null }
+      "device.service": { sources: ["Child.DeviceService", "Child.Service"], on_empty: null }
+      "device.driver_key": { sources: ["Child.DeviceDriverKey", "Child.DriverKey"], on_empty: null }
+      "device.volume_guid": { sources: ["Child.VolumeGuid", "Child.DeviceVolumeGuid"], on_empty: null }
+      "device.drive_letter": { sources: ["Child.DriveLetter", "Child.DeviceDriveLetter"], on_empty: null }
+      "device.mount_point": { sources: ["Child.MountPoint", "Child.DeviceMountPoint"], transform: [windows_path], on_empty: null }
+      "device.method": { constant: USB_UDE_PNP }
+
+  - route_id: usb-device-unmount-planned-telemetry
+    when:
+      "@table": [DeviceEvents, UsbDeviceEvents, PnpDeviceEvents]
+      "Action.Name": [UsbDeviceUnmount, UsbDeviceDisconnected, PnpDeviceDisconnected]
+    canonical:
+      "event.type": { constant: device }
+      "event.action": { constant: usb_unmount }
+      "event.category": { constant: configuration }
+      "event.id": { source: "Common.EventUUId" }
+      "event.created": { source: "Common.EventTime", transform: [unix_ms_to_utc] }
+      "event.observed": { source: "@timestamp", transform: [parse_datetime_to_utc], on_error: null }
+      "host.id": { source: "Common.Mid" }
+      "host.hostname": { source: "Environment.HostName" }
+      "process.pid": { source: "Parent.ProcPid", on_zero: null }
+      "process.executable": { source: "Parent.FilePath", transform: [windows_path], on_empty: null }
+      "process.command_line": { source: "Parent.ProcCmdline", on_empty: null }
+      "device.type": { constant: usb }
+      "device.instance_id": { sources: ["Child.DeviceInstanceId", "Child.InstanceId", "Child.PnpInstanceId"] }
+      "device.class_guid": { sources: ["Child.DeviceClassGuid", "Child.ClassGuid"], on_empty: null }
+      "device.vendor_id": { sources: ["Child.UsbVendorId", "Child.VendorId", "Child.Vid"], transform: [lowercase, trim], on_empty: null }
+      "device.product_id": { sources: ["Child.UsbProductId", "Child.ProductId", "Child.Pid"], transform: [lowercase, trim], on_empty: null }
+      "device.serial_number": { sources: ["Child.UsbSerialNumber", "Child.SerialNumber", "Child.DeviceSerial"], transform: [lowercase, trim], on_empty: null }
+      "device.description": { sources: ["Child.DeviceDescription", "Child.Description"], on_empty: null }
+      "device.manufacturer": { sources: ["Child.DeviceManufacturer", "Child.Manufacturer"], on_empty: null }
+      "device.service": { sources: ["Child.DeviceService", "Child.Service"], on_empty: null }
+      "device.driver_key": { sources: ["Child.DeviceDriverKey", "Child.DriverKey"], on_empty: null }
+      "device.volume_guid": { sources: ["Child.VolumeGuid", "Child.DeviceVolumeGuid"], on_empty: null }
+      "device.drive_letter": { sources: ["Child.DriveLetter", "Child.DeviceDriveLetter"], on_empty: null }
+      "device.mount_point": { sources: ["Child.MountPoint", "Child.DeviceMountPoint"], transform: [windows_path], on_empty: null }
+      "device.method": { constant: USB_UDE_PNP }
+
   # reference/script 实测：腾讯把 Windows PowerShell 5.1 与 PowerShell 7 的 AMSI 扫描统一导出为
   # ScriptEvents/ScriptScan。Action.Name 只表达宽泛“脚本执行”，具体命令或脚本块必须通过
   # Parent PowerShell 进程与 Child.ContentData 精确关联。路由不硬编码 Action.Name，保留前端

@@ -26,7 +26,7 @@ flowchart LR
 
 1. 检查 .NET、PowerShell 7、pnpm 与固定端口；
 2. 还原并构建 .NET 解决方案；
-3. 发布所有已实现能力包到本地 `samples/`，包括 Process、File、Account、Network、Hash、Registry、Scheduled Task、Service、Group Policy、Named Pipe、PowerShell、BITS、WMI 和 Virtual Disk；
+3. 发布所有已实现能力包到本地 `samples/`，包括 Process、File、Account、Network、Hash、Registry、Scheduled Task、Service、Group Policy、Named Pipe、PowerShell、BITS、WMI、Virtual Disk、USB Device 和 Driver Activity；
 4. 安装缺失的前端依赖并构建 Vinext 生产包；
 5. 隐藏启动 API 与前端，等待两个服务通过健康检查；
 6. 写入 `.edr-test/services.json` 并打开浏览器。

@@ -293,8 +293,8 @@ correlation.nonce
 | 能力 | `event_type/action` | 必须收集 |
 | --- | --- | --- |
 | 虚拟磁盘挂载（Virtual Disk Mount） | `device/virtual_disk_mount` | 方法 ID；发起进程；VHD 镜像路径/SHA-256/容量；PhysicalDrive 路径；只读、无盘符；Actor 与 Controller 双端附加/卸载复核；前后状态 |
-| USB 设备卸载（USB Device Unmount） | `device/usb_unmount` | Instance ID、Class GUID、VID/PID、序列号、Volume；前后状态 |
-| USB 设备挂载（USB Device Mount） | `device/usb_mount` | 同上；挂载点和盘符；前后状态 |
+| USB 设备卸载（USB Device Unmount） | `device/usb_unmount` | `USB_UDE_PNP` 方法；固定 VID/PID 与本轮序列号；准备 Actor Attach；操作 Actor Detach IOCTL；SetupAPI 独立确认同一 Instance 从存在变为不存在；无 Volume/盘符/挂载点 |
+| USB 设备挂载（USB Device Mount） | `device/usb_mount` | `USB_UDE_PNP` 方法；固定 VID/PID 与本轮序列号；Actor Attach IOCTL；SetupAPI 独立确认同一 Instance 从不存在变为存在；无 Volume/盘符/挂载点 |
 
 ### 5.11 其他相关事件（Other Relevant Events）
 

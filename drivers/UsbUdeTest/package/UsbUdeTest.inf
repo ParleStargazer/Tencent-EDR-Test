@@ -1,0 +1,56 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=USB
+ClassGuid={36FC9E60-C465-11CF-8056-444553540000}
+Provider=%ProviderName%
+DriverVer=08/23/2026,0.1.0.0
+CatalogFile=UsbUdeTest.cat
+PnpLockdown=1
+
+[Manufacturer]
+%ProviderName%=Models,NTamd64
+
+[Models.NTamd64]
+%DeviceDescription%=DeviceInstall,ROOT\USB_UDE_TEST
+
+[DeviceInstall.NT]
+CopyFiles=DriverCopyFiles
+
+[DeviceInstall.NT.HW]
+Include=machine.inf
+Needs=PciD3ColdSupported
+
+[DeviceInstall.NT.Services]
+AddService=UsbUdeTest,0x00000002,ServiceInstall
+
+[DeviceInstall.NT.Wdf]
+KmdfService=UsbUdeTest,KmdfSection
+
+[KmdfSection]
+KmdfLibraryVersion=1.15
+
+[DestinationDirs]
+DriverCopyFiles=12
+
+[DriverCopyFiles]
+UsbUdeTest.sys
+
+[ServiceInstall]
+DisplayName=%ServiceDisplayName%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%12%\UsbUdeTest.sys
+Dependencies=ucx01000,udecx
+
+[SourceDisksNames]
+1=%DiskName%,,,
+
+[SourceDisksFiles]
+UsbUdeTest.sys=1
+
+[Strings]
+ProviderName="Tencent EDR Test"
+DeviceDescription="Tencent EDR Test USB Device Emulation Controller"
+ServiceDisplayName="Tencent EDR Test USB UDE Driver"
+DiskName="Tencent EDR Test USB UDE Driver Package"

@@ -141,8 +141,15 @@ function Import-DriverTestCertificate(
     }
 }
 
-function Get-DriverPackageValidation([string]$PackagePath, [string]$CertificatePath) {
-    $required = @("EdrTestDriver.sys", "EdrTestDriver.inf", "EdrTestDriver.cat", "driver-package.json")
+function Get-DriverPackageValidation(
+    [string]$PackagePath,
+    [string]$CertificatePath,
+    [string]$DriverFileName = "EdrTestDriver.sys",
+    [string]$InfFileName = "EdrTestDriver.inf",
+    [string]$CatalogFileName = "EdrTestDriver.cat",
+    [string]$MetadataFileName = "driver-package.json"
+) {
+    $required = @($DriverFileName, $InfFileName, $CatalogFileName, $MetadataFileName)
     $missing = @($required | Where-Object {
         -not (Test-Path -LiteralPath (Join-Path $PackagePath $_) -PathType Leaf)
     })
@@ -155,13 +162,13 @@ function Get-DriverPackageValidation([string]$PackagePath, [string]$CertificateP
 
     $certificate = $null
     try {
-        $metadata = Get-Content -LiteralPath (Join-Path $PackagePath "driver-package.json") -Raw |
+        $metadata = Get-Content -LiteralPath (Join-Path $PackagePath $MetadataFileName) -Raw |
             ConvertFrom-Json
-        $driverPath = Join-Path $PackagePath "EdrTestDriver.sys"
-        $catalogPath = Join-Path $PackagePath "EdrTestDriver.cat"
+        $driverPath = Join-Path $PackagePath $DriverFileName
+        $catalogPath = Join-Path $PackagePath $CatalogFileName
         $actualHash = (Get-FileHash -LiteralPath $driverPath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($metadata.signature_valid -ne $true) {
-            return [pscustomobject]@{ Available = $false; Reason = "driver-package.json 未声明签名包" }
+            return [pscustomobject]@{ Available = $false; Reason = "$MetadataFileName 未声明签名包" }
         }
         if ([string]::IsNullOrWhiteSpace([string]$metadata.sha256) -or $actualHash -ne $metadata.sha256) {
             return [pscustomobject]@{ Available = $false; Reason = "SYS 的 SHA256 与元数据不一致" }
@@ -172,6 +179,9 @@ function Get-DriverPackageValidation([string]$PackagePath, [string]$CertificateP
         }
 
         $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($CertificatePath)
+        if ($certificate.HasPrivateKey) {
+            return [pscustomobject]@{ Available = $false; Reason = "仓库分发证书包含私钥，已拒绝使用" }
+        }
         if ($certificate.Thumbprint -ne $expectedThumbprint) {
             return [pscustomobject]@{ Available = $false; Reason = "公开证书指纹与元数据不一致" }
         }
@@ -248,6 +258,65 @@ function Resolve-DriverTestPackage([string]$DevelopmentKitRoot) {
     }
 }
 
+function Resolve-UsbUdeTestPackage([string]$DevelopmentKitRoot) {
+    $repositoryPackage = Join-Path $repositoryRoot "drivers\UsbUdeTest\prebuilt\x64"
+    $repositoryCertificate = Join-Path $repositoryRoot "drivers\cert\EdrTestDriverTest.cer"
+    $validationArguments = @{
+        PackagePath = $repositoryPackage
+        CertificatePath = $repositoryCertificate
+        DriverFileName = "UsbUdeTest.sys"
+        InfFileName = "UsbUdeTest.inf"
+        CatalogFileName = "UsbUdeTest.cat"
+        MetadataFileName = "usb-driver-package.json"
+    }
+    $repositoryResult = Get-DriverPackageValidation @validationArguments
+    if ($repositoryResult.Available) {
+        $repositoryResult | Add-Member -NotePropertyName Source -NotePropertyValue "repository-prebuilt"
+        Write-Host "[USB UDE 驱动包] 使用仓库预构建的已签名 SYS/CAT 和公开证书，无需 EWDK。" -ForegroundColor Green
+        return $repositoryResult
+    }
+
+    Write-Warning "仓库预构建 USB UDE 驱动包不可用：$($repositoryResult.Reason)；开始探测 EWDK。"
+    $developmentKitFullPath = [IO.Path]::GetFullPath($DevelopmentKitRoot)
+    $setupPath = [IO.Path]::Combine($developmentKitFullPath, "BuildEnv", "SetupBuildEnv.cmd")
+    if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) {
+        return [pscustomobject]@{
+            Available = $false
+            Source = "unavailable"
+            Reason = "仓库预构建 USB UDE 包不可用，且 $DevelopmentKitRoot 不是可用的 EWDK 环境"
+        }
+    }
+
+    $fallbackRoot = Join-Path $stateRoot "usb-ude-driver-fallback"
+    $fallbackCertificate = Join-Path $fallbackRoot "cert\EdrTestDriverTest.cer"
+    $fallbackPackage = Join-Path $fallbackRoot "package"
+    try {
+        Write-Host "[USB UDE 驱动包] 检测到 EWDK，尝试在本地运行目录构建签名驱动包…" -ForegroundColor Cyan
+        $certificate = & (Join-Path $repositoryRoot "script\driver\New-DriverTestCertificate.ps1") `
+            -OutputCer $fallbackCertificate -Confirm:$false
+        if ($null -eq $certificate -or [string]::IsNullOrWhiteSpace([string]$certificate.Thumbprint)) {
+            throw "未能取得带不可导出私钥的测试代码签名证书。"
+        }
+        & (Join-Path $repositoryRoot "script\driver\Build-UsbUdeDriverPackage.ps1") `
+            -EwdkRoot $DevelopmentKitRoot -Configuration Release `
+            -CertificateThumbprint $certificate.Thumbprint -OutputPath $fallbackPackage
+        if ($LASTEXITCODE -ne 0) { throw "EWDK USB UDE 驱动包构建失败，退出码 $LASTEXITCODE。" }
+        $validationArguments.PackagePath = $fallbackPackage
+        $validationArguments.CertificatePath = $fallbackCertificate
+        $fallbackResult = Get-DriverPackageValidation @validationArguments
+        if (-not $fallbackResult.Available) { throw $fallbackResult.Reason }
+        $fallbackResult | Add-Member -NotePropertyName Source -NotePropertyValue "ewdk-fallback"
+        Write-Host "[USB UDE 驱动包] EWDK 后备构建成功。" -ForegroundColor Green
+        return $fallbackResult
+    } catch {
+        return [pscustomobject]@{
+            Available = $false
+            Source = "unavailable"
+            Reason = "仓库预构建 USB UDE 包不可用，EWDK 后备构建也失败：$($_.Exception.Message)"
+        }
+    }
+}
+
 function Remove-DriverActivitySamplePackages {
     $samplesRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot "samples"))
     foreach ($capabilityId in @("win.driver.load", "win.driver.modify", "win.driver.unload")) {
@@ -255,6 +324,20 @@ function Remove-DriverActivitySamplePackages {
         $relative = [IO.Path]::GetRelativePath($samplesRoot, $target)
         if ($relative.StartsWith("..", [StringComparison]::Ordinal) -or [IO.Path]::IsPathRooted($relative)) {
             throw "拒绝清理 samples 根目录之外的驱动能力包：$target"
+        }
+        if (Test-Path -LiteralPath $target -PathType Container) {
+            Remove-Item -LiteralPath $target -Recurse -Force
+        }
+    }
+}
+
+function Remove-UsbDeviceActivitySamplePackages {
+    $samplesRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot "samples"))
+    foreach ($capabilityId in @("win.device.usb.mount", "win.device.usb.unmount")) {
+        $target = [IO.Path]::GetFullPath((Join-Path $samplesRoot $capabilityId))
+        $relative = [IO.Path]::GetRelativePath($samplesRoot, $target)
+        if ($relative.StartsWith("..", [StringComparison]::Ordinal) -or [IO.Path]::IsPathRooted($relative)) {
+            throw "拒绝清理 samples 根目录之外的 USB 设备能力包：$target"
         }
         if (Test-Path -LiteralPath $target -PathType Container) {
             Remove-Item -LiteralPath $target -Recurse -Force
@@ -356,6 +439,105 @@ function Test-DriverEnvironmentAtStartup(
     }
 }
 
+function Test-UsbDeviceEnvironmentAtStartup(
+    [bool]$IsAdministrator,
+    [string]$ImportMode,
+    [psobject]$DriverPackage,
+    [bool]$AllowCertificatePrompt
+) {
+    $testSigningEnabled = Test-CurrentBootTestSigning
+    if (-not $DriverPackage.Available) {
+        Write-Warning "$($DriverPackage.Reason)。USB 挂载与卸载能力将从本次能力包中跳过，平台其他能力不受影响。"
+        $administratorText = if ($IsAdministrator) { "是" } else { "否" }
+        $testSigningText = if ($testSigningEnabled) { "已开启" } else { "未开启" }
+        Write-Host "[USB UDE 环境] 管理员=$administratorText；testsigning=$testSigningText；驱动包=不可用。" -ForegroundColor Cyan
+        return
+    }
+
+    $metadataPath = Join-Path $DriverPackage.PackagePath "usb-driver-package.json"
+    $certificatePath = $DriverPackage.CertificatePath
+    $metadata = $null
+    try {
+        if (Test-Path -LiteralPath $metadataPath -PathType Leaf) {
+            $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+        }
+    } catch {
+        Write-Warning "USB UDE 驱动包元数据无法读取：$($_.Exception.Message)"
+    }
+
+    $packageSigned = $null -ne $metadata -and $metadata.signature_valid -eq $true
+    $expectedThumbprint = if ($null -eq $metadata) { $null } else { [string]$metadata.certificate_thumbprint }
+    $certificate = $null
+    $certificateMatchesPackage = $false
+    try {
+        if (Test-Path -LiteralPath $certificatePath -PathType Leaf) {
+            $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($certificatePath)
+            $certificateMatchesPackage = $packageSigned `
+                -and -not $certificate.HasPrivateKey `
+                -and -not [string]::IsNullOrWhiteSpace($expectedThumbprint) `
+                -and $certificate.Thumbprint -eq $expectedThumbprint.Replace(" ", "").ToUpperInvariant()
+        }
+
+        $certificateTrusted = $false
+        if ($certificateMatchesPackage) {
+            $certificateTrusted = (Test-LocalMachineCertificate "Root" $certificate.Thumbprint) `
+                -and (Test-LocalMachineCertificate "TrustedPublisher" $certificate.Thumbprint)
+        }
+
+        if ($certificateMatchesPackage -and -not $certificateTrusted) {
+            if (-not $IsAdministrator) {
+                Write-Warning "USB UDE 测试用公开证书尚未导入 LocalMachine\Root 和 LocalMachine\TrustedPublisher；当前不是管理员，无法导入。"
+            } elseif ($AllowCertificatePrompt) {
+                $shouldImport = $ImportMode -eq "Always"
+                if ($ImportMode -eq "Prompt") {
+                    $canPrompt = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+                    if ($canPrompt) {
+                        $answer = Read-Host "是否导入 USB UDE 测试用证书到 LocalMachine\Root 和 LocalMachine\TrustedPublisher？[y/N]"
+                        $shouldImport = $answer -match '^(?i:y|yes|是)$'
+                    } else {
+                        Write-Warning "当前会话不能交互询问是否导入 USB UDE 测试证书；可在交互式终端启动，或使用 -DriverCertificateImportMode Always。"
+                    }
+                }
+                if ($shouldImport) {
+                    try {
+                        Import-DriverTestCertificate $certificate
+                        $certificateTrusted = (Test-LocalMachineCertificate "Root" $certificate.Thumbprint) `
+                            -and (Test-LocalMachineCertificate "TrustedPublisher" $certificate.Thumbprint)
+                        if ($certificateTrusted) {
+                            Write-Host "[USB UDE 环境] 测试用公开证书已导入两个 LocalMachine 信任区。" -ForegroundColor Green
+                        } else {
+                            Write-Warning "USB UDE 测试用公开证书导入后未能在两个 LocalMachine 信任区中确认。"
+                        }
+                    } catch {
+                        Write-Warning "导入 USB UDE 测试用公开证书失败：$($_.Exception.Message)"
+                    }
+                } else {
+                    Write-Warning "未导入 USB UDE 测试用公开证书；USB 挂载与卸载能力不可用。"
+                }
+            } else {
+                Write-Warning "共享测试证书仍未就绪；USB 挂载与卸载能力不可用。"
+            }
+        } elseif (-not $packageSigned) {
+            Write-Warning "当前预构建 USB UDE 驱动包未签名；USB 挂载与卸载能力不可用。"
+        } elseif (-not $certificateMatchesPackage) {
+            Write-Warning "USB UDE 公开证书缺失、包含私钥或与签名包指纹不一致；USB 挂载与卸载能力不可用。"
+        }
+
+        $administratorText = if ($IsAdministrator) { "是" } else { "否" }
+        $testSigningText = if ($testSigningEnabled) { "已开启" } else { "未开启" }
+        $certificateText = if ($certificateTrusted) { "已导入" } else { "未就绪" }
+        Write-Host "[USB UDE 环境] 驱动包=$($DriverPackage.Source)；管理员=$administratorText；testsigning=$testSigningText；测试证书=$certificateText。" -ForegroundColor Cyan
+        if (-not $testSigningEnabled) {
+            Write-Warning "当前启动项未开启 testsigning。平台不会自动修改启动配置；不开启会导致 USB 挂载与卸载能力不可用。"
+        }
+        if (-not $IsAdministrator) {
+            Write-Warning "USB 挂载与卸载能力要求管理员权限，当前运行中将不可用。"
+        }
+    } finally {
+        if ($null -ne $certificate) { $certificate.Dispose() }
+    }
+}
+
 if (Test-Path $statePath) {
     try {
         $existing = Get-Content $statePath -Raw | ConvertFrom-Json
@@ -391,12 +573,17 @@ try {
     Write-Warning "无法确认当前 PowerShell 的管理员权限：$($_.Exception.Message)"
 }
 if (-not $isAdministrator) {
-    Write-Warning "当前平台未以管理员身份运行。建议关闭后使用管理员权限重新运行 scripts\Start-EdrTest.ps1；五项用户账号活动、三项服务活动、组策略修改、三项 WMI permanent subscription、虚拟磁盘挂载和三项驱动活动需要管理员权限，否则会被跳过或不可用。"
+    Write-Warning "当前平台未以管理员身份运行。建议关闭后使用管理员权限重新运行 scripts\Start-EdrTest.ps1；五项用户账号活动、三项服务活动、组策略修改和三项 WMI permanent subscription 需要管理员权限；虚拟磁盘挂载测试需要管理员权限；USB 挂载与卸载以及三项驱动活动也需要管理员权限，否则会被跳过或不可用。"
 }
 $driverPackage = Resolve-DriverTestPackage -DevelopmentKitRoot $EwdkRoot
+$usbDriverPackage = Resolve-UsbUdeTestPackage -DevelopmentKitRoot $EwdkRoot
 [void](Test-DriverEnvironmentAtStartup -IsAdministrator $isAdministrator `
     -ImportMode $DriverCertificateImportMode -DriverPackage $driverPackage)
+[void](Test-UsbDeviceEnvironmentAtStartup -IsAdministrator $isAdministrator `
+    -ImportMode $DriverCertificateImportMode -DriverPackage $usbDriverPackage `
+    -AllowCertificatePrompt (-not $driverPackage.Available))
 if (-not $driverPackage.Available) { Remove-DriverActivitySamplePackages }
+if (-not $usbDriverPackage.Available) { Remove-UsbDeviceActivitySamplePackages }
 
 [System.IO.Directory]::CreateDirectory($logRoot) | Out-Null
 
@@ -407,7 +594,7 @@ if (-not $SkipBuild) {
     & $dotnet.Source build (Join-Path $repositoryRoot "EdrTest.sln") --configuration Release --no-restore
     if ($LASTEXITCODE -ne 0) { throw "dotnet build 失败。" }
 
-    Write-Host "[2/5] 构建 Process、File、Hash、User Account、Network、Registry、Scheduled Task、Service、Group Policy、Named Pipe、PowerShell、BITS、WMI、Virtual Disk 与 Driver Activity 能力包…" -ForegroundColor Cyan
+    Write-Host "[2/5] 构建 Process、File、Hash、User Account、Network、Registry、Scheduled Task、Service、Group Policy、Named Pipe、PowerShell、BITS、WMI、Virtual Disk、USB Device 与 Driver Activity 能力包…" -ForegroundColor Cyan
     & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-ProcessActivitySamples.ps1") -Configuration Release
     if ($LASTEXITCODE -ne 0) { throw "能力样本构建失败。" }
     & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-FileManipulationSamples.ps1") -Configuration Release
@@ -446,6 +633,17 @@ if (-not $SkipBuild) {
         }
     } else {
         Write-Warning "没有可用的仓库驱动包或 EWDK 后备包，已跳过驱动三项能力包。"
+    }
+    if ($usbDriverPackage.Available) {
+        & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-UsbDeviceActivitySamples.ps1") `
+            -Configuration Release -UsbDriverPackagePath $usbDriverPackage.PackagePath `
+            -DriverCertificatePath $usbDriverPackage.CertificatePath -EwdkRoot $EwdkRoot -SuppressPrivilegeWarning
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "USB Device Activity 能力包构建失败，将跳过 USB 挂载与卸载；平台其他能力继续启动。"
+            Remove-UsbDeviceActivitySamplePackages
+        }
+    } else {
+        Write-Warning "没有可用的仓库 USB UDE 驱动包或 EWDK 后备包，已跳过 USB 挂载与卸载能力包。"
     }
 }
 

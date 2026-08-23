@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目已实现可运行的首版 Windows 框架：能力包发现与校验、Controller 串行调度、每轮独立 SQLite、确定性本地 JSON 导出、云端日志映射和 BASELINE 离线比较已经形成闭环。Process Activity 六项、File Manipulation 五项、User Account Activity 五项、Network Activity 五项、Hash Algorithms 三项、Registry Activity 三项、Scheduled Task Activity 三项、Service Activity 三项、Group Policy Modification 一项、Named Pipe Activity 两项、PowerShell Activity 一项、BITS Job Activity 一项、WMI Activity 三项、Virtual Disk Mount 一项和 Driver Activity 三项真实能力样本均已实现；中文前端通过本机回环 API 直接编排 Runner、查看轮次并提交离线比较，还可在测试结束后使用本机 Edge 自动下载、校验并绑定腾讯 EDR 云端日志。
+项目已实现可运行的首版 Windows 框架：能力包发现与校验、Controller 串行调度、每轮独立 SQLite、确定性本地 JSON 导出、云端日志映射和 BASELINE 离线比较已经形成闭环。Process Activity 六项、File Manipulation 五项、User Account Activity 五项、Network Activity 五项、Hash Algorithms 三项、Registry Activity 三项、Scheduled Task Activity 三项、Service Activity 三项、Group Policy Modification 一项、Named Pipe Activity 两项、PowerShell Activity 一项、BITS Job Activity 一项、WMI Activity 三项、Virtual Disk Mount 一项、USB Device Mount/Unmount 两项和 Driver Activity 三项真实能力样本均已实现；中文前端通过本机回环 API 直接编排 Runner、查看轮次并提交离线比较，还可在测试结束后使用本机 Edge 自动下载、校验并绑定腾讯 EDR 云端日志。
 
 - 中文前端控制面：[web/README.md](web/README.md)
 - 详细设计：[docs/DESIGN.md](docs/DESIGN.md)
@@ -29,6 +29,7 @@
 - BITS Job Activity 双方法能力样本：[docs/BITS-ACTIVITY-SAMPLES.md](docs/BITS-ACTIVITY-SAMPLES.md)
 - WMI Activity 三项能力样本：[docs/WMI-ACTIVITY-SAMPLES.md](docs/WMI-ACTIVITY-SAMPLES.md)
 - Virtual Disk Mount 双方法能力样本：[docs/VIRTUAL-DISK-ACTIVITY-SAMPLES.md](docs/VIRTUAL-DISK-ACTIVITY-SAMPLES.md)
+- USB Device Mount/Unmount UDE 能力样本：[docs/USB-DEVICE-ACTIVITY-SAMPLES.md](docs/USB-DEVICE-ACTIVITY-SAMPLES.md)
 - Driver Activity 三项能力样本：[docs/DRIVER-ACTIVITY-SAMPLES.md](docs/DRIVER-ACTIVITY-SAMPLES.md)
 - 腾讯 EDR BASELINE 字段基准说明：[docs/TENCENT-EDR-FIELD-CATALOG.md](docs/TENCENT-EDR-FIELD-CATALOG.md)
 - 腾讯 EDR 字段含义与脱敏示例：[docs/reference/tencent-edr-field-catalog.json](docs/reference/tencent-edr-field-catalog.json)
