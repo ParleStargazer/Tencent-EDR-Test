@@ -151,6 +151,7 @@ type ApiRun = {
   capability_ids: string[];
   allow_high_risk: boolean;
   inter_capability_delay_seconds: number;
+  inter_subtest_delay_milliseconds: number;
   completed_capabilities: number;
   current_capability_id?: string;
   wait_remaining_seconds?: number;
@@ -601,6 +602,7 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
   const [runName, setRunName] = useState("基础遥测验证 #001");
   const [environment, setEnvironment] = useState("Windows 11 · 实验室");
   const [nextDelay, setNextDelay] = useState(3);
+  const [subtestDelayMs, setSubtestDelayMs] = useState(1000);
   const [allowHighRisk, setAllowHighRisk] = useState(false);
   const [cloudAutomationAvailable, setCloudAutomationAvailable] = useState(false);
   const [cloudAutomationEnabled, setCloudAutomationEnabled] = useState(false);
@@ -772,6 +774,7 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
           environment_id: environment,
           allow_high_risk: allowHighRisk,
           inter_capability_delay_seconds: nextDelay,
+          inter_subtest_delay_milliseconds: subtestDelayMs,
           cloud_automation: {
             enabled: cloudAutomationEnabled,
             account: cloudAutomationEnabled ? cloudAccount : undefined,
@@ -957,10 +960,10 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
         {view === "overview" && <Overview apiState={apiState} capabilities={availableCapabilities} baselines={baselines} recentRuns={recentRuns} />}
         {view === "test" && <TestWorkspace
           apiState={apiState} availableIds={availableIds} administratorRequiredIds={administratorRequiredIds} selectedIds={selectedIds} activeRun={activeRun} recentRuns={recentRuns}
-          runName={runName} environment={environment} nextDelay={nextDelay} allowHighRisk={allowHighRisk} selectedRisk={selectedRisk} hasHighRisk={hasHighRisk}
+          runName={runName} environment={environment} nextDelay={nextDelay} subtestDelayMs={subtestDelayMs} allowHighRisk={allowHighRisk} selectedRisk={selectedRisk} hasHighRisk={hasHighRisk}
           cloudAutomationAvailable={cloudAutomationAvailable} cloudAutomationEnabled={cloudAutomationEnabled} cloudDebugMode={cloudDebugMode} cloudAccount={cloudAccount} cloudPassword={cloudPassword}
           cloudDeviceName={cloudDeviceName} cloudStartTime={cloudStartTime} cloudDelaySeconds={cloudDelaySeconds}
-          onRunName={setRunName} onEnvironment={setEnvironment} onNextDelay={setNextDelay} onAllowHighRisk={setAllowHighRisk}
+          onRunName={setRunName} onEnvironment={setEnvironment} onNextDelay={setNextDelay} onSubtestDelayMs={setSubtestDelayMs} onAllowHighRisk={setAllowHighRisk}
           onCloudAutomationEnabled={setCloudAutomationEnabled} onCloudDebugMode={setCloudDebugMode} onCloudAccount={setCloudAccount} onCloudPassword={setCloudPassword}
           onCloudDeviceName={setCloudDeviceName} onCloudStartTime={setCloudStartTime} onCloudDelaySeconds={setCloudDelaySeconds}
           onToggle={toggleCapability} onSelectAll={() => setSelectedIds([...availableIds])} onClear={() => setSelectedIds([])}
@@ -1031,9 +1034,9 @@ function Overview({ apiState, capabilities, baselines, recentRuns }: { apiState:
 
 type TestWorkspaceProps = {
   apiState: ApiState; availableIds: Set<string>; administratorRequiredIds: Set<string>; selectedIds: string[]; activeRun: ApiRun | null; recentRuns: ApiRun[];
-  runName: string; environment: string; nextDelay: number; allowHighRisk: boolean; selectedRisk: string; hasHighRisk: boolean;
+  runName: string; environment: string; nextDelay: number; subtestDelayMs: number; allowHighRisk: boolean; selectedRisk: string; hasHighRisk: boolean;
   cloudAutomationAvailable: boolean; cloudAutomationEnabled: boolean; cloudDebugMode: boolean; cloudAccount: string; cloudPassword: string; cloudDeviceName: string; cloudStartTime: string; cloudDelaySeconds: number;
-  onRunName: (value: string) => void; onEnvironment: (value: string) => void; onNextDelay: (value: number) => void; onAllowHighRisk: (value: boolean) => void;
+  onRunName: (value: string) => void; onEnvironment: (value: string) => void; onNextDelay: (value: number) => void; onSubtestDelayMs: (value: number) => void; onAllowHighRisk: (value: boolean) => void;
   onCloudAutomationEnabled: (value: boolean) => void; onCloudDebugMode: (value: boolean) => void; onCloudAccount: (value: string) => void; onCloudPassword: (value: string) => void;
   onCloudDeviceName: (value: string) => void; onCloudStartTime: (value: string) => void; onCloudDelaySeconds: (value: number) => void;
   onToggle: (id: string) => void; onSelectAll: () => void; onClear: () => void; onStart: () => void; onCancel: () => void;
@@ -1043,7 +1046,7 @@ type TestWorkspaceProps = {
 function TestWorkspace(props: TestWorkspaceProps) {
   const { activeRun } = props;
   return <>
-    <PageHeader index="02" eyebrow="进行测试" title="串行能力测试" description="每次只运行一项能力。当前能力结束后，按设定时间等待，再开始下一项，减少行为互相干扰。" apiState={props.apiState} />
+    <PageHeader index="02" eyebrow="进行测试" title="串行能力测试" description="能力之间严格串行；同一能力的多个子测试也按设定间隔逐个触发，减少遥测互相干扰。" apiState={props.apiState} />
     <section className="metric-row test-metrics" aria-label="测试摘要">
       <article className="metric-card"><p>本轮已选</p><strong>{props.selectedIds.length}</strong><span>最高风险 {props.selectedRisk}</span></article>
       <article className="metric-card"><p>整体进度</p><strong>{activeRun?.progress ?? 0}%</strong><span>{activeRun?.phase ?? "尚未开始"}</span></article>
@@ -1066,7 +1069,8 @@ function TestWorkspace(props: TestWorkspaceProps) {
           <label className="field-label">轮次名称<input value={props.runName} onChange={(event) => props.onRunName(event.target.value)} /></label>
           <label className="field-label">测试环境<select value={props.environment} onChange={(event) => props.onEnvironment(event.target.value)}><option>Windows 11 · 实验室</option><option>Windows Server 2022 · 实验室</option></select></label>
           <label className="field-label">下一项能力前等待（秒）<input type="number" min="0" max="300" value={props.nextDelay} onChange={(event) => props.onNextDelay(Math.min(300, Math.max(0, Number(event.target.value) || 0)))} /><span className="field-help">默认 3 秒；设置为 0 可取消等待。</span></label>
-          <div className="serial-note"><strong>执行规则</strong><p>前一项完成并写入 SQLite 后，才会开始等待倒计时；倒计时结束后再启动下一项。</p></div>
+          <label className="field-label">子测试间等待（毫秒）<input type="number" min="0" max="10000" step="100" value={props.subtestDelayMs} onChange={(event) => props.onSubtestDelayMs(Math.min(10000, Math.max(0, Math.trunc(Number(event.target.value) || 0))))} /><span className="field-help">默认 1000 ms；只作用于同一能力内的不同测试方法，设置为 0 可取消等待。</span></label>
+          <div className="serial-note"><strong>执行规则</strong><p>子测试行为完成后先等待设定毫秒数，再触发下一子测试；整项能力完成并写入 SQLite 后，再执行能力间倒计时。观察进程可以驻留，但不会同时触发两个子测试行为。</p></div>
           <section className={`cloud-automation-card ${props.cloudAutomationEnabled ? "enabled" : ""}`}>
             <label className="cloud-automation-toggle"><input type="checkbox" checked={props.cloudAutomationEnabled} disabled={!props.cloudAutomationAvailable} onChange={(event) => props.onCloudAutomationEnabled(event.target.checked)} /><span><strong>测试后自动下载并导入云端日志</strong><em>{props.cloudAutomationAvailable ? "通过本机 Edge 登录腾讯 EDR 控制台" : "自动化运行时不可用，请重新安装前端依赖"}</em></span></label>
             {props.cloudAutomationEnabled && <div className="cloud-automation-fields">

@@ -45,6 +45,10 @@ internal static class Program
                 var localEvent = CreateEvent(invocation, stopwatch, state, actor, target, artifact.ArtifactId, verified);
                 database.AddEvent(localEvent);
                 AddFacts(database, invocation, state, actor, target, localEvent.LocalEventId, verified);
+                SubtestTiming.WaitBetween(invocation, instanceIndex, PowerShellScriptPlans.Methods.Length, state.Plan.Title,
+                    instanceIndex + 1 < PowerShellScriptPlans.Methods.Length
+                        ? PowerShellScriptPlans.Create(PowerShellScriptPlans.Methods[instanceIndex + 1], invocation.Nonce).Title
+                        : null);
             }
 
             AddFact(database, invocation, "powershell.script_block_succeeded", JsonValue.Create(localSucceeded), null);

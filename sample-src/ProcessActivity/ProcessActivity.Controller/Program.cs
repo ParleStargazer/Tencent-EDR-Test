@@ -177,7 +177,7 @@ internal static class Program
                     "--application-local-library", ParameterString(parameters, "application_local_library_name", "version.dll"),
                     "--loadlibraryex-library", ParameterString(parameters, "loadlibraryex_library_name", "dbghelp.dll"),
                     "--private-native-library", privateNativeLibraryPath!,
-                    "--inter-load-delay-ms", ParameterInt(parameters, "inter_subtest_delay_ms", 750).ToString(),
+                    "--inter-load-delay-ms", invocation.InterSubtestDelayMs.ToString(),
                     "--hold-ms", ParameterInt(parameters, "post_load_hold_ms", 5_000).ToString(),
                     "--wait-ms", invocation.TimeoutMs.ToString(), "--nonce", invocation.Nonce,
                 ]
@@ -230,7 +230,6 @@ internal static class Program
                     break;
                 case "image_load":
                     Add(actorArguments, "go", goPath);
-                    Add(actorArguments, "managed-go", helperGoPath);
                     break;
                 case "remote_thread_create":
                     Add(actorArguments, "library", ParameterString(parameters, "library_name", "winhttp.dll"));
@@ -246,6 +245,9 @@ internal static class Program
             if (operation == "image_load")
             {
                 var nativeResult = WaitAndRead<BehaviorResult>(targetResultPath, invocation.TimeoutMs);
+                SubtestTiming.WaitBetween(invocation, 3, 5,
+                    "应用私有无签名原生 DLL 加载并调用导出", "dotnet 托管宿主加载新落盘程序集");
+                File.WriteAllText(helperGoPath, invocation.Nonce);
                 var managedResult = WaitAndRead<BehaviorResult>(helperResultPath, invocation.TimeoutMs);
                 state.Result = CombineImageResults(nativeResult, managedResult);
                 state.ResultPath = suiteResultPath;
@@ -749,9 +751,16 @@ internal static class Program
             WorkingDirectory = workingDirectory,
             UseShellExecute = false,
             CreateNoWindow = true,
+            RedirectStandardOutput = true,
         };
         foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
-        return Process.Start(startInfo) ?? throw new InvalidOperationException($"启动行为程序失败：{executable}");
+        var process = Process.Start(startInfo) ?? throw new InvalidOperationException($"启动行为程序失败：{executable}");
+        process.OutputDataReceived += (_, eventArgs) =>
+        {
+            if (!string.IsNullOrWhiteSpace(eventArgs.Data)) Console.WriteLine(eventArgs.Data);
+        };
+        process.BeginOutputReadLine();
+        return process;
     }
 
     private static string FindDotnetHost()

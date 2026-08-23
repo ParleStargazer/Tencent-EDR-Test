@@ -49,6 +49,10 @@ internal static class Program
                 var localEvent = CreateEvent(invocation, stopwatch, state, initiator, artifact.ArtifactId, verified);
                 database.AddEvent(localEvent);
                 AddFacts(database, invocation, state, actor, initiator, localEvent.LocalEventId, verified);
+                SubtestTiming.WaitBetween(invocation, instanceIndex, VirtualDiskPlans.Methods.Length, state.Plan.Title,
+                    instanceIndex + 1 < VirtualDiskPlans.Methods.Length
+                        ? VirtualDiskPlans.Create(VirtualDiskPlans.Methods[instanceIndex + 1], invocation.Nonce).Title
+                        : null);
             }
 
             AddFact(database, invocation, "virtual_disk.mount_succeeded", JsonValue.Create(localSucceeded), null);

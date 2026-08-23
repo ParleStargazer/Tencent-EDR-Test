@@ -100,6 +100,8 @@ artifacts/process-activity-e2e/
 
 后四个临时 DLL 在 Target/Helper 停止后删除。唯一文件名便于在 EDR 导出中按本轮绝对路径检索。`reference/load_dll/edr_LoadDll.json` 的 2813 条事件均为 `ModuleEvents / Module / LoadDll / KernelMon`：只有 29 条目标位于 `System32`，而应用私有目录、用户目录和临时目录占绝大多数；常见目标是无签名或第三方原生 DLL/PYD。日志没有暴露具体加载 API，因此不能断言产品只采集某个函数；第五方法优先复现可观察到的载荷属性和目录形态，并用真实导出调用证明不是仅映射文件。离线 BASELINE 为五个子项分别定义关联锚点和发生时间，能力结论默认采用结果最好的方法，其他方法的失败或低置信候选仍完整保留。
 
+五个加载行为现在严格串行：Target 内四个原生方法逐项完成并按 Runner 的统一子测试间隔等待；第四个原生结果写入后，Controller 再等待一次，随后才创建托管 Helper 的放行文件。Target/Helper 可以提前启动并驻留等待，但不会再由 Actor 同时放行，因此原生与托管加载事件不会交叉触发。默认间隔为 1000 ms，可通过前端“子测试间等待”或 CLI `--subtest-delay-ms` 调整为 0–10000 ms。
+
 比较器要求本地导出的 `capability_version` 与 BASELINE 的 `capability.version` 完全一致。旧运行（例如 `0.1.0`）没有对应基准时显示 `NOT_COMPARED` 和版本提示，新版新增条件不会计入旧版本的本地采集结论。
 
 使用真实导出进行比较：

@@ -73,6 +73,12 @@ public static class Program
         {
             throw new ArgumentException("--next-delay-seconds 必须是 0..300 的整数。");
         }
+        var subtestDelayText = options.Get("subtest-delay-ms") ?? SubtestTiming.DefaultDelayMilliseconds.ToString();
+        if (!int.TryParse(subtestDelayText, out var interSubtestDelayMilliseconds)
+            || interSubtestDelayMilliseconds is < 0 or > SubtestTiming.MaximumDelayMilliseconds)
+        {
+            throw new ArgumentException($"--subtest-delay-ms 必须是 0..{SubtestTiming.MaximumDelayMilliseconds} 的整数。");
+        }
         var request = new RunRequest(
             manifests,
             options.Get("runs-dir") ?? "runs",
@@ -80,7 +86,8 @@ public static class Program
             options.HasFlag("allow-high-risk"),
             options.Get("suite-id"),
             options.Get("environment-id"),
-            interCapabilityDelaySeconds);
+            interCapabilityDelaySeconds,
+            InterSubtestDelayMilliseconds: interSubtestDelayMilliseconds);
         var result = await new RunnerService().RunAsync(request);
         Console.WriteLine($"轮次：{result.RunId}");
         Console.WriteLine($"状态：{result.Status}");
@@ -206,6 +213,7 @@ public static class Program
               capabilities --root samples
               run --manifest <capability.json> [--manifest <...>] [--runs-dir runs]
                   [--parameters <json|@file>] [--allow-high-risk] [--next-delay-seconds 3]
+                  [--subtest-delay-ms 1000]
               run --capability <id> [--samples-root samples]
               export --db <run.db> --out <local-run.json>
               compare --local <local-run.json> --cloud <cloud.json> [--cloud <...>]

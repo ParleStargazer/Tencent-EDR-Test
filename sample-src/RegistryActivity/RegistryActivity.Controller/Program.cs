@@ -54,6 +54,8 @@ internal static class Program
                 var localEvent = CreateEvent(invocation, operation, stopwatch, state, actor, artifact.ArtifactId);
                 database.AddEvent(localEvent);
                 AddMethodFacts(database, invocation, operation, state, localEvent.LocalEventId, actor, succeeded);
+                SubtestTiming.WaitBetween(invocation, index, Methods.Length, MethodTitle(method),
+                    index + 1 < Methods.Length ? MethodTitle(Methods[index + 1]) : null);
             }
 
             AddGlobalFact(database, invocation, $"registry.{operation}_succeeded", JsonValue.Create(localSucceeded));

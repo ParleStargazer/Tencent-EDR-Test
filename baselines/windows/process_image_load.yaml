@@ -15,7 +15,6 @@ capability:
     library_name: winhttp.dll
     application_local_library_name: version.dll
     loadlibraryex_library_name: dbghelp.dll
-    inter_subtest_delay_ms: 750
 local_requirements:
   - field: facts.process.image_load_succeeded
     operator: equals

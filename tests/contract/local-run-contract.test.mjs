@@ -234,6 +234,7 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
   assert.ok(imageLoadManifest.expected_fact_keys.includes("process.image_load.application_private_unsigned_native.export_invoked"));
   assert.match(processBehavior, /application_private_unsigned_native/);
   assert.match(processBehavior, /sqlite3_libversion_number/);
+  assert.match(processBehavior, /WaitBetweenImageLoads/);
   assert.match(processController, /ResolvePrivateNativeLibrary/);
   assert.equal(imageLoadProfile.source.event_count, 2813);
   assert.equal(imageLoadProfile.event_identity.action_name, "LoadDll");
@@ -1119,8 +1120,8 @@ test("虚拟磁盘挂载通过 Mount-DiskImage 与 VirtDisk API 建立完整本�
   assert.ok(localData.$defs.device.properties.device.properties.no_drive_letter);
 });
 
-test("既有多子测试 Controller 显式分配 SQLite 唯一序号", async () => {
-  const [file, registry, network, scheduledTask, groupPolicy, process, powershell, bits, virtualDisk] = await Promise.all([
+test("既有多子测试 Controller 显式分配 SQLite 唯一序号并执行统一间隔", async () => {
+  const [file, registry, network, scheduledTask, groupPolicy, process, powershell, bits, virtualDisk, timing, front] = await Promise.all([
     "FileManipulation",
     "RegistryActivity",
     "NetworkActivity",
@@ -1130,42 +1131,64 @@ test("既有多子测试 Controller 显式分配 SQLite 唯一序号", async () 
     "PowerShellActivity",
     "BitsActivity",
     "VirtualDiskActivity",
-  ].map((domain) => readFile(new URL(`sample-src/${domain}/${domain}.Controller/Program.cs`, root), "utf8")));
+  ].map((domain) => readFile(new URL(`sample-src/${domain}/${domain}.Controller/Program.cs`, root), "utf8")).concat([
+    readFile(new URL("src/EdrTest/SubtestTiming.cs", root), "utf8"),
+    readFile(new URL("web/app/live-control-plane.tsx", root), "utf8"),
+  ]));
 
   assert.match(file, /foreach \(var \(subtest, instanceIndex\) in Subtests\.Select/);
   assert.match(file, /InstanceIndex = state\.InstanceIndex/);
   assert.ok([...file.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
+  assert.match(file, /SubtestTiming\.WaitBetween/);
 
   assert.match(registry, /foreach \(var \(method, index\) in Methods\.Select/);
   assert.match(registry, /InstanceIndex = state\.InstanceIndex/);
   assert.ok([...registry.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
+  assert.match(registry, /SubtestTiming\.WaitBetween/);
 
-  assert.match(network, /foreach \(var \(subtest, instanceIndex\) in Subtests\(operation\)\.Select/);
+  assert.match(network, /foreach \(var \(subtest, instanceIndex\) in subtests\.Select/);
   assert.match(network, /InstanceIndex = instanceIndex/);
   assert.ok([...network.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
+  assert.match(network, /SubtestTiming\.WaitBetween/);
 
   assert.match(scheduledTask, /foreach \(var \(method, index\) in methods\.Select/);
   assert.ok([...scheduledTask.matchAll(/InstanceIndex = instanceIndex/g)].length >= 2);
   assert.match(scheduledTask, /Sequence = index \+ 1/);
   assert.match(scheduledTask, /Cleanup\(invocation, taskPath, actorProcess, method, index \+ 1\)/);
+  assert.match(scheduledTask, /SubtestTiming\.WaitBetween/);
 
   assert.match(groupPolicy, /"isolated_policy_key" => 0/);
   assert.match(groupPolicy, /"known_policy_same_value" => 1/);
   assert.match(groupPolicy, /Sequence = actorInstanceIndex \+ 1/);
+  assert.match(groupPolicy, /SubtestTiming\.WaitBetween/);
 
   assert.match(process, /var imageAttempts = operation == "image_load"/);
   assert.match(process, /imageAttempts\.Select\(\(attempt, index\) => CreateEvent\(/);
   assert.match(process, /evidence\?\.ArtifactId, attempt, index \+ 1/);
+  assert.match(process, /SubtestTiming\.WaitBetween/);
+  assert.match(process, /File\.WriteAllText\(helperGoPath, invocation\.Nonce\)/);
+  assert.doesNotMatch(process, /Add\(actorArguments, "managed-go"/);
+  assert.match(process, /RedirectStandardOutput = true/);
+  assert.match(process, /BeginOutputReadLine\(\)/);
 
   assert.match(powershell, /PowerShellScriptPlans\.Methods\.Select\(\(value, index\)/);
   assert.ok([...powershell.matchAll(/InstanceIndex = state\.InstanceIndex/g)].length >= 2);
   assert.ok([...powershell.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
+  assert.match(powershell, /SubtestTiming\.WaitBetween/);
 
   assert.match(bits, /BitsPlans\.Methods\.Select\(\(value, index\)/);
   assert.ok([...bits.matchAll(/InstanceIndex = state\.InstanceIndex/g)].length >= 2);
   assert.ok([...bits.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
+  assert.match(bits, /SubtestTiming\.WaitBetween/);
 
   assert.match(virtualDisk, /VirtualDiskPlans\.Methods\.Select\(\(value, index\)/);
   assert.ok([...virtualDisk.matchAll(/InstanceIndex = state\.InstanceIndex/g)].length >= 2);
   assert.match(virtualDisk, /Sequence = state\.InstanceIndex \+ 1/);
+  assert.match(virtualDisk, /SubtestTiming\.WaitBetween/);
+
+  assert.match(timing, /DefaultDelayMilliseconds = 1_000/);
+  assert.match(timing, /MaximumDelayMilliseconds = 10_000/);
+  assert.match(timing, /"status"\] = "SUBTEST_WAITING"/);
+  assert.match(front, /inter_subtest_delay_milliseconds: subtestDelayMs/);
+  assert.match(front, /子测试间等待（毫秒）/);
 });

@@ -57,6 +57,8 @@ internal static class Program
                 var localEvent = CreateEvent(invocation, operation, stopwatch, state, actor, evidence.ArtifactId);
                 database.AddEvent(localEvent);
                 AddFacts(database, invocation, operation, state, localEvent.LocalEventId, actor, subtestSucceeded);
+                SubtestTiming.WaitBetween(invocation, instanceIndex, Subtests.Length, subtest,
+                    instanceIndex + 1 < Subtests.Length ? Subtests[instanceIndex + 1] : null);
             }
 
             database.AddFact(new LocalFactObservation

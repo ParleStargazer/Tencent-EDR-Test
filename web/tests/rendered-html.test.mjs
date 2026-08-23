@@ -226,6 +226,9 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /fileCapabilityIds\.has\(baseline\.capability_id\)/);
   assert.match(livePage, /保存到本机/);
   assert.match(livePage, /inter_capability_delay_seconds: nextDelay/);
+  assert.match(livePage, /inter_subtest_delay_milliseconds: subtestDelayMs/);
+  assert.match(livePage, /子测试间等待（毫秒）/);
+  assert.match(livePage, /默认 1000 ms/);
   assert.match(livePage, /run\.highlights/);
   assert.match(livePage, /E \/ 已完成队列/);
   assert.match(livePage, /role="dialog"/);

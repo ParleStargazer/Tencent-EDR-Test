@@ -36,13 +36,6 @@
       "default": "dbghelp.dll",
       "allowed_values": ["dbghelp.dll", "version.dll", "winhttp.dll"]
     },
-    "inter_subtest_delay_ms": {
-      "type": "integer",
-      "required": true,
-      "default": 750,
-      "minimum": 250,
-      "maximum": 5000
-    },
     "post_load_hold_ms": {
       "type": "integer",
       "required": true,
@@ -51,7 +44,7 @@
       "maximum": 10000
     }
   },
-  "timeouts": { "execute_seconds": 30, "cleanup_seconds": 10 },
+  "timeouts": { "execute_seconds": 75, "cleanup_seconds": 10 },
   "network": { "required": false },
   "expected_fact_keys": [
     "process.image_load_succeeded",

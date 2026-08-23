@@ -2441,11 +2441,17 @@ public static class Program
         Assert(local["local_events"]?.AsArray().Count == 2, "两个能力应分别保存本地事件。");
         Assert(local["capabilities"]?[0]?["sequence"]?.GetValue<int>() == 1, "首个能力顺序应为 1。");
         Assert(local["capabilities"]?[1]?["sequence"]?.GetValue<int>() == 2, "第二个能力顺序应为 2。");
+        var configuredSubtestDelays = local["local_facts"]?.AsArray()
+            .Where(value => value?["key"]?.GetValue<string>() == "execution.inter_subtest_delay_ms")
+            .Select(value => value?["value"]?.GetValue<int>())
+            .ToArray() ?? [];
+        Assert(configuredSubtestDelays.SequenceEqual(new int?[] { 1_000, 1_000 }), "每项能力都应保存 Runner 实际使用的子测试间隔。");
         Assert(stopwatch.Elapsed >= TimeSpan.FromMilliseconds(900), "能力之间应执行配置的等待时间。");
         Assert(updates.Any(value => value.Kind == "waiting_next" && value.WaitRemainingSeconds == 1), "进度流应包含下一项能力倒计时。");
         var starts = updates.Where(value => value.Kind == "capability_started").Select(value => value.CapabilityId).ToArray();
         Assert(starts.SequenceEqual(new[] { "win.process.create", "win.process.terminate" }), "能力开始事件必须保持用户选择顺序。");
         Assert(new RunRequest([], "runs", null, false).InterCapabilityDelaySeconds == 3, "能力间默认等待时间应为 3 秒。");
+        Assert(new RunRequest([], "runs", null, false).InterSubtestDelayMilliseconds == 1_000, "子测试间默认等待时间应为 1000 ms。");
     }
 
     private static async Task TestCancellation()

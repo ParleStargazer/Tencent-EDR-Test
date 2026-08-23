@@ -45,6 +45,10 @@ internal static class Program
                 var localEvent = CreateEvent(invocation, stopwatch, state, initiator, artifact.ArtifactId, verified);
                 database.AddEvent(localEvent);
                 AddFacts(database, invocation, state, actor, initiator, localEvent.LocalEventId, verified);
+                SubtestTiming.WaitBetween(invocation, instanceIndex, BitsPlans.Methods.Length, state.Plan.Title,
+                    instanceIndex + 1 < BitsPlans.Methods.Length
+                        ? BitsPlans.Create(BitsPlans.Methods[instanceIndex + 1], invocation.Nonce).Title
+                        : null);
             }
 
             AddFact(database, invocation, "bits.job_succeeded", JsonValue.Create(localSucceeded), null);

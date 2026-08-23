@@ -125,6 +125,8 @@ internal static class Program
                     WriteStatus("CLEANUP_ERROR", package.Manifest.CapabilityId, operation, methods.Length, cleanup.ErrorMessage);
                     return 30;
                 }
+                SubtestTiming.WaitBetween(invocation, index, methods.Length, method,
+                    index + 1 < methods.Length ? methods[index + 1] : null);
             }
 
             AddGlobalFact(database, invocation, $"scheduled_task.{operation}_succeeded", JsonValue.Create(allSucceeded));

@@ -71,6 +71,8 @@ internal static class Program
                 return 30;
             }
 
+            SubtestTiming.WaitBetween(invocation, 0, 2, "隔离策略键", "真实策略同值回写");
+
             knownTarget = SelectKnownTarget(targetSelection, out var notApplicableReason);
             AddFact(database, invocation, "group_policy.known_policy_same_value.requested_target", JsonValue.Create(targetSelection), null);
             var knownMethodSucceeded = true;

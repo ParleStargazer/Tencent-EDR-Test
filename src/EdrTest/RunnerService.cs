@@ -15,7 +15,8 @@ public sealed record RunRequest(
     string? SuiteId = null,
     string? EnvironmentId = null,
     int InterCapabilityDelaySeconds = 3,
-    Action<RunProgressUpdate>? ProgressCallback = null);
+    Action<RunProgressUpdate>? ProgressCallback = null,
+    int InterSubtestDelayMilliseconds = SubtestTiming.DefaultDelayMilliseconds);
 
 public sealed record RunResult(string RunId, string RunDirectory, string DatabasePath, string LocalExportPath, string Status);
 
@@ -42,6 +43,8 @@ public sealed class RunnerService
     {
         if (request.ManifestPaths.Count == 0) throw new ArgumentException("至少需要一个能力清单。");
         if (request.InterCapabilityDelaySeconds is < 0 or > 300) throw new ArgumentOutOfRangeException(nameof(request), "能力间等待时间必须在 0..300 秒内。");
+        if (request.InterSubtestDelayMilliseconds is < 0 or > SubtestTiming.MaximumDelayMilliseconds)
+            throw new ArgumentOutOfRangeException(nameof(request), $"子测试间等待时间必须在 0..{SubtestTiming.MaximumDelayMilliseconds} 毫秒内。");
         var packages = request.ManifestPaths.Select(CapabilityCatalog.Load).ToArray();
         if (packages.Select(x => x.Manifest.CapabilityId).Distinct(StringComparer.Ordinal).Count() != packages.Length)
         {
@@ -85,6 +88,15 @@ public sealed class RunnerService
                     var nonce = Ids.NewNonce();
                     var parameters = CapabilityCatalog.BuildParameters(package.Manifest, request.ParametersJson);
                     database.AddCapability(runId, caseRunId, index + 1, nonce, package, parameters);
+                    database.AddFact(new LocalFactObservation
+                    {
+                        CaseRunId = caseRunId,
+                        Key = "execution.inter_subtest_delay_ms",
+                        Value = JsonValue.Create(request.InterSubtestDelayMilliseconds),
+                        ObservedAtUtc = DateTimeOffset.UtcNow,
+                        Source = "runner_configuration",
+                        Confidence = "high",
+                    });
                     var caseDirectory = Path.Combine(workRoot, caseRunId);
                     Directory.CreateDirectory(caseDirectory);
                     var parameterPath = Path.Combine(caseDirectory, "parameters.json");
@@ -171,6 +183,7 @@ public sealed class RunnerService
         AddArgument(startInfo, "package-dir", package.PackageDirectory);
         AddArgument(startInfo, "parameters", Path.GetFullPath(parameterPath));
         AddArgument(startInfo, "timeout-ms", checked(package.Manifest.Timeouts.ExecuteSeconds * 1000).ToString());
+        AddArgument(startInfo, "inter-subtest-delay-ms", request.InterSubtestDelayMilliseconds.ToString());
 
         try
         {

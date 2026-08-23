@@ -33,6 +33,7 @@ public sealed class ApiRunStartRequest
     public string? EnvironmentId { get; init; }
     public bool AllowHighRisk { get; init; }
     public int InterCapabilityDelaySeconds { get; init; } = 3;
+    public int InterSubtestDelayMilliseconds { get; init; } = SubtestTiming.DefaultDelayMilliseconds;
     public ApiCloudAutomationStartRequest? CloudAutomation { get; init; }
 }
 
@@ -126,6 +127,7 @@ public sealed record ApiRunSnapshot(
     IReadOnlyList<string> CapabilityIds,
     bool AllowHighRisk,
     int InterCapabilityDelaySeconds,
+    int InterSubtestDelayMilliseconds,
     int CompletedCapabilities,
     string? CurrentCapabilityId,
     int? WaitRemainingSeconds,
@@ -738,6 +740,8 @@ internal sealed class ApiRunCoordinator
         if (capabilityIds.Length == 0) throw new ApiRequestException(400, "至少选择一个能力。");
         if (capabilityIds.Length != request.CapabilityIds.Count) throw new ApiRequestException(400, "capability_ids 不能重复。");
         if (request.InterCapabilityDelaySeconds is < 0 or > 300) throw new ApiRequestException(400, "能力间等待时间必须在 0..300 秒内。");
+        if (request.InterSubtestDelayMilliseconds is < 0 or > SubtestTiming.MaximumDelayMilliseconds)
+            throw new ApiRequestException(400, $"子测试间等待时间必须在 0..{SubtestTiming.MaximumDelayMilliseconds} 毫秒内。");
         var packages = capabilityIds.Select(id => catalog.ResolvePackage(id) ?? throw new ApiRequestException(400, $"能力样本不可用：{id}")).ToArray();
         if (!request.AllowHighRisk && packages.Any(value => value.Manifest.RiskLevel is "L2" or "L3"))
         {
@@ -751,6 +755,7 @@ internal sealed class ApiRunCoordinator
             packages,
             request.AllowHighRisk,
             request.InterCapabilityDelaySeconds,
+            request.InterSubtestDelayMilliseconds,
             DateTimeOffset.UtcNow,
             cloudConfig);
         if (!states.TryAdd(state.OperationId, state))
@@ -836,7 +841,8 @@ internal sealed class ApiRunCoordinator
                     state.Name,
                     environmentId,
                     state.InterCapabilityDelaySeconds,
-                    state.ApplyProgress), state.CancellationToken);
+                    state.ApplyProgress,
+                    state.InterSubtestDelayMilliseconds), state.CancellationToken);
                 state.Complete(result);
             }
             catch (OperationCanceledException)
@@ -990,6 +996,10 @@ internal sealed class ApiRunCoordinator
                         debugLogAvailable,
                         latestCloudImport,
                         latestCloudImport.Error);
+                var interSubtestDelayMilliseconds = root?["local_facts"]?.AsArray()
+                    .Select(value => value?.AsObject())
+                    .FirstOrDefault(value => value?["key"]?.GetValue<string>() == "execution.inter_subtest_delay_ms")?["value"]
+                    ?.GetValue<int>() ?? SubtestTiming.DefaultDelayMilliseconds;
                 var snapshot = new ApiRunSnapshot(
                     runId,
                     runId,
@@ -1000,6 +1010,7 @@ internal sealed class ApiRunCoordinator
                     capabilityIds,
                     false,
                     3,
+                    interSubtestDelayMilliseconds,
                     steps.Count(value => value.Status is "passed" or "error" or "skipped" or "cancelled"),
                     null,
                     null,
@@ -1130,6 +1141,7 @@ internal sealed class ApiRunState
         IReadOnlyList<CapabilityPackage> packages,
         bool allowHighRisk,
         int interCapabilityDelaySeconds,
+        int interSubtestDelayMilliseconds,
         DateTimeOffset startedAt,
         CloudExportAutomationConfig? cloudConfig)
     {
@@ -1138,6 +1150,7 @@ internal sealed class ApiRunState
         CapabilityIds = packages.Select(value => value.Manifest.CapabilityId).ToArray();
         AllowHighRisk = allowHighRisk;
         InterCapabilityDelaySeconds = interCapabilityDelaySeconds;
+        InterSubtestDelayMilliseconds = interSubtestDelayMilliseconds;
         StartedAt = startedAt;
         cloudRequested = cloudConfig is not null;
         cloudDeviceName = cloudConfig?.DeviceName;
@@ -1163,6 +1176,7 @@ internal sealed class ApiRunState
     public IReadOnlyList<string> CapabilityIds { get; }
     public bool AllowHighRisk { get; }
     public int InterCapabilityDelaySeconds { get; }
+    public int InterSubtestDelayMilliseconds { get; }
     public DateTimeOffset StartedAt { get; }
     public CancellationToken CancellationToken => cancellation.Token;
     public string? LocalExportPath { get { lock (sync) return localExportPath; } }
@@ -1175,7 +1189,8 @@ internal sealed class ApiRunState
             status = "running";
             progress = 3;
             phase = "Runner 已启动，准备串行执行";
-            AddLog(new ApiRunLogEntry(DateTimeOffset.UtcNow, "info", "runner", "Runner 已启动，能力之间不会并行执行。", null, true));
+            AddLog(new ApiRunLogEntry(DateTimeOffset.UtcNow, "info", "runner",
+                $"Runner 已启动：能力之间不会并行；同一能力的子测试间隔为 {InterSubtestDelayMilliseconds} ms。", null, true));
         }
     }
 
@@ -1401,6 +1416,7 @@ internal sealed class ApiRunState
                 CapabilityIds,
                 AllowHighRisk,
                 InterCapabilityDelaySeconds,
+                InterSubtestDelayMilliseconds,
                 completedCapabilities,
                 currentCapabilityId,
                 waitRemainingSeconds,

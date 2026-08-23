@@ -658,7 +658,8 @@ public sealed record ControllerInvocation(
     string ManifestPath,
     string PackageDirectory,
     string ParametersPath,
-    int TimeoutMs)
+    int TimeoutMs,
+    int InterSubtestDelayMs)
 {
     public static ControllerInvocation Parse(IEnumerable<string> arguments)
     {
@@ -672,7 +673,9 @@ public sealed record ControllerInvocation(
             Path.GetFullPath(options.Require("manifest")),
             Path.GetFullPath(options.Require("package-dir")),
             Path.GetFullPath(options.Require("parameters")),
-            options.RequireInt("timeout-ms", 1, 3_600_000));
+            options.RequireInt("timeout-ms", 1, 3_600_000),
+            ParseOptionalInt(options, "inter-subtest-delay-ms", SubtestTiming.DefaultDelayMilliseconds,
+                0, SubtestTiming.MaximumDelayMilliseconds));
         if (!Guid.TryParse(invocation.RunId, out _) || !Guid.TryParse(invocation.CaseRunId, out _)) throw new ArgumentException("run-id/case-run-id 必须是 UUID。");
         if (invocation.Nonce.Length != 32 || invocation.Nonce.Any(character => !Uri.IsHexDigit(character))) throw new ArgumentException("nonce 必须是 128-bit 十六进制字符串。");
         if (!File.Exists(invocation.RunDb)) throw new FileNotFoundException("找不到运行数据库。", invocation.RunDb);
@@ -680,6 +683,15 @@ public sealed record ControllerInvocation(
         if (!Directory.Exists(invocation.PackageDirectory)) throw new DirectoryNotFoundException($"找不到能力包目录：{invocation.PackageDirectory}");
         if (!File.Exists(invocation.ParametersPath)) throw new FileNotFoundException("找不到参数文件。", invocation.ParametersPath);
         return invocation;
+    }
+
+    private static int ParseOptionalInt(CliOptions options, string name, int defaultValue, int minimum, int maximum)
+    {
+        var text = options.Get(name);
+        if (text is null) return defaultValue;
+        if (!int.TryParse(text, out var value) || value < minimum || value > maximum)
+            throw new ArgumentException($"--{name} 必须在 {minimum}..{maximum} 内。");
+        return value;
     }
 }
 

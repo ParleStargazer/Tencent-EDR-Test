@@ -68,6 +68,18 @@ foreach ($capability in $localRun.capabilities) {
     }
 }
 $memoryReleaseFact = $localRun.local_facts | Where-Object { $_.key -eq "process.memory_released" } | Select-Object -First 1
+$imageCapability = $localRun.capabilities | Where-Object { $_.capability_id -eq "win.process.image_load" } | Select-Object -First 1
+$imageEvents = @($localRun.local_events | Where-Object { $_.case_run_id -eq $imageCapability.case_run_id } | Sort-Object sequence)
+$imageDelayFact = $localRun.local_facts | Where-Object {
+    $_.case_run_id -eq $imageCapability.case_run_id -and $_.key -eq "execution.inter_subtest_delay_ms"
+} | Select-Object -First 1
+$imageEventDeltas = @(for ($index = 1; $index -lt $imageEvents.Count; $index++) {
+    ([DateTimeOffset]$imageEvents[$index].occurred_at_utc - [DateTimeOffset]$imageEvents[$index - 1].occurred_at_utc).TotalMilliseconds
+})
+$imageControllerOutput = @($localRun.execution_logs | Where-Object {
+    $_.case_run_id -eq $imageCapability.case_run_id -and $_.phase -eq "controller.stdout"
+} | ForEach-Object { $_.message }) -join "`n"
+$imageWaitingLogCount = [regex]::Matches($imageControllerOutput, "SUBTEST_WAITING").Count
 $artifactIds = @($localRun.artifacts | ForEach-Object { $_.artifact_id })
 $invalidEvidenceRefs = @($localRun.local_events | ForEach-Object {
     foreach ($evidenceRef in $_.evidence_refs) {
@@ -146,6 +158,12 @@ $assertions = [ordered]@{
     evidence_artifact_count_is_6 = @($localRun.artifacts).Count -eq 6
     all_event_evidence_refs_resolve = $invalidEvidenceRefs.Count -eq 0
     nonce_fact_count_is_6 = @($localRun.local_facts | Where-Object { $_.key -eq "correlation.nonce" }).Count -eq 6
+    subtest_delay_fact_count_is_6 = @($localRun.local_facts | Where-Object { $_.key -eq "execution.inter_subtest_delay_ms" }).Count -eq 6
+    image_load_subtests_are_ordered = (($imageEvents | ForEach-Object { $_.data.image.subtest_id }) -join ",") -eq `
+        "system_loadlibrary,application_local_loadlibrary,application_local_loadlibrary_ex,application_private_unsigned_native,managed_assembly_load_context"
+    image_load_intervals_respect_delay = $null -ne $imageDelayFact -and $imageEventDeltas.Count -eq 4 -and `
+        @($imageEventDeltas | Where-Object { $_ -lt [double]$imageDelayFact.value }).Count -eq 0
+    image_load_waiting_log_count_is_4 = $imageWaitingLogCount -eq 4
     all_manifest_expected_facts_present = $missingExpectedFacts.Count -eq 0
     tamper_memory_was_released = $null -ne $memoryReleaseFact -and $memoryReleaseFact.value -eq $true
     synthetic_compare_exit_code_is_0 = $comparisonExitCode -eq 0

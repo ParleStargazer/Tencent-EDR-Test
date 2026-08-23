@@ -52,7 +52,8 @@ internal static class Program
                 ?? throw new InvalidDataException("参数文件不是 JSON 对象。");
             var localSucceeded = true;
             string? firstError = null;
-            foreach (var (subtest, instanceIndex) in Subtests(operation).Select((value, index) => (value, index)))
+            var subtests = Subtests(operation);
+            foreach (var (subtest, instanceIndex) in subtests.Select((value, index) => (value, index)))
             {
                 var state = Execute(invocation, package, operation, subtest, instanceIndex, parameters);
                 states.Add(state);
@@ -98,6 +99,8 @@ internal static class Program
                     AddFacts(database, invocation, operation, state, localEvent.LocalEventId,
                         actor, supportingProgram, subtestSucceeded, null);
                 }
+                SubtestTiming.WaitBetween(invocation, instanceIndex, subtests.Count, subtest.Title,
+                    instanceIndex + 1 < subtests.Count ? subtests[instanceIndex + 1].Title : null);
             }
 
             AddCapabilityFacts(database, invocation, operation, states, localSucceeded);

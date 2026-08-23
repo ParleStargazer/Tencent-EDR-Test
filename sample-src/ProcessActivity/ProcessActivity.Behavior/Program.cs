@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Runtime.Loader;
 
 namespace ProcessActivity;
@@ -125,14 +126,15 @@ internal static class Program
                 false,
                 "sqlite3_libversion_number"),
         };
-        var interLoadDelay = options.GetInt("inter-load-delay-ms", 750, 0, 10_000);
+        var interLoadDelay = options.GetInt("inter-load-delay-ms", 1_000, 0, 10_000);
         for (var index = 0; index < plans.Length; index++)
         {
             var plan = plans[index];
             var loadPath = plan.DestinationPath ?? plan.SourcePath;
             if (plan.DestinationPath is not null) File.Copy(plan.SourcePath, plan.DestinationPath, overwrite: false);
             attempts.Add(LoadImage(plan, loadPath));
-            if (index + 1 < plans.Length && interLoadDelay > 0) Thread.Sleep(interLoadDelay);
+            if (index + 1 < plans.Length && interLoadDelay > 0)
+                WaitBetweenImageLoads(plan.DisplayNameZh, plans[index + 1].DisplayNameZh, index, plans.Length + 1, interLoadDelay);
         }
 
         var primary = attempts[0];
@@ -386,13 +388,6 @@ internal static class Program
         var goPath = Path.GetFullPath(options.Require("go"));
         Directory.CreateDirectory(Path.GetDirectoryName(goPath)!);
         File.WriteAllText(goPath, options.Require("nonce"));
-        var managedGo = options.Get("managed-go", string.Empty);
-        if (!string.IsNullOrWhiteSpace(managedGo))
-        {
-            var managedGoPath = Path.GetFullPath(managedGo);
-            Directory.CreateDirectory(Path.GetDirectoryName(managedGoPath)!);
-            File.WriteAllText(managedGoPath, options.Require("nonce"));
-        }
         return new BehaviorResult
         {
             Operation = "image_load",
@@ -639,6 +634,28 @@ internal static class Program
 
     private static string ByteSha256(byte[] value) => Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
     private static string Hex(IntPtr value) => $"0x{value.ToInt64():X}";
+
+    private static void WaitBetweenImageLoads(
+        string completedSubtest,
+        string nextSubtest,
+        int completedIndex,
+        int totalSubtests,
+        int delayMilliseconds)
+    {
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            schema_version = "1.0",
+            status = "SUBTEST_WAITING",
+            completed_subtest = completedSubtest,
+            next_subtest = nextSubtest,
+            completed_index = completedIndex + 1,
+            total_subtests = totalSubtests,
+            delay_ms = delayMilliseconds,
+            message = $"子测试“{completedSubtest}”已完成，等待 {delayMilliseconds} ms 后执行“{nextSubtest}”。",
+        }));
+        Console.Out.Flush();
+        Thread.Sleep(delayMilliseconds);
+    }
 
     private sealed record ImageLoadPlan(
         string SubtestId,

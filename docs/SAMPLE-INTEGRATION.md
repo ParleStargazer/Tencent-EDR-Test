@@ -61,6 +61,8 @@
 - 云端 expectation；
 - 本地要求、EDR 要求、候选列表和方法结论。
 
+执行子测试必须按声明顺序严格串行触发。框架级 `inter_subtest_delay_ms` 默认 1000 ms，可在 0–10000 ms 内调整；Controller 必须在上一子测试的行为结果、本地事件和事实已经保存后调用 `SubtestTiming.WaitBetween`，等待结束后才放行下一行为。Actor、Target 或 Helper 可以为了独立观察继续驻留，但驻留期间必须处于等待状态，不能提前触发下一子测试。实际间隔由 Runner 保存为 `execution.inter_subtest_delay_ms`；`SUBTEST_WAITING` Controller 日志应包含已完成方法、下一方法和等待毫秒数。能力清单的执行超时必须显式计入 `(子测试数 - 1) × 最大间隔`，不得由 Runner 无条件放宽所有能力的超时。
+
 EDR 检测方法可以共享同一组本地事实和时间锚点，不能为了界面分组伪造额外 Actor 或本地事件。两类方法都必须拥有独立的云端 expectation 和方法结论。
 
 BASELINE 使用 `method_selection: { strategy: best }` 时，能力结论默认采用通过情况最好的方法，并在界面明确提示。不得把多个方法的要求混成一组后共同失败。
@@ -305,7 +307,7 @@ node --test tests/contract/local-run-contract.test.mjs
 
 | 能力 | 程序实例 | 事件/清理 | 结论 |
 | --- | --- | --- | --- |
-| 加载镜像或动态库 | 一组 Actor/Target/Helper 执行多个加载动作 | 每个加载动作使用独立事件序号 | 无重复程序入库 |
+| 加载镜像或动态库 | 一组 Actor/Target/Helper 执行多个加载动作；原生四方法完成后才放行托管 Helper | 每个加载动作使用独立事件序号和统一方法间隔 | 无重复程序入库、无行为交叉 |
 | 五项文件能力 | TXT/JSON Actor 使用 0/1 | 事件和清理使用 1/2 | 符合规范 |
 | URL、DNS 等网络方法 | 各方法 Actor/Helper 使用相同方法索引 0/1 | 各角色分别唯一；事件和清理显式编号 | 符合规范 |
 | 三项注册表能力 | 隔离键/Run Key Actor 使用 0/1 | 事件和清理使用 1/2 | 符合规范 |
@@ -314,4 +316,4 @@ node --test tests/contract/local-run-contract.test.mjs
 | 三项哈希能力 | 每项只有一个文件行为 Actor；JSON/EXE 是能力间或单方法标签 | 单个本地事件和清理 | 无重复入库 |
 | 组策略修改 | 隔离策略/L2 Actor 使用 0/1 | 事件和清理使用 1/2 | 已修复默认序号冲突 |
 
-契约测试会检查这些 Controller 是否继续显式分配序号；框架测试会实际向 SQLite 写入同角色多程序和多事件，防止以后回归。
+契约测试会检查这些 Controller 是否继续显式分配序号并调用统一间隔；框架测试会实际向 SQLite 写入同角色多程序、多事件和 Runner 间隔事实，防止以后回归。
