@@ -1,10 +1,10 @@
 {
   "schema_version": "1.1",
   "capability_id": "win.file.delete",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "display_name_zh": "文件删除",
   "display_name_en": "File Deletion",
-  "description": "Actor 分别删除 Controller 预置的 TXT 与有效 JSON nonce 文件，Controller 独立校验删除前元数据与删除后不存在状态。",
+  "description": "保留即时删除 TXT、即时删除有效 JSON 两个方法，并新增有效 JSON 文件落地且刷盘后等待 5 秒再由独立 Actor 删除的方法；Controller 分别校验删除前元数据、等待时长与删除后不存在状态。",
   "platform": { "os": "windows", "minimum_version": "10.0.19041", "architectures": ["x64"] },
   "risk_level": "L0",
   "required_privilege": "standard_user",
@@ -21,6 +21,10 @@
     "file.txt.delete_succeeded", "file.txt.occurred_at_utc", "file.txt.actor_pid", "file.txt.actor_executable", "file.txt.extension", "file.txt.path",
     "file.txt.before.exists", "file.txt.before.size_bytes", "file.txt.before.md5", "file.txt.after.exists",
     "file.json.delete_succeeded", "file.json.occurred_at_utc", "file.json.actor_pid", "file.json.actor_executable", "file.json.extension", "file.json.path",
-    "file.json.before.exists", "file.json.before.size_bytes", "file.json.before.md5", "file.json.after.exists"
+    "file.json.before.exists", "file.json.before.size_bytes", "file.json.before.md5", "file.json.after.exists",
+    "file.json_delayed_5s.delete_succeeded", "file.json_delayed_5s.occurred_at_utc", "file.json_delayed_5s.actor_pid", "file.json_delayed_5s.actor_executable",
+    "file.json_delayed_5s.extension", "file.json_delayed_5s.path", "file.json_delayed_5s.landed_at_utc", "file.json_delayed_5s.requested_delay_ms",
+    "file.json_delayed_5s.settle_elapsed_ms", "file.json_delayed_5s.landed_to_delete_ms", "file.json_delayed_5s.before.exists",
+    "file.json_delayed_5s.before.size_bytes", "file.json_delayed_5s.before.md5", "file.json_delayed_5s.after.exists"
   ]
 }

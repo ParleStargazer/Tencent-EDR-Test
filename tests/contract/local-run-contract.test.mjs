@@ -179,6 +179,10 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
     new URL("mappings/tencent-edr-proc-events-v1.yaml", root),
     "utf8",
   );
+  const controller = await readFile(
+    new URL("sample-src/FileManipulation/FileManipulation.Controller/Program.cs", root),
+    "utf8",
+  );
   const capabilities = ["create", "open", "delete", "modify", "rename"];
 
   for (const operation of capabilities) {
@@ -190,7 +194,7 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
       "utf8",
     );
     assert.equal(manifest.capability_id, `win.file.${operation}`);
-    assert.equal(manifest.version, "0.2.0");
+    assert.equal(manifest.version, operation === "delete" ? "0.3.0" : "0.2.0");
     assert.equal(manifest.risk_level, "L0");
     assert.deepEqual(manifest.participants.map((item) => item.role), ["actor"]);
     assert.ok(manifest.expected_fact_keys.includes(`file.${operation}_succeeded`));
@@ -205,6 +209,21 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
     assert.match(baseline, new RegExp(`file-${operation}-json-event`));
     assert.match(mapping, new RegExp(`route_id: file-${operation}`));
   }
+
+  const deleteManifest = await readJson(
+    "sample-src/FileManipulation/manifests/win.file.delete/capability.json",
+  );
+  const deleteBaseline = await readFile(
+    new URL("baselines/windows/file_delete.yaml", root),
+    "utf8",
+  );
+  assert.ok(deleteManifest.expected_fact_keys.includes("file.json_delayed_5s.delete_succeeded"));
+  assert.ok(deleteManifest.expected_fact_keys.includes("file.json_delayed_5s.landed_to_delete_ms"));
+  assert.match(deleteBaseline, /method: \{ id: json_delayed_5s, title: JSON 文件 · 落地 5 秒后删除 \}/);
+  assert.match(deleteBaseline, /max_time_difference_ms: 15/);
+  assert.match(deleteBaseline, /reference\/edr_FileDelete\.json/);
+  assert.match(controller, /DelayedDeleteWaitMs = 5_000/);
+  assert.match(controller, /WaitForMinimumDelay\(DelayedDeleteWaitMs\)/);
 
   const imageLoadBaseline = await readFile(
     new URL("baselines/windows/process_image_load.yaml", root),
@@ -230,7 +249,7 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
   );
   assert.match(imageLoadBaseline, /method_selection:\s*\n\s*strategy: best/);
   assert.equal((imageLoadBaseline.match(/^\s+method: /gm) ?? []).length, 5);
-  assert.equal(imageLoadManifest.version, "0.4.0");
+  assert.equal(imageLoadManifest.version, "0.4.1");
   assert.ok(imageLoadManifest.expected_fact_keys.includes("process.image_load.application_private_unsigned_native.export_invoked"));
   assert.match(processBehavior, /application_private_unsigned_native/);
   assert.match(processBehavior, /sqlite3_libversion_number/);
@@ -1136,7 +1155,8 @@ test("既有多子测试 Controller 显式分配 SQLite 唯一序号并执行统
     readFile(new URL("web/app/live-control-plane.tsx", root), "utf8"),
   ]));
 
-  assert.match(file, /foreach \(var \(subtest, instanceIndex\) in Subtests\.Select/);
+  assert.match(file, /var subtests = SubtestsFor\(operation\)/);
+  assert.match(file, /foreach \(var \(subtest, instanceIndex\) in subtests\.Select/);
   assert.match(file, /InstanceIndex = state\.InstanceIndex/);
   assert.ok([...file.matchAll(/Sequence = state\.InstanceIndex \+ 1/g)].length >= 2);
   assert.match(file, /SubtestTiming\.WaitBetween/);

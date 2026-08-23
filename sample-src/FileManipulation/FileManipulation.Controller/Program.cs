@@ -9,7 +9,10 @@ namespace FileManipulation;
 
 internal static class Program
 {
-    private static readonly string[] Subtests = ["txt", "json"];
+    private const string DelayedDeleteSubtest = "json_delayed_5s";
+    private const int DelayedDeleteWaitMs = 5_000;
+    private static readonly string[] DefaultSubtests = ["txt", "json"];
+    private static readonly string[] DeleteSubtests = ["txt", "json", DelayedDeleteSubtest];
 
     private static readonly IReadOnlyDictionary<string, string> Operations = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -41,7 +44,8 @@ internal static class Program
                 ?? throw new InvalidDataException("参数文件不是 JSON 对象。");
             var localSucceeded = true;
             string? firstError = null;
-            foreach (var (subtest, instanceIndex) in Subtests.Select((value, index) => (value, index)))
+            var subtests = SubtestsFor(operation);
+            foreach (var (subtest, instanceIndex) in subtests.Select((value, index) => (value, index)))
             {
                 var state = Execute(invocation, package, operation, subtest, instanceIndex, parameters);
                 states.Add(state);
@@ -57,8 +61,8 @@ internal static class Program
                 var localEvent = CreateEvent(invocation, operation, stopwatch, state, actor, evidence.ArtifactId);
                 database.AddEvent(localEvent);
                 AddFacts(database, invocation, operation, state, localEvent.LocalEventId, actor, subtestSucceeded);
-                SubtestTiming.WaitBetween(invocation, instanceIndex, Subtests.Length, subtest,
-                    instanceIndex + 1 < Subtests.Length ? Subtests[instanceIndex + 1] : null);
+                SubtestTiming.WaitBetween(invocation, instanceIndex, subtests.Count, subtest,
+                    instanceIndex + 1 < subtests.Count ? subtests[instanceIndex + 1] : null);
             }
 
             database.AddFact(new LocalFactObservation
@@ -142,9 +146,11 @@ internal static class Program
         var actorDefinition = package.Manifest.Participants.Single(participant => participant.Role == "actor");
         var actorPath = package.ResolveProgram(actorDefinition.Executable);
         var tag = new string(invocation.Nonce.Where(char.IsLetterOrDigit).Take(12).ToArray()).ToLowerInvariant();
-        var path = Path.Combine(invocation.WorkDir, $"edrtest_{tag}_file_{operation}.{subtest}");
+        var extension = ExtensionForSubtest(subtest);
+        var methodSuffix = subtest == DelayedDeleteSubtest ? "_delayed_5s" : string.Empty;
+        var path = Path.Combine(invocation.WorkDir, $"edrtest_{tag}_file_{operation}{methodSuffix}.{extension}");
         var destination = operation == "rename"
-            ? Path.Combine(invocation.WorkDir, $"edrtest_{tag}_file_renamed.{subtest}")
+            ? Path.Combine(invocation.WorkDir, $"edrtest_{tag}_file_renamed.{extension}")
             : null;
         var resultPath = Path.Combine(invocation.WorkDir, $"behavior-result-{subtest}.json");
         Directory.CreateDirectory(invocation.WorkDir);
@@ -156,14 +162,21 @@ internal static class Program
 
         var payloadSize = parameters["payload_size"]?.GetValue<int>() ?? 8_192;
         var holdMs = parameters["post_operation_hold_ms"]?.GetValue<int>() ?? 1_500;
+        DateTimeOffset? landedAtUtc = null;
+        long? settleElapsedMs = null;
         if (operation != "create")
         {
-            File.WriteAllBytes(path, Payload(invocation.Nonce, "seed", payloadSize, subtest));
+            File.WriteAllBytes(path, Payload(invocation.Nonce, "seed", payloadSize, extension));
             using (var seed = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
             {
                 seed.Flush(flushToDisk: true);
             }
-            if (subtest == "json" && !IsValidJson(path)) throw new InvalidDataException("Controller 生成的 JSON 预置文件无效。");
+            if (extension == "json" && !IsValidJson(path)) throw new InvalidDataException("Controller 生成的 JSON 预置文件无效。");
+            if (subtest == DelayedDeleteSubtest)
+            {
+                landedAtUtc = DateTimeOffset.UtcNow;
+                settleElapsedMs = WaitForMinimumDelay(DelayedDeleteWaitMs);
+            }
         }
 
         var arguments = new List<string>
@@ -188,7 +201,34 @@ internal static class Program
             process.Kill(entireProcessTree: true);
             throw new TimeoutException($"等待文件行为 Actor 退出超时：PID {process.Id}");
         }
-        return new ExecutionState(subtest, instanceIndex, actorPath, [.. arguments], process, resultPath, path, destination, result);
+        return new ExecutionState(
+            subtest,
+            extension,
+            instanceIndex,
+            actorPath,
+            [.. arguments],
+            process,
+            resultPath,
+            path,
+            destination,
+            result,
+            landedAtUtc,
+            settleElapsedMs);
+    }
+
+    private static IReadOnlyList<string> SubtestsFor(string operation) => operation == "delete" ? DeleteSubtests : DefaultSubtests;
+
+    private static string ExtensionForSubtest(string subtest) => subtest == DelayedDeleteSubtest ? "json" : subtest;
+
+    private static long WaitForMinimumDelay(int delayMs)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.ElapsedMilliseconds < delayMs)
+        {
+            Thread.Sleep((int)Math.Max(1, delayMs - stopwatch.ElapsedMilliseconds));
+        }
+        stopwatch.Stop();
+        return stopwatch.ElapsedMilliseconds;
     }
 
     private static ProgramObservation CreateProgram(ControllerInvocation invocation, ExecutionState state)
@@ -258,7 +298,7 @@ internal static class Program
             ["kind"] = "file",
             ["operation"] = operation,
             ["subtest"] = state.Subtest,
-            ["file_extension"] = "." + state.Subtest,
+            ["file_extension"] = "." + state.Extension,
             ["actor"] = ProcessReference(actor),
             ["before"] = FileState(result.Before),
             ["after"] = FileState(result.After),
@@ -270,6 +310,16 @@ internal static class Program
                 ["message"] = result.Error,
             },
         };
+        if (state.LandedAtUtc is { } landedAtUtc)
+        {
+            data["settle"] = new JsonObject
+            {
+                ["landed_at_utc"] = Values.Utc(landedAtUtc),
+                ["requested_delay_ms"] = DelayedDeleteWaitMs,
+                ["elapsed_ms"] = state.SettleElapsedMs,
+                ["landed_to_delete_ms"] = (long)Math.Round((result.OccurredAtUtc - landedAtUtc).TotalMilliseconds),
+            };
+        }
         if (operation == "rename")
         {
             data["source_path"] = result.SourcePath;
@@ -339,9 +389,17 @@ internal static class Program
             [$"{prefix}.actor_pid"] = JsonValue.Create(actor.Pid),
             [$"{prefix}.actor_executable"] = JsonValue.Create(actor.ExecutablePath),
             [$"{prefix}.actor_command_line"] = JsonValue.Create(actor.CommandLine),
-            [$"{prefix}.extension"] = JsonValue.Create("." + state.Subtest),
+            [$"{prefix}.extension"] = JsonValue.Create("." + state.Extension),
             [$"{prefix}.nonce"] = JsonValue.Create(invocation.Nonce),
         };
+        if (state.LandedAtUtc is { } landedAtUtc)
+        {
+            values[$"{prefix}.landed_at_utc"] = JsonValue.Create(Values.Utc(landedAtUtc));
+            values[$"{prefix}.requested_delay_ms"] = JsonValue.Create(DelayedDeleteWaitMs);
+            values[$"{prefix}.settle_elapsed_ms"] = JsonValue.Create(state.SettleElapsedMs);
+            values[$"{prefix}.landed_to_delete_ms"] = JsonValue.Create(
+                (long)Math.Round((result.OccurredAtUtc - landedAtUtc).TotalMilliseconds));
+        }
         if (operation == "rename")
         {
             values[$"{prefix}.source_path"] = JsonValue.Create(result.SourcePath);
@@ -414,7 +472,11 @@ internal static class Program
             "open" => result.Before.Exists && currentSource.Exists && ValidSubtestContent(state, currentSource.Path) && result.BytesRead > 0
                 && result.BytesWritten == result.BytesRead && result.Before.Sha256 == result.After.Sha256
                 && currentSource.Sha256 == result.After.Sha256,
-            "delete" => result.Before.Exists && !currentSource.Exists,
+            "delete" => result.Before.Exists && !currentSource.Exists
+                && (state.Subtest != DelayedDeleteSubtest
+                    || state.SettleElapsedMs >= DelayedDeleteWaitMs
+                    && state.LandedAtUtc is { } landedAtUtc
+                    && result.OccurredAtUtc >= landedAtUtc.AddMilliseconds(DelayedDeleteWaitMs)),
             "modify" => result.Before.Exists && currentSource.Exists && ValidSubtestContent(state, currentSource.Path) && result.Before.Sha256 != result.After.Sha256
                 && currentSource.SizeBytes == result.BytesWritten && currentSource.Sha256 == result.After.Sha256,
             "rename" => result.Before.Exists && !currentSource.Exists && currentDestination?.Exists == true
@@ -424,7 +486,7 @@ internal static class Program
         };
     }
 
-    private static bool ValidSubtestContent(ExecutionState state, string path) => state.Subtest != "json" || IsValidJson(path);
+    private static bool ValidSubtestContent(ExecutionState state, string path) => state.Extension != "json" || IsValidJson(path);
 
     private static bool IsValidJson(string path)
     {
@@ -659,6 +721,7 @@ internal static class Program
     {
         public ExecutionState(
             string subtest,
+            string extension,
             int instanceIndex,
             string actorPath,
             IReadOnlyList<string> actorArguments,
@@ -666,9 +729,12 @@ internal static class Program
             string resultPath,
             string path,
             string? destination,
-            BehaviorResult result)
+            BehaviorResult result,
+            DateTimeOffset? landedAtUtc,
+            long? settleElapsedMs)
         {
             Subtest = subtest;
+            Extension = extension;
             InstanceIndex = instanceIndex;
             ActorPath = actorPath;
             ActorArguments = actorArguments;
@@ -677,9 +743,12 @@ internal static class Program
             Path = path;
             Destination = destination;
             Result = result;
+            LandedAtUtc = landedAtUtc;
+            SettleElapsedMs = settleElapsedMs;
         }
 
         public string Subtest { get; }
+        public string Extension { get; }
         public int InstanceIndex { get; }
         public string ActorPath { get; }
         public IReadOnlyList<string> ActorArguments { get; }
@@ -688,6 +757,8 @@ internal static class Program
         public string Path { get; }
         public string? Destination { get; }
         public BehaviorResult Result { get; }
+        public DateTimeOffset? LandedAtUtc { get; }
+        public long? SettleElapsedMs { get; }
         public void Dispose() => Actor.Dispose();
     }
 }

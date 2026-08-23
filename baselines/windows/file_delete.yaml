@@ -1,8 +1,8 @@
 schema_version: "1.1"
 baseline_id: win.file.delete
-version: "0.2.1"
+version: "0.3.0"
 title: Windows 文件删除遥测
-description: 同轮删除 TXT 与有效 JSON 文件；本地验证两者，云端分别判定并采用结果最好的文件类型形成能力结论。
+description: 同轮执行即时删除 TXT、即时删除有效 JSON、有效 JSON 落地并等待 5 秒后删除三种方法；本地逐项验证，云端分别判定并采用结果最好的方法形成能力结论。
 platform:
   os: windows
   versions: [windows-10, windows-11, windows-server-2019, windows-server-2022]
@@ -10,7 +10,7 @@ platform:
 risk_level: L0
 capability:
   id: win.file.delete
-  version: "0.2.0"
+  version: "0.3.0"
   parameters: { payload_size: 8192, post_operation_hold_ms: 1500 }
 local_requirements:
   - { field: facts.file.delete_succeeded, operator: equals, expected: true }
@@ -22,6 +22,16 @@ local_requirements:
   - { field: facts.file.json.after.exists, operator: equals, expected: false }
   - { field: facts.file.json.before.md5, operator: present }
   - { field: facts.file.json.actor_pid, operator: present }
+  - { field: facts.file.json_delayed_5s.delete_succeeded, operator: equals, expected: true }
+  - { field: facts.file.json_delayed_5s.extension, operator: equals, expected: ".json" }
+  - { field: facts.file.json_delayed_5s.path, operator: present }
+  - { field: facts.file.json_delayed_5s.landed_at_utc, operator: present }
+  - { field: facts.file.json_delayed_5s.requested_delay_ms, operator: equals, expected: 5000 }
+  - { field: facts.file.json_delayed_5s.settle_elapsed_ms, operator: range, expected: { min: 5000, max: 30000 } }
+  - { field: facts.file.json_delayed_5s.landed_to_delete_ms, operator: range, expected: { min: 5000, max: 30000 } }
+  - { field: facts.file.json_delayed_5s.before.exists, operator: equals, expected: true }
+  - { field: facts.file.json_delayed_5s.after.exists, operator: equals, expected: false }
+  - { field: facts.file.json_delayed_5s.actor_pid, operator: present }
 correlation:
   time_before_seconds: 60
   time_after_seconds: 300
@@ -66,9 +76,26 @@ cloud_expectations:
       - { field: file.size, operator: equals, expected_from_local: facts.file.json.before.size_bytes, severity: required }
       - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.json.before.md5, severity: recommended, normalizers: [lowercase] }
       - { field: user.name, operator: present, severity: recommended }
+  - id: file-delete-json-delayed-5s-event
+    method: { id: json_delayed_5s, title: JSON 文件 · 落地 5 秒后删除 }
+    event_type: file
+    event_actions: [delete]
+    cardinality: { min: 1, max: 5 }
+    correlation:
+      time_from_local: facts.file.json_delayed_5s.occurred_at_utc
+      anchors:
+        - { local_field: facts.file.json_delayed_5s.path, cloud_field: file.path, strength: strong, normalizers: [windows_path] }
+        - { local_field: facts.file.json_delayed_5s.actor_pid, cloud_field: process.pid, strength: medium }
+    assertions:
+      - { field: file.path, operator: equals, expected_from_local: facts.file.json_delayed_5s.path, severity: required, normalizers: [windows_path] }
+      - { field: process.pid, operator: equals, expected_from_local: facts.file.json_delayed_5s.actor_pid, severity: required }
+      - { field: process.executable, operator: equals, expected_from_local: facts.file.json_delayed_5s.actor_executable, severity: required, normalizers: [windows_path] }
+      - { field: file.size, operator: present, severity: recommended }
+      - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.json_delayed_5s.before.md5, severity: recommended, normalizers: [lowercase] }
+      - { field: user.name, operator: present, severity: recommended }
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: TXT 与 JSON 子项分别形成方法结果，能力结论默认采用通过情况更好的文件类型。
-  references: [Tencent EDR FileEvents / FileDelete]
+  change_reason: 保留原有 TXT/JSON 即时删除方法，新增 JSON 文件刷盘落地后至少等待 5 秒再由独立 Actor 删除的方法。reference/edr_FileDelete.json 共 1187 条记录均为 FileDelete，文件路径、父进程路径及 PID 全部存在，而有效文件大小与 MD5 分别仅约占 22% 和 27%；因此新增方法以 15 ms 时间、完整路径、Actor 路径和 PID 为强关联，大小及 MD5 仅作推荐证据。
+  references: [reference/edr_FileDelete.json, reference/EDR日志-字段表.txt, Tencent EDR FileEvents / FileDelete]
