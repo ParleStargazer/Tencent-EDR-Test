@@ -9,6 +9,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$ewdkFullPath = [IO.Path]::GetFullPath($EwdkRoot)
+$ewdkSetupPath = [IO.Path]::Combine($ewdkFullPath, "BuildEnv", "SetupBuildEnv.cmd")
+$ewdkVersionPath = [IO.Path]::Combine($ewdkFullPath, "Version")
 if ([string]::IsNullOrWhiteSpace($CertificatePath)) {
     $CertificatePath = Join-Path $repositoryRoot "drivers\cert\EdrTestDriverTest.cer"
 }
@@ -54,10 +57,10 @@ $result = [ordered]@{
     administrator = $isAdministrator
     testsigning_enabled = $testSigning
     secure_boot_enabled = $secureBoot
-    ewdk_root = [IO.Path]::GetFullPath($EwdkRoot)
-    ewdk_setup_exists = Test-Path -LiteralPath (Join-Path $EwdkRoot "BuildEnv\SetupBuildEnv.cmd")
-    ewdk_version = if (Test-Path -LiteralPath (Join-Path $EwdkRoot "Version")) {
-        (Get-Content -LiteralPath (Join-Path $EwdkRoot "Version") -Raw).Trim()
+    ewdk_root = $ewdkFullPath
+    ewdk_setup_exists = Test-Path -LiteralPath $ewdkSetupPath
+    ewdk_version = if (Test-Path -LiteralPath $ewdkVersionPath) {
+        (Get-Content -LiteralPath $ewdkVersionPath -Raw).Trim()
     } else { $null }
     certificate_path = [IO.Path]::GetFullPath($CertificatePath)
     certificate_thumbprint = $thumbprint

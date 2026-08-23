@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("../../", import.meta.url);
@@ -71,13 +71,27 @@ test("驱动三项能力具备 L3 清单、本地绝对基准、直接映射与�
 
 test("平台启动检测驱动环境，证书导入需确认且不修改 testsigning", async () => {
   const start = await readText("scripts/Start-EdrTest.ps1");
+  const buildSamples = await readText("scripts/Build-DriverActivitySamples.ps1");
+  const theory = await readText("scripts/Test-DriverActivitySamples.ps1");
   const environment = await readText("script/driver/Test-DriverEnvironment.ps1");
   const certificate = await readText("script/driver/New-DriverTestCertificate.ps1");
   const build = await readText("script/driver/Build-DriverPackage.ps1");
+  const metadata = await readJson("drivers/EdrTestDriver/prebuilt/x64/driver-package.json");
+  const [driverFile, publicCertificate] = await Promise.all([
+    stat(new URL("drivers/EdrTestDriver/prebuilt/x64/EdrTestDriver.sys", root)),
+    stat(new URL("drivers/cert/EdrTestDriverTest.cer", root)),
+  ]);
 
   assert.match(start, /DriverCertificateImportMode = "Prompt"/);
+  assert.match(start, /EwdkRoot = "F:\\EWDK"/);
   assert.match(start, /WindowsBuiltInRole\]::Administrator/);
   assert.match(start, /Test-CurrentBootTestSigning/);
+  assert.match(start, /Resolve-DriverTestPackage/);
+  assert.match(start, /repository-prebuilt/);
+  assert.match(start, /ewdk-fallback/);
+  assert.ok(start.indexOf("repository-prebuilt") < start.indexOf("ewdk-fallback"));
+  assert.match(start, /Remove-DriverActivitySamplePackages/);
+  assert.match(start, /平台其他能力继续启动/);
   assert.match(start, /是否导入测试用证书到 LocalMachine\\Root 和 LocalMachine\\TrustedPublisher/);
   assert.match(start, /Import-DriverTestCertificate/);
   assert.match(start, /certificateMatchesPackage/);
@@ -90,4 +104,14 @@ test("平台启动检测驱动环境，证书导入需确认且不修改 testsig
   assert.match(build, /\[string\]\$EwdkRoot = "F:\\EWDK"/);
   assert.match(build, /certificate_thumbprint/);
   assert.match(build, /private_key_in_package = \$false/);
+  assert.match(buildSamples, /Get-AuthenticodeSignature/);
+  assert.match(buildSamples, /DriverCertificatePath/);
+  assert.match(buildSamples, /拒绝使用未签名的 SYS\/CAT/);
+  assert.match(theory, /-OutputPath \$theoryPackage/);
+  assert.doesNotMatch(theory, /-UpdatePrebuilt/);
+  assert.equal(metadata.signature_valid, true);
+  assert.equal(metadata.private_key_in_package, false);
+  assert.match(metadata.certificate_thumbprint, /^[0-9A-F]{40}$/);
+  assert.ok(driverFile.size > 0);
+  assert.ok(publicCertificate.size > 0);
 });

@@ -9,6 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $prebuilt = Join-Path $repositoryRoot "drivers\EdrTestDriver\prebuilt\x64"
+$theoryPackage = Join-Path $repositoryRoot "artifacts\driver-package-theory\x64\$Configuration"
 
 $bcdBefore = & (Join-Path $env:SystemRoot "System32\bcdedit.exe") /enum "{current}" 2>&1
 $trustedBefore = @(
@@ -21,8 +22,10 @@ $trustedBefore = @(
 
 if (-not $SkipNativeRebuild) {
     & (Join-Path $repositoryRoot "script\driver\Build-DriverPackage.ps1") `
-        -EwdkRoot $EwdkRoot -Configuration $Configuration -UpdatePrebuilt
+        -EwdkRoot $EwdkRoot -Configuration $Configuration -OutputPath $theoryPackage
     if ($LASTEXITCODE -ne 0) { throw "EWDK 原生驱动理论构建失败。" }
+    $theoryMetadata = Get-Content (Join-Path $theoryPackage "driver-package.json") -Raw | ConvertFrom-Json
+    if ($theoryMetadata.signature_valid) { throw "无证书理论构建不应声明为已签名包。" }
 }
 
 & (Join-Path $PSScriptRoot "Build-DriverActivitySamples.ps1") `
@@ -33,6 +36,9 @@ $metadata = Get-Content (Join-Path $prebuilt "driver-package.json") -Raw | Conve
 $driverHash = (Get-FileHash (Join-Path $prebuilt "EdrTestDriver.sys") -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($driverHash -ne $metadata.sha256) { throw "理论包 SHA256 与元数据不一致。" }
 if ($metadata.private_key_in_package) { throw "驱动包元数据错误地声明包含私钥。" }
+if ($metadata.signature_valid -ne $true) { throw "仓库预构建驱动包必须已签名。" }
+$publicCertificate = Join-Path $repositoryRoot "drivers\cert\EdrTestDriverTest.cer"
+if (-not (Test-Path -LiteralPath $publicCertificate -PathType Leaf)) { throw "仓库缺少公开测试证书。" }
 
 $driverSource = Get-Content (Join-Path $repositoryRoot "drivers\EdrTestDriver\src\driver.c") -Raw
 if ($driverSource -notmatch 'DriverEntry' -or $driverSource -notmatch 'DriverUnload') {

@@ -6,6 +6,7 @@ param(
     [int]$WebPort = 3000,
     [switch]$SkipBuild,
     [switch]$NoBrowser,
+    [string]$EwdkRoot = "F:\EWDK",
     [ValidateSet("Prompt", "Always", "Never")]
     [string]$DriverCertificateImportMode = "Prompt"
 )
@@ -140,10 +141,142 @@ function Import-DriverTestCertificate(
     }
 }
 
-function Test-DriverEnvironmentAtStartup([bool]$IsAdministrator, [string]$ImportMode) {
+function Get-DriverPackageValidation([string]$PackagePath, [string]$CertificatePath) {
+    $required = @("EdrTestDriver.sys", "EdrTestDriver.inf", "EdrTestDriver.cat", "driver-package.json")
+    $missing = @($required | Where-Object {
+        -not (Test-Path -LiteralPath (Join-Path $PackagePath $_) -PathType Leaf)
+    })
+    if ($missing.Count -gt 0) {
+        return [pscustomobject]@{ Available = $false; Reason = "缺少文件：$($missing -join ', ')" }
+    }
+    if (-not (Test-Path -LiteralPath $CertificatePath -PathType Leaf)) {
+        return [pscustomobject]@{ Available = $false; Reason = "缺少仅含公钥的 EdrTestDriverTest.cer" }
+    }
+
+    $certificate = $null
+    try {
+        $metadata = Get-Content -LiteralPath (Join-Path $PackagePath "driver-package.json") -Raw |
+            ConvertFrom-Json
+        $driverPath = Join-Path $PackagePath "EdrTestDriver.sys"
+        $catalogPath = Join-Path $PackagePath "EdrTestDriver.cat"
+        $actualHash = (Get-FileHash -LiteralPath $driverPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($metadata.signature_valid -ne $true) {
+            return [pscustomobject]@{ Available = $false; Reason = "driver-package.json 未声明签名包" }
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$metadata.sha256) -or $actualHash -ne $metadata.sha256) {
+            return [pscustomobject]@{ Available = $false; Reason = "SYS 的 SHA256 与元数据不一致" }
+        }
+        $expectedThumbprint = ([string]$metadata.certificate_thumbprint).Replace(" ", "").ToUpperInvariant()
+        if ([string]::IsNullOrWhiteSpace($expectedThumbprint)) {
+            return [pscustomobject]@{ Available = $false; Reason = "元数据缺少签名证书指纹" }
+        }
+
+        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($CertificatePath)
+        if ($certificate.Thumbprint -ne $expectedThumbprint) {
+            return [pscustomobject]@{ Available = $false; Reason = "公开证书指纹与元数据不一致" }
+        }
+        $driverSignature = Get-AuthenticodeSignature -LiteralPath $driverPath
+        $catalogSignature = Get-AuthenticodeSignature -LiteralPath $catalogPath
+        if ($null -eq $driverSignature.SignerCertificate `
+            -or $driverSignature.SignerCertificate.Thumbprint -ne $expectedThumbprint) {
+            return [pscustomobject]@{ Available = $false; Reason = "SYS 未包含预期的嵌入式签名" }
+        }
+        if ($null -eq $catalogSignature.SignerCertificate `
+            -or $catalogSignature.SignerCertificate.Thumbprint -ne $expectedThumbprint) {
+            return [pscustomobject]@{ Available = $false; Reason = "CAT 未包含预期签名" }
+        }
+        return [pscustomobject]@{
+            Available = $true
+            Reason = $null
+            PackagePath = [IO.Path]::GetFullPath($PackagePath)
+            CertificatePath = [IO.Path]::GetFullPath($CertificatePath)
+            Thumbprint = $expectedThumbprint
+        }
+    } catch {
+        return [pscustomobject]@{ Available = $false; Reason = $_.Exception.Message }
+    } finally {
+        if ($null -ne $certificate) { $certificate.Dispose() }
+    }
+}
+
+function Resolve-DriverTestPackage([string]$DevelopmentKitRoot) {
+    $repositoryPackage = Join-Path $repositoryRoot "drivers\EdrTestDriver\prebuilt\x64"
+    $repositoryCertificate = Join-Path $repositoryRoot "drivers\cert\EdrTestDriverTest.cer"
+    $repositoryResult = Get-DriverPackageValidation $repositoryPackage $repositoryCertificate
+    if ($repositoryResult.Available) {
+        $repositoryResult | Add-Member -NotePropertyName Source -NotePropertyValue "repository-prebuilt"
+        Write-Host "[驱动包] 使用仓库预构建的已签名 SYS/CAT 和公开证书，无需 EWDK。" -ForegroundColor Green
+        return $repositoryResult
+    }
+
+    Write-Warning "仓库预构建驱动包不可用：$($repositoryResult.Reason)；开始探测 EWDK。"
+    $developmentKitFullPath = [IO.Path]::GetFullPath($DevelopmentKitRoot)
+    $setupPath = [IO.Path]::Combine($developmentKitFullPath, "BuildEnv", "SetupBuildEnv.cmd")
+    if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) {
+        return [pscustomobject]@{
+            Available = $false
+            Source = "unavailable"
+            Reason = "仓库预构建包不可用，且 $DevelopmentKitRoot 不是可用的 EWDK 环境"
+        }
+    }
+
+    $fallbackRoot = Join-Path $stateRoot "driver-fallback"
+    $fallbackCertificate = Join-Path $fallbackRoot "cert\EdrTestDriverTest.cer"
+    $fallbackPackage = Join-Path $fallbackRoot "package"
+    try {
+        Write-Host "[驱动包] 检测到 EWDK，尝试在本地运行目录构建签名驱动包…" -ForegroundColor Cyan
+        $certificate = & (Join-Path $repositoryRoot "script\driver\New-DriverTestCertificate.ps1") `
+            -OutputCer $fallbackCertificate -Confirm:$false
+        if ($null -eq $certificate -or [string]::IsNullOrWhiteSpace([string]$certificate.Thumbprint)) {
+            throw "未能取得带不可导出私钥的测试代码签名证书。"
+        }
+        & (Join-Path $repositoryRoot "script\driver\Build-DriverPackage.ps1") `
+            -EwdkRoot $DevelopmentKitRoot -Configuration Release `
+            -CertificateThumbprint $certificate.Thumbprint -OutputPath $fallbackPackage
+        if ($LASTEXITCODE -ne 0) { throw "EWDK 驱动包构建失败，退出码 $LASTEXITCODE。" }
+        $fallbackResult = Get-DriverPackageValidation $fallbackPackage $fallbackCertificate
+        if (-not $fallbackResult.Available) { throw $fallbackResult.Reason }
+        $fallbackResult | Add-Member -NotePropertyName Source -NotePropertyValue "ewdk-fallback"
+        Write-Host "[驱动包] EWDK 后备构建成功。" -ForegroundColor Green
+        return $fallbackResult
+    } catch {
+        return [pscustomobject]@{
+            Available = $false
+            Source = "unavailable"
+            Reason = "仓库预构建包不可用，EWDK 后备构建也失败：$($_.Exception.Message)"
+        }
+    }
+}
+
+function Remove-DriverActivitySamplePackages {
+    $samplesRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot "samples"))
+    foreach ($capabilityId in @("win.driver.load", "win.driver.modify", "win.driver.unload")) {
+        $target = [IO.Path]::GetFullPath((Join-Path $samplesRoot $capabilityId))
+        $relative = [IO.Path]::GetRelativePath($samplesRoot, $target)
+        if ($relative.StartsWith("..", [StringComparison]::Ordinal) -or [IO.Path]::IsPathRooted($relative)) {
+            throw "拒绝清理 samples 根目录之外的驱动能力包：$target"
+        }
+        if (Test-Path -LiteralPath $target -PathType Container) {
+            Remove-Item -LiteralPath $target -Recurse -Force
+        }
+    }
+}
+
+function Test-DriverEnvironmentAtStartup(
+    [bool]$IsAdministrator,
+    [string]$ImportMode,
+    [psobject]$DriverPackage
+) {
     $testSigningEnabled = Test-CurrentBootTestSigning
-    $metadataPath = Join-Path $repositoryRoot "drivers\EdrTestDriver\prebuilt\x64\driver-package.json"
-    $certificatePath = Join-Path $repositoryRoot "drivers\cert\EdrTestDriverTest.cer"
+    if (-not $DriverPackage.Available) {
+        Write-Warning "$($DriverPackage.Reason)。三项驱动能力将从本次能力包中跳过，平台其他能力不受影响。"
+        $administratorText = if ($IsAdministrator) { "是" } else { "否" }
+        $testSigningText = if ($testSigningEnabled) { "已开启" } else { "未开启" }
+        Write-Host "[驱动环境] 管理员=$administratorText；testsigning=$testSigningText；驱动包=不可用。" -ForegroundColor Cyan
+        return
+    }
+    $metadataPath = Join-Path $DriverPackage.PackagePath "driver-package.json"
+    $certificatePath = $DriverPackage.CertificatePath
     $metadata = $null
     try {
         if (Test-Path -LiteralPath $metadataPath -PathType Leaf) {
@@ -211,7 +344,7 @@ function Test-DriverEnvironmentAtStartup([bool]$IsAdministrator, [string]$Import
         $administratorText = if ($IsAdministrator) { "是" } else { "否" }
         $testSigningText = if ($testSigningEnabled) { "已开启" } else { "未开启" }
         $certificateText = if ($certificateTrusted) { "已导入" } else { "未就绪" }
-        Write-Host "[驱动环境] 管理员=$administratorText；testsigning=$testSigningText；测试证书=$certificateText。" -ForegroundColor Cyan
+        Write-Host "[驱动环境] 驱动包=$($DriverPackage.Source)；管理员=$administratorText；testsigning=$testSigningText；测试证书=$certificateText。" -ForegroundColor Cyan
         if (-not $testSigningEnabled) {
             Write-Warning "当前启动项未开启 testsigning。平台不会自动修改启动配置；不开启会导致驱动加载与卸载能力不可用。"
         }
@@ -260,7 +393,10 @@ try {
 if (-not $isAdministrator) {
     Write-Warning "当前平台未以管理员身份运行。建议关闭后使用管理员权限重新运行 scripts\Start-EdrTest.ps1；五项用户账号活动、三项服务活动、组策略修改、三项 WMI permanent subscription、虚拟磁盘挂载和三项驱动活动需要管理员权限，否则会被跳过或不可用。"
 }
-[void](Test-DriverEnvironmentAtStartup -IsAdministrator $isAdministrator -ImportMode $DriverCertificateImportMode)
+$driverPackage = Resolve-DriverTestPackage -DevelopmentKitRoot $EwdkRoot
+[void](Test-DriverEnvironmentAtStartup -IsAdministrator $isAdministrator `
+    -ImportMode $DriverCertificateImportMode -DriverPackage $driverPackage)
+if (-not $driverPackage.Available) { Remove-DriverActivitySamplePackages }
 
 [System.IO.Directory]::CreateDirectory($logRoot) | Out-Null
 
@@ -300,8 +436,17 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "WMI 活动能力样本构建失败。" }
     & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-VirtualDiskActivitySamples.ps1") -Configuration Release -SuppressPrivilegeWarning
     if ($LASTEXITCODE -ne 0) { throw "虚拟磁盘挂载能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-DriverActivitySamples.ps1") -Configuration Release -SuppressPrivilegeWarning
-    if ($LASTEXITCODE -ne 0) { throw "驱动活动能力样本构建失败。" }
+    if ($driverPackage.Available) {
+        & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-DriverActivitySamples.ps1") `
+            -Configuration Release -DriverPackagePath $driverPackage.PackagePath `
+            -DriverCertificatePath $driverPackage.CertificatePath -EwdkRoot $EwdkRoot -SuppressPrivilegeWarning
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "驱动活动能力包构建失败，将跳过驱动三项；平台其他能力继续启动。"
+            Remove-DriverActivitySamplePackages
+        }
+    } else {
+        Write-Warning "没有可用的仓库驱动包或 EWDK 后备包，已跳过驱动三项能力包。"
+    }
 }
 
 if (-not (Test-Path $runnerDll)) { throw "找不到 Runner：$runnerDll。请移除 -SkipBuild 后重试。" }

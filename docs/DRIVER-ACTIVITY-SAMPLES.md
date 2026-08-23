@@ -14,7 +14,7 @@
 
 ## 2. 最小驱动
 
-`drivers/EdrTestDriver` 是 x64 WDM 项目，默认由 `F:\EWDK` 构建。内核代码只包含：
+`drivers/EdrTestDriver` 是 x64 WDM 项目。仓库直接版本化保存已签名的 x64 SYS/CAT、INF、元数据和仅含公钥的 CER，普通测试机无需安装 EWDK。`F:\EWDK` 只用于维护预构建样本，或者在仓库样本缺失/损坏时作为启动流程的后备构建环境。内核代码只包含：
 
 - `DriverEntry` 返回成功并登记 `DriverUnload`；
 - `DriverUnload` 不执行资源操作；
@@ -65,7 +65,17 @@
 
 ## 6. 构建与启动环境检查
 
-开发机理论构建（不加载驱动）：
+普通测试机直接使用仓库预构建包：
+
+```text
+drivers\EdrTestDriver\prebuilt\x64\EdrTestDriver.sys
+drivers\EdrTestDriver\prebuilt\x64\EdrTestDriver.cat
+drivers\cert\EdrTestDriverTest.cer
+```
+
+平台启动顺序为：先验证仓库 SYS/CAT/元数据/公开证书及指纹；仓库包不可用时才探测 `-EwdkRoot`（默认 `F:\EWDK`）并在 `.edr-test\driver-fallback` 尝试本地签名构建；两条路径都失败时，只删除并跳过三个驱动能力包，平台其他能力继续启动。
+
+维护者的理论构建（不加载驱动，也不会覆盖仓库预构建包）：
 
 ```powershell
 pwsh -File .\script\driver\Build-DriverPackage.ps1 -EwdkRoot F:\EWDK -Configuration Release
@@ -73,7 +83,7 @@ pwsh -File .\scripts\Build-DriverActivitySamples.ps1 -Configuration Release
 pwsh -File .\scripts\Test-DriverActivitySamples.ps1 -EwdkRoot F:\EWDK
 ```
 
-生成测试证书和签名包不需要修改 BCD，但会在当前用户证书存储区创建不可导出的私钥：
+更新仓库测试证书和签名包不需要修改 BCD，但会在维护者当前用户证书存储区创建不可导出的私钥：
 
 ```powershell
 $cert = & .\script\driver\New-DriverTestCertificate.ps1

@@ -5,12 +5,12 @@
   "configuration": "Release",
   "ewdk_root": "F:\\EWDK",
   "wdk_version": "10.0.28000.0",
-  "built_at_utc": "2026-08-23T04:27:57.1037936+00:00",
-  "sha256": "2903f299f27d15e716b85450fe1f5b20b034011397ba349ce308d8a78abc886e",
-  "size_bytes": 5120,
-  "signature_valid": false,
-  "signer": null,
-  "certificate_thumbprint": null,
+  "built_at_utc": "2026-08-23T05:40:36.3816665+00:00",
+  "sha256": "627465e44528452c319e6dd622eb8ba0d971c2ff2683d77c1358bf2e2a58659b",
+  "size_bytes": 6928,
+  "signature_valid": true,
+  "signer": "CN=Tencent EDR Test Driver",
+  "certificate_thumbprint": "23D27473BE5FD8711578CD86F849FB6E88D5AF38",
   "requires_test_signing": true,
   "private_key_in_package": false
 }
