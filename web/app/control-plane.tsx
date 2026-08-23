@@ -147,9 +147,9 @@ export const capabilityCatalog: CapabilityCategory[] = [
     nameZh: "计划任务活动",
     nameEn: "Schedule Task Activity",
     capabilities: [
-      defineCapability("win.scheduled_task.create", "计划任务创建", "Scheduled Task Creation", "L1"),
-      defineCapability("win.scheduled_task.modify", "计划任务修改", "Scheduled Task Modification", "L1"),
-      defineCapability("win.scheduled_task.delete", "计划任务删除", "Scheduled Task Deletion", "L1"),
+      defineCapability("win.scheduled_task.create", "计划任务创建", "Scheduled Task Creation", "L2"),
+      defineCapability("win.scheduled_task.modify", "计划任务修改", "Scheduled Task Modification", "L2"),
+      defineCapability("win.scheduled_task.delete", "计划任务删除", "Scheduled Task Deletion", "L2"),
     ],
   },
   {

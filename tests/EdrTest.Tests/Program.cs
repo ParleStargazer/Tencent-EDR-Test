@@ -1141,33 +1141,34 @@ public static class Program
             local["capabilities"]!.AsArray().Add(new JsonObject
             {
                 ["case_run_id"] = caseRunId, ["capability_id"] = $"win.scheduled_task.{definition.Operation}",
-                ["capability_version"] = "0.2.0", ["display_name_zh"] = definition.Operation,
+                ["capability_version"] = "0.3.0", ["display_name_zh"] = definition.Operation,
                 ["display_name_en"] = definition.Operation, ["status"] = "LOCAL_PASS",
                 ["nonce"] = $"scheduled-task-fixture-{index}", ["started_at_utc"] = Values.Utc(capabilityTime.AddSeconds(-1)),
                 ["ended_at_utc"] = Values.Utc(capabilityTime.AddSeconds(3)),
             });
-            var methods = new[] { "task_scheduler_com", "schtasks_cli" };
+            var auditMethod = definition.Operation == "modify" ? "security_audit_update" : $"security_audit_{definition.Operation}";
+            var methods = new[] { "task_scheduler_com", auditMethod };
             foreach (var (method, methodIndex) in methods.Select((value, index) => (value, index)))
             {
                 var eventId = Ids.NewUuid7();
                 var occurredAt = capabilityTime.AddSeconds(methodIndex);
-                var methodSuffix = method == "schtasks_cli" ? "cli" : "com";
+                var isSecurityAudit = method != "task_scheduler_com";
+                var methodSuffix = isSecurityAudit ? "audit" : "rpc";
                 var taskPath = $@"\EdrTest_fixture{index}_{definition.Operation}_{methodSuffix}";
                 var marker = $"EDRTEST|scheduled-task-fixture-{index}|SCHEDULED_TASK|{method}|{definition.Operation.ToUpperInvariant()}";
                 var beforeMarker = $"EDRTEST|scheduled-task-fixture-{index}|SCHEDULED_TASK|{method}|BEFORE";
                 var actorPid = 9300 + index * 10 + methodIndex;
-                var actorPath = method == "schtasks_cli"
+                var actorPath = isSecurityAudit
                     ? @"C:\Windows\System32\schtasks.exe"
                     : $@"C:\EDR-Test\ScheduledTask{definition.Operation}.Actor.exe";
                 var beforeExists = definition.Operation != "create";
                 var afterExists = definition.Operation != "delete";
-                var afterEnabled = method == "schtasks_cli" && definition.Operation is "create" or "modify";
+                var afterEnabled = isSecurityAudit && definition.Operation is "create" or "modify";
                 var prefix = $"scheduled_task.{method}";
                 var afterArguments = $"/d /c rem EDRTEST_fixture{index}_{methodSuffix}";
                 var beforeArguments = "/d /c exit 0";
-                var cliStateOnlyModify = definition.Operation == "modify" && method == "schtasks_cli";
-                var cloudArguments = definition.Operation == "delete" || cliStateOnlyModify ? beforeArguments : afterArguments;
-                var cloudMarker = cliStateOnlyModify ? beforeMarker : marker;
+                var cloudArguments = definition.Operation == "delete" ? beforeArguments : afterArguments;
+                var cloudMarker = definition.Operation == "delete" ? beforeMarker : marker;
                 var taskContent = $"<Task><RegistrationInfo><Description>{cloudMarker}</Description></RegistrationInfo>"
                     + $"<Actions><Exec><Arguments>{cloudArguments}</Arguments></Exec></Actions></Task>";
                 local["local_events"]!.AsArray().Add(new JsonObject
@@ -1182,6 +1183,7 @@ public static class Program
                     [$"{prefix}.{definition.Operation}_succeeded"] = true,
                     [$"{prefix}.occurred_at_utc"] = Values.Utc(occurredAt.AddMilliseconds(-1)),
                     [$"{prefix}.completed_at_utc"] = Values.Utc(occurredAt),
+                    [$"{prefix}.correlation_at_utc"] = Values.Utc(occurredAt),
                     [$"{prefix}.task_path"] = taskPath, [$"{prefix}.marker"] = marker,
                     [$"{prefix}.actor_pid"] = actorPid, [$"{prefix}.actor_executable"] = actorPath,
                     [$"{prefix}.actor_command_line"] = $"{actorPath} --operation {definition.Operation}",
@@ -1200,14 +1202,20 @@ public static class Program
                     [$"{prefix}.after.action_command"] = afterExists ? @"C:\Windows\System32\cmd.exe" : null,
                     [$"{prefix}.after.action_arguments"] = afterExists ? cloudArguments : null,
                 };
-                if (method == "schtasks_cli")
+                if (isSecurityAudit)
                 {
                     facts[$"{prefix}.security_event_id"] = definition.EventId;
-                    facts[$"{prefix}.security_event_found"] = false;
+                    facts[$"{prefix}.security_event_found"] = true;
+                    facts[$"{prefix}.security_event_occurred_at_utc"] = Values.Utc(occurredAt);
+                    facts[$"{prefix}.security_event_record_id"] = 8000 + index;
+                    facts[$"{prefix}.audit_policy_active"] = 1;
+                    facts[$"{prefix}.audit_success_enabled"] = true;
+                    facts[$"{prefix}.audit_policy_restore_succeeded"] = true;
+                    if (definition.Operation is "create" or "modify")
+                        facts[$"{prefix}.after.triggers"] = new JsonArray("TimeTrigger");
                     if (definition.Operation == "create")
                     {
-                        facts[$"{prefix}.after.triggers"] = new JsonArray("TimeTrigger");
-                        facts[$"{prefix}.security_event_4698_found"] = false;
+                        facts[$"{prefix}.security_event_4698_found"] = true;
                     }
                 }
                 foreach (var (key, value) in facts)
@@ -1247,7 +1255,7 @@ public static class Program
                 }
                 else
                 {
-                    var useServiceSideProcess = definition.Operation == "modify" && method == "schtasks_cli";
+                    var useServiceSideProcess = definition.Operation == "modify" && isSecurityAudit;
                     var tencentProcess = useServiceSideProcess ? @"C:\Windows\System32\svchost.exe" : actorPath;
                     var tencent = new JsonObject
                     {
@@ -1294,22 +1302,23 @@ public static class Program
             value?["capability_id"]?.GetValue<string>() == "win.scheduled_task.modify")?.AsObject()
             ?? throw new InvalidOperationException("腾讯比较结果缺少计划任务修改能力。");
         var processRequirement = modify["baseline_requirements"]?.AsArray().Single(value =>
-            value?["expectation_id"]?.GetValue<string>() == "scheduled-task-modify-security-event"
+            value?["expectation_id"]?.GetValue<string>() == "scheduled-task-modify-security-audit-event"
             && value?["field"]?.GetValue<string>() == "process.executable")
             ?? throw new InvalidOperationException("计划任务修改结果缺少 process.executable BASELINE 项。");
-        Assert(processRequirement["status"]?.GetValue<string>() == "passed"
-            && processRequirement["message"]?.GetValue<string>()?.Contains("服务侧调用链", StringComparison.Ordinal) == true,
-            "修改日志仅保留 svchost.exe 时应通过推荐项并提示补充 Task Scheduler 客户端调用链。");
+        Assert(processRequirement["status"]?.GetValue<string>() == "passed",
+            "修改日志仅保留服务侧进程时，进程存在性推荐项仍应通过。");
         foreach (var operation in new[] { "create", "modify", "delete" })
         {
             var capability = tencentResult["capabilities"]?.AsArray().Single(value =>
                 value?["capability_id"]?.GetValue<string>() == $"win.scheduled_task.{operation}")?.AsObject()
                 ?? throw new InvalidOperationException($"腾讯比较结果缺少计划任务 {operation} 能力。");
-            Assert(capability["method_results"]?.AsArray().Count == 2
-                && capability["method_results"]?.AsArray().Any(value => value?["method_id"]?.GetValue<string>() == "task_scheduler_com") == true
-                && capability["method_results"]?.AsArray().Any(value => value?["method_id"]?.GetValue<string>() == "schtasks_cli") == true
+            var auditMethod = operation == "modify" ? "security_audit_update" : $"security_audit_{operation}";
+            var expectedMethodCount = operation == "delete" ? 1 : 2;
+            Assert(capability["method_results"]?.AsArray().Count == expectedMethodCount
+                && (operation == "delete" || capability["method_results"]?.AsArray().Any(value => value?["method_id"]?.GetValue<string>() == "task_scheduler_com") == true)
+                && capability["method_results"]?.AsArray().Any(value => value?["method_id"]?.GetValue<string>() == auditMethod) == true
                 && capability["method_results"]?.AsArray().All(value => value?["status"]?.GetValue<string>() == "PASS") == true,
-                $"计划任务 {operation} 必须分别输出两个通过的方法结果。");
+                $"计划任务 {operation} 必须输出对应的通过方法结果。");
         }
         var create = tencentResult["capabilities"]?.AsArray().Single(value =>
             value?["capability_id"]?.GetValue<string>() == "win.scheduled_task.create")?.AsObject()

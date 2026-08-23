@@ -350,7 +350,10 @@ test("Scheduled Task Activity 三项样本、真实字段清单、映射和 BASS
   const protocol = await readFile(new URL("sample-src/ScheduledTaskActivity/ScheduledTaskActivity.Protocol/Protocol.cs", root), "utf8");
   const behavior = await readFile(new URL("sample-src/ScheduledTaskActivity/ScheduledTaskActivity.Behavior/Program.cs", root), "utf8");
   const controller = await readFile(new URL("sample-src/ScheduledTaskActivity/ScheduledTaskActivity.Controller/Program.cs", root), "utf8");
+  const auditScope = await readFile(new URL("sample-src/ScheduledTaskActivity/ScheduledTaskActivity.Behavior/ScheduledTaskAuditPolicyScope.cs", root), "utf8");
+  const design = await readFile(new URL("docs/SCHEDULED-TASK-ACTIVITY-SAMPLES.md", root), "utf8");
   const startScript = await readFile(new URL("scripts/Start-EdrTest.ps1", root), "utf8");
+  const e2e = await readFile(new URL("scripts/Test-ScheduledTaskActivitySamples.ps1", root), "utf8");
   const liveControlPlane = await readFile(new URL("web/app/live-control-plane.tsx", root), "utf8");
   const definitions = [
     ["create", 4698, "SchedTaskCreate"],
@@ -361,16 +364,19 @@ test("Scheduled Task Activity 三项样本、真实字段清单、映射和 BASS
   for (const [operation, eventId] of definitions) {
     const manifest = await readJson(`sample-src/ScheduledTaskActivity/manifests/win.scheduled_task.${operation}/capability.json`);
     const baseline = await readFile(new URL(`baselines/windows/scheduled_task_${operation}.yaml`, root), "utf8");
-    assert.equal(manifest.version, "0.2.0");
-    assert.equal(manifest.risk_level, "L1");
-    assert.equal(manifest.required_privilege, "standard_user");
+    assert.equal(manifest.version, "0.3.0");
+    assert.equal(manifest.risk_level, "L2");
+    assert.equal(manifest.required_privilege, "administrator");
     assert.ok(manifest.expected_fact_keys.includes(`scheduled_task.${operation}_succeeded`));
-    for (const method of ["task_scheduler_com", "schtasks_cli"]) {
+    const auditMethod = operation === "modify" ? "security_audit_update" : `security_audit_${operation}`;
+    for (const method of ["task_scheduler_com", auditMethod]) {
       const factPrefix = `scheduled_task.${method}`;
       assert.ok(manifest.expected_fact_keys.includes(`${factPrefix}.${operation}_succeeded`));
       assert.ok(manifest.expected_fact_keys.includes(`${factPrefix}.task_path`));
       assert.ok(manifest.expected_fact_keys.includes(`${factPrefix}.actor_pid`));
-      assert.match(baseline, new RegExp(`method: \\{ id: ${method},`));
+      if (operation !== "delete" || method !== "task_scheduler_com") {
+        assert.match(baseline, new RegExp(`method: \\{ id: ${method},`));
+      }
     }
     assert.match(baseline, /method_selection: \{ strategy: best \}/);
     assert.match(baseline, /max_time_difference_ms: 15/);
@@ -404,20 +410,34 @@ test("Scheduled Task Activity 三项样本、真实字段清单、映射和 BASS
   assert.match(protocol, /TimeTrigger/);
   assert.match(protocol, /AllowStartOnDemand", false/);
   assert.match(behavior, /schtasks\.exe/);
-  assert.match(behavior, /0CCE9227-69AE-11D9-BED3-505054503030/);
-  assert.match(behavior, /dateCandidates/);
-  assert.match(behavior, /"\/Change"/);
+  assert.match(auditScope, /0CCE9227-69AE-11D9-BED3-505054503030/);
+  assert.match(behavior, /"\/Create", "\/TN", taskPath, "\/XML", definitionPath, "\/F"/);
   assert.match(behavior, /"\/Delete"/);
+  assert.match(behavior, /FindSecurityEvent/);
+  assert.match(behavior, /SecurityEventOccurredAtUtc/);
+  assert.match(auditScope, /AuditQuerySystemPolicy/);
+  assert.match(auditScope, /AuditSetSystemPolicy/);
+  assert.match(auditScope, /SeSecurityPrivilege/);
+  assert.match(auditScope, /RestoreSucceeded/);
   assert.match(behavior, /"modify" => 4702/);
   assert.match(behavior, /"delete" => 4699/);
   assert.match(controller, /task_scheduler_com/);
-  assert.match(controller, /schtasks_cli/);
+  assert.match(controller, /security_audit_create/);
+  assert.match(controller, /security_audit_update/);
+  assert.match(controller, /security_audit_delete/);
+  assert.match(controller, /security_event_occurred_at_utc/);
+  assert.match(controller, /File\.WriteAllText\(afterDefinitionPath, afterXml, Encoding\.Unicode\)/);
   assert.match(controller, /delete_exact_test_task_/);
   assert.match(controller, /task_was_never_started/);
   assert.match(startScript, /Build-ScheduledTaskActivitySamples\.ps1/);
+  assert.match(startScript, /三项计划任务安全审计/);
+  assert.match(e2e, /--allow-high-risk/);
   assert.match(liveControlPlane, /"win\.scheduled_task\.create": "SchedTaskCreate, RpcSchedTaskCreate"/);
   assert.match(liveControlPlane, /"win\.scheduled_task\.modify": "SchedTaskUpdate, RpcSchedTaskCreate"/);
   assert.match(liveControlPlane, /"win\.scheduled_task\.delete": "SchedTaskDelete"/);
+  assert.match(design, /Security 4698/);
+  assert.match(design, /Security 4702/);
+  assert.match(design, /腾讯 EDR 当前没有可验证的 `SchedTaskDelete`/);
 });
 
 test("Service Activity 三项安全样本、SCM 本地基准、映射和 BASSLINE 完整", async () => {

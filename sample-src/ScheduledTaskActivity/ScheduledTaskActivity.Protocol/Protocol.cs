@@ -56,7 +56,16 @@ public sealed class BehaviorResult
     public string? ClientStandardError { get; init; }
     public int? SecurityEventId { get; init; }
     public bool? SecurityEventFound { get; init; }
+    public DateTimeOffset? SecurityEventOccurredAtUtc { get; init; }
+    public long? SecurityEventRecordId { get; init; }
     public bool? SecurityEvent4698Found { get; init; }
+    public string? AuditSubcategoryId { get; init; }
+    public uint? AuditPolicyBefore { get; init; }
+    public uint? AuditPolicyActive { get; init; }
+    public bool? AuditSuccessEnabled { get; init; }
+    public uint? AuditPolicyRestored { get; init; }
+    public bool? AuditPolicyChanged { get; init; }
+    public bool? AuditPolicyRestoreSucceeded { get; init; }
     public string? AuditPolicyOutput { get; init; }
     public string? SecurityEventQueryOutput { get; init; }
     public string? DiagnosticError { get; init; }

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
+using System.Xml.Linq;
 
 namespace ScheduledTaskActivity;
 
@@ -26,15 +28,19 @@ internal static class Program
             var definitionPath = Path.GetFullPath(options.Require("definition"));
             var holdMs = options.GetInt("hold-ms", 1_500, 0, 30_000);
             before = ScheduledTaskClient.Snapshot(taskPath);
+            using var auditScope = IsSecurityAuditMethod(method) ? ScheduledTaskAuditPolicyScope.EnableSuccess() : null;
             var occurredAtUtc = DateTimeOffset.UtcNow;
             var client = Execute(method, operation, taskPath, definitionPath, actionArguments);
             var completedAtUtc = DateTimeOffset.UtcNow;
             var after = ScheduledTaskClient.Snapshot(taskPath);
             var securityEventId = SecurityEventId(operation);
-            var diagnostic = method == "schtasks_cli"
-                ? CollectEventLogDiagnostic(taskPath, securityEventId)
+            var diagnostic = IsSecurityAuditMethod(method)
+                ? CollectEventLogDiagnostic(taskPath, securityEventId, occurredAtUtc)
                 : new DiagnosticResult(null, null, null, null);
-            var succeeded = Verify(method, operation, marker, actionArguments, before, after);
+            auditScope?.Restore();
+            var succeeded = Verify(method, operation, marker, actionArguments, before, after)
+                && (!IsSecurityAuditMethod(method) || diagnostic.SecurityEventFound == true)
+                && (auditScope is null || auditScope.RestoreSucceeded);
             ProtocolJson.WriteAtomic(resultPath, new BehaviorResult
             {
                 Method = method, Operation = operation, Succeeded = succeeded, OccurredAtUtc = occurredAtUtc,
@@ -44,13 +50,24 @@ internal static class Program
                 ClientCommandLine = client?.CommandLine, ClientStartedAtUtc = client?.StartedAtUtc,
                 ClientEndedAtUtc = client?.EndedAtUtc, ClientExitCode = client?.ExitCode,
                 ClientStandardOutput = client?.StandardOutput, ClientStandardError = client?.StandardError,
-                SecurityEventId = method == "schtasks_cli" ? securityEventId : null,
+                SecurityEventId = IsSecurityAuditMethod(method) ? securityEventId : null,
                 SecurityEventFound = diagnostic.SecurityEventFound,
+                SecurityEventOccurredAtUtc = diagnostic.SecurityEventOccurredAtUtc,
+                SecurityEventRecordId = diagnostic.SecurityEventRecordId,
                 SecurityEvent4698Found = operation == "create" ? diagnostic.SecurityEventFound : null,
+                AuditSubcategoryId = auditScope is null ? null : ScheduledTaskAuditPolicyScope.OtherObjectAccessEvents.ToString("B").ToUpperInvariant(),
+                AuditPolicyBefore = auditScope?.Before,
+                AuditPolicyActive = auditScope?.Active,
+                AuditSuccessEnabled = auditScope?.SuccessEnabled,
+                AuditPolicyRestored = auditScope?.Restored,
+                AuditPolicyChanged = auditScope?.Changed,
+                AuditPolicyRestoreSucceeded = auditScope?.RestoreSucceeded,
                 AuditPolicyOutput = diagnostic.AuditPolicyOutput,
                 SecurityEventQueryOutput = diagnostic.SecurityEventQueryOutput,
                 DiagnosticError = diagnostic.Error,
-                HResult = 0, Error = succeeded ? null : "计划任务操作后的状态未满足预期。",
+                HResult = 0, Error = succeeded ? null : IsSecurityAuditMethod(method) && diagnostic.SecurityEventFound != true
+                    ? $"计划任务行为已执行，但 Security 日志中未找到本轮任务路径对应的 {securityEventId} 事件。"
+                    : "计划任务操作后的状态或审核策略恢复结果未满足预期。",
             });
             if (holdMs > 0) Thread.Sleep(holdMs);
             return succeeded ? 0 : BehaviorError;
@@ -76,22 +93,20 @@ internal static class Program
     private static CommandResult? Execute(string method, string operation, string taskPath, string definitionPath,
         string actionArguments)
     {
-        if (method == "schtasks_cli")
+        if (IsSecurityAuditMethod(method))
         {
-            var command = Path.Combine(Environment.SystemDirectory, "cmd.exe");
             switch (operation)
             {
                 case "create":
-                    return RunSchtasksCreate(taskPath, command, actionArguments);
                 case "modify":
                     return RunCommand(Path.Combine(Environment.SystemDirectory, "schtasks.exe"),
-                        ["/Change", "/TN", taskPath, "/ENABLE"],
+                        ["/Create", "/TN", taskPath, "/XML", definitionPath, "/F"],
                         15_000, requireSuccess: true);
                 case "delete":
                     return RunCommand(Path.Combine(Environment.SystemDirectory, "schtasks.exe"),
                         ["/Delete", "/TN", taskPath, "/F"], 15_000, requireSuccess: true);
                 default:
-                    throw new ArgumentException($"schtasks_cli 不支持的计划任务操作：{operation}");
+                    throw new ArgumentException($"Windows 安全审计子测试不支持的计划任务操作：{operation}");
             }
         }
         if (method != "task_scheduler_com") throw new ArgumentException($"不支持的计划任务测试方法：{method}");
@@ -114,43 +129,25 @@ internal static class Program
     private static bool Verify(string method, string operation, string marker, string actionArguments,
         TaskSnapshot before, TaskSnapshot after) => operation switch
     {
-        "create" => !before.Exists && after.Exists && after.Enabled == (method == "schtasks_cli")
-            && (method == "schtasks_cli"
+        "create" => !before.Exists && after.Exists && after.Enabled == IsSecurityAuditMethod(method)
+            && (IsSecurityAuditMethod(method)
                 ? string.Equals(after.ActionArguments, actionArguments, StringComparison.OrdinalIgnoreCase)
                 : after.Marker == marker)
-            && (method != "schtasks_cli" || after.Triggers?.Contains("TimeTrigger", StringComparer.Ordinal) == true),
+            && (!IsSecurityAuditMethod(method) || after.Marker == marker)
+            && (!IsSecurityAuditMethod(method) || after.Triggers?.Contains("TimeTrigger", StringComparer.Ordinal) == true),
         "modify" => before.Exists && after.Exists && before.XmlSha256 != after.XmlSha256
-            && (method == "schtasks_cli"
+            && (IsSecurityAuditMethod(method)
                 ? before.Enabled == false && after.Enabled == true
-                    && string.Equals(after.ActionArguments, before.ActionArguments, StringComparison.OrdinalIgnoreCase)
+                    && after.Marker == marker
+                    && string.Equals(after.ActionArguments, actionArguments, StringComparison.OrdinalIgnoreCase)
+                    && after.Triggers?.Contains("TimeTrigger", StringComparer.Ordinal) == true
                 : before.Marker != after.Marker && after.Marker == marker),
         "delete" => before.Exists && !after.Exists,
         _ => false,
     };
 
-    private static CommandResult RunSchtasksCreate(string taskPath, string command, string actionArguments)
-    {
-        var future = DateTime.Now.AddYears(1).AddMinutes(1);
-        var culture = System.Globalization.CultureInfo.CurrentCulture;
-        var dateCandidates = new[]
-        {
-            future.ToString(culture.DateTimeFormat.ShortDatePattern, culture),
-            future.ToString("yyyy/MM/dd", System.Globalization.CultureInfo.InvariantCulture),
-            future.ToString("MM/dd/yyyy", System.Globalization.CultureInfo.InvariantCulture),
-            future.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture),
-        }.Distinct(StringComparer.Ordinal).ToArray();
-        CommandResult? last = null;
-        foreach (var startDate in dateCandidates)
-        {
-            last = RunCommand(Path.Combine(Environment.SystemDirectory, "schtasks.exe"),
-                ["/Create", "/TN", taskPath, "/SC", "ONCE", "/SD", startDate,
-                    "/ST", future.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture),
-                    "/TR", $"{command} {actionArguments}", "/RL", "LIMITED", "/F"],
-                15_000, requireSuccess: false);
-            if (last.ExitCode == 0) return last;
-        }
-        throw new InvalidOperationException($"schtasks.exe 无法使用本机或兼容日期格式创建任务：{JoinOutput(last!)}");
-    }
+    private static bool IsSecurityAuditMethod(string method) =>
+        method is "security_audit_create" or "security_audit_update" or "security_audit_delete";
 
     private static int SecurityEventId(string operation) => operation switch
     {
@@ -160,12 +157,14 @@ internal static class Program
         _ => throw new ArgumentException($"没有为计划任务操作 {operation} 定义安全事件 ID。"),
     };
 
-    private static DiagnosticResult CollectEventLogDiagnostic(string taskPath, int securityEventId)
+    private static DiagnosticResult CollectEventLogDiagnostic(string taskPath, int securityEventId, DateTimeOffset operationStartedAtUtc)
     {
         var errors = new List<string>();
         string? auditOutput = null;
         string? securityOutput = null;
         bool? found = null;
+        DateTimeOffset? eventOccurredAtUtc = null;
+        long? eventRecordId = null;
         try
         {
             var audit = RunCommand(Path.Combine(Environment.SystemDirectory, "auditpol.exe"),
@@ -175,18 +174,63 @@ internal static class Program
             if (audit.ExitCode != 0) errors.Add($"auditpol 退出码 {audit.ExitCode}");
         }
         catch (Exception exception) { errors.Add($"auditpol：{exception.Message}"); }
-        try
+        for (var attempt = 0; attempt < 20 && found != true; attempt++)
         {
-            Thread.Sleep(250);
-            var query = $"*[System[(EventID={securityEventId}) and TimeCreated[timediff(@SystemTime) <= 15000]]]";
-            var security = RunCommand(Path.Combine(Environment.SystemDirectory, "wevtutil.exe"),
-                ["qe", "Security", $"/q:{query}", "/f:xml", "/c:30", "/rd:true"], 10_000, requireSuccess: false);
-            securityOutput = JoinOutput(security);
-            found = security.ExitCode == 0 && securityOutput.Contains(taskPath, StringComparison.OrdinalIgnoreCase);
-            if (security.ExitCode != 0) errors.Add($"wevtutil Security 查询退出码 {security.ExitCode}");
+            try
+            {
+                if (attempt > 0) Thread.Sleep(100);
+                var query = $"*[System[(EventID={securityEventId}) and TimeCreated[timediff(@SystemTime) <= 20000]]]";
+                var security = RunCommand(Path.Combine(Environment.SystemDirectory, "wevtutil.exe"),
+                    ["qe", "Security", $"/q:{query}", "/f:xml", "/c:80", "/rd:true"], 10_000, requireSuccess: false);
+                securityOutput = JoinOutput(security);
+                if (security.ExitCode != 0)
+                {
+                    errors.Add($"wevtutil Security 查询退出码 {security.ExitCode}");
+                    break;
+                }
+                var evidence = FindSecurityEvent(securityOutput, taskPath, securityEventId, operationStartedAtUtc);
+                found = evidence is not null;
+                if (evidence is not null)
+                {
+                    eventOccurredAtUtc = evidence.OccurredAtUtc;
+                    eventRecordId = evidence.RecordId;
+                    securityOutput = evidence.RawXml;
+                }
+            }
+            catch (Exception exception)
+            {
+                errors.Add($"wevtutil：{exception.Message}");
+                break;
+            }
         }
-        catch (Exception exception) { errors.Add($"wevtutil：{exception.Message}"); }
-        return new DiagnosticResult(found, auditOutput, securityOutput, errors.Count == 0 ? null : string.Join(" | ", errors));
+        return new DiagnosticResult(found, auditOutput, securityOutput, errors.Count == 0 ? null : string.Join(" | ", errors),
+            eventOccurredAtUtc, eventRecordId);
+    }
+
+    private static SecurityEventEvidence? FindSecurityEvent(string output, string taskPath, int eventId,
+        DateTimeOffset operationStartedAtUtc)
+    {
+        foreach (Match match in Regex.Matches(output, @"<Event\b[\s\S]*?</Event>", RegexOptions.CultureInvariant))
+        {
+            XDocument document;
+            try { document = XDocument.Parse(match.Value, LoadOptions.PreserveWhitespace); }
+            catch { continue; }
+            var eventIdText = document.Descendants().FirstOrDefault(element => element.Name.LocalName == "EventID")?.Value;
+            if (!int.TryParse(eventIdText, out var parsedEventId) || parsedEventId != eventId) continue;
+            var taskName = document.Descendants().FirstOrDefault(element =>
+                element.Name.LocalName == "Data" && string.Equals((string?)element.Attribute("Name"), "TaskName", StringComparison.Ordinal))?.Value;
+            if (!string.Equals(taskName, taskPath, StringComparison.OrdinalIgnoreCase)
+                && !match.Value.Contains(taskPath, StringComparison.OrdinalIgnoreCase)) continue;
+            var systemTime = document.Descendants().FirstOrDefault(element => element.Name.LocalName == "TimeCreated")?.Attribute("SystemTime")?.Value;
+            if (!DateTimeOffset.TryParse(systemTime, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal, out var occurredAtUtc)) continue;
+            occurredAtUtc = occurredAtUtc.ToUniversalTime();
+            if (occurredAtUtc < operationStartedAtUtc.AddSeconds(-2)) continue;
+            var recordText = document.Descendants().FirstOrDefault(element => element.Name.LocalName == "EventRecordID")?.Value;
+            _ = long.TryParse(recordText, out var recordId);
+            return new SecurityEventEvidence(occurredAtUtc, recordId == 0 ? null : recordId, match.Value);
+        }
+        return null;
     }
 
     private static CommandResult RunCommand(string executable, IReadOnlyList<string> arguments, int timeoutMs, bool requireSuccess)
@@ -242,5 +286,8 @@ internal static class Program
         DateTimeOffset StartedAtUtc, DateTimeOffset EndedAtUtc, int ExitCode, string StandardOutput, string StandardError);
 
     private sealed record DiagnosticResult(bool? SecurityEventFound, string? AuditPolicyOutput,
-        string? SecurityEventQueryOutput, string? Error);
+        string? SecurityEventQueryOutput, string? Error, DateTimeOffset? SecurityEventOccurredAtUtc = null,
+        long? SecurityEventRecordId = null);
+
+    private sealed record SecurityEventEvidence(DateTimeOffset OccurredAtUtc, long? RecordId, string RawXml);
 }

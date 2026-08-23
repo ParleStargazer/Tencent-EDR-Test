@@ -54,7 +54,7 @@
 
 准备好 .NET 8 SDK（或更高版本）、PowerShell 7、Node.js 22.13+ 和 pnpm 11.9+ 后，双击仓库根目录的 `启动平台.cmd`。脚本会构建框架与能力包、构建前端、启动本地服务并打开 `http://127.0.0.1:3000/`。
 
-五项用户账号活动、三项服务活动、组策略修改、三项 permanent WMI subscription 活动、虚拟磁盘挂载和驱动三项需要管理员权限。组策略修改与虚拟磁盘挂载为 L2，驱动三项为 L3，都必须在前端确认高风险或向 CLI 传入 `--allow-high-risk`。驱动默认直接使用仓库中已签名的 SYS/CAT 与仅含公钥的 CER，不要求测试机安装 EWDK；仅当仓库包缺失或校验失败时，启动脚本才探测 `-EwdkRoot` 并尝试后备构建，两者都不可用时只跳过对应驱动能力。启动脚本会检测包内 SYS/INF/CAT/CER 完整性、SYS/CAT 当前 Windows 信任链、管理员权限与当前启动项的 `testsigning`；若签名包对应的公开测试证书尚未受信任，会询问是否导入到 `LocalMachine\Root` 和 `LocalMachine\TrustedPublisher`。平台不会自动开启 `testsigning`，不开启时会明确提示驱动能力不可用。驱动 Controller 仍会复核驱动哈希、签名和证书信任；不满足时封存为 `SKIPPED / ENVIRONMENT_NOT_READY`，不会尝试加载驱动或计作 EDR 失败。
+五项用户账号活动、三项计划任务活动、三项服务活动、组策略修改、三项 permanent WMI subscription 活动、虚拟磁盘挂载和驱动三项需要管理员权限。计划任务、组策略修改与虚拟磁盘挂载为 L2，驱动三项为 L3，都必须在前端确认高风险或向 CLI 传入 `--allow-high-risk`。计划任务的非 RPC 子测试会保存并临时启用“其他对象访问事件”成功审核，读取对应 4698/4702/4699 后恢复原策略。驱动默认直接使用仓库中已签名的 SYS/CAT 与仅含公钥的 CER，不要求测试机安装 EWDK；仅当仓库包缺失或校验失败时，启动脚本才探测 `-EwdkRoot` 并尝试后备构建，两者都不可用时只跳过对应驱动能力。启动脚本会检测包内 SYS/INF/CAT/CER 完整性、SYS/CAT 当前 Windows 信任链、管理员权限与当前启动项的 `testsigning`；若签名包对应的公开测试证书尚未受信任，会询问是否导入到 `LocalMachine\Root` 和 `LocalMachine\TrustedPublisher`。平台不会自动开启 `testsigning`，不开启时会明确提示驱动能力不可用。驱动 Controller 仍会复核驱动哈希、签名和证书信任；不满足时封存为 `SKIPPED / ENVIRONMENT_NOT_READY`，不会尝试加载驱动或计作 EDR 失败。
 
 ```powershell
 pwsh -NoProfile -File scripts/Start-EdrTest.ps1
@@ -131,7 +131,7 @@ dotnet run --project src/EdrTest -- compare `
   --conclusion-out .\validation-conclusion.md
 ```
 
-这些活动构建会直接清理并覆盖 `samples/` 下的同名旧能力包。哈希能力中 MD5、SHA 创建合法 `.json` 文件，IMPHASH 创建真实 `.exe` PE 副本且不会执行；三项都只操作本轮工作目录并立即精确清理。注册表三项只操作 `HKCU\Software\EdrTest\Runs` 下的本轮临时键。组策略修改先执行 `HKLM\SOFTWARE\Policies\EdrTest\Runs\<nonce>` 隔离控制组，再对真实白名单策略值执行同类型、同原始字节回写；若没有现存值，临时预置安全增强值 `EnableSmartScreen=1`，由 Actor 采证后精确恢复原状态。命名管道两项只创建 `\\.\pipe\EdrTest_<nonce>_<operation>` 短生命周期管道，由 Actor/Helper 完成双向 nonce 握手。BITS 双方法只从进程内回环 HTTP 服务下载 nonce JSON，完成或按精确 Job ID 取消任务，不使用通知命令和系统范围重置。WMI 三项只创建本轮唯一 `__EventFilter`、`LogFileEventConsumer` 和 Binding，并严格按 Binding、Consumer、Filter 顺序清理，不使用命令型 Consumer。虚拟磁盘双方法分别调用 `Mount-DiskImage` 和 VirtDisk API，只附加本轮未初始化的 16 MiB 动态 VHD，保持只读、无盘符并在双端复核后精确卸载删除。驱动三项仅使用本轮唯一 SCM 名称与 `.sys` 工作副本；最小驱动无设备、IOCTL 或回调，加载和卸载后精确清理，修改只作用于从未加载的副本。计划任务和服务样本同样只操作本轮唯一资源且不会执行任务或启动服务。网络五项只使用本机回环端点；`win.process.image_load@0.3.0` 包含三个原生 DLL 加载子项和一个托管程序集加载子项。比较器仅使用与本地能力版本完全匹配的 BASELINE。
+这些活动构建会直接清理并覆盖 `samples/` 下的同名旧能力包。哈希能力中 MD5、SHA 创建合法 `.json` 文件，IMPHASH 创建真实 `.exe` PE 副本且不会执行；三项都只操作本轮工作目录并立即精确清理。注册表三项只操作 `HKCU\Software\EdrTest\Runs` 下的本轮临时键。组策略修改先执行 `HKLM\SOFTWARE\Policies\EdrTest\Runs\<nonce>` 隔离控制组，再对真实白名单策略值执行同类型、同原始字节回写；若没有现存值，临时预置安全增强值 `EnableSmartScreen=1`，由 Actor 采证后精确恢复原状态。命名管道两项只创建 `\\.\pipe\EdrTest_<nonce>_<operation>` 短生命周期管道，由 Actor/Helper 完成双向 nonce 握手。BITS 双方法只从进程内回环 HTTP 服务下载 nonce JSON，完成或按精确 Job ID 取消任务，不使用通知命令和系统范围重置。WMI 三项只创建本轮唯一 `__EventFilter`、`LogFileEventConsumer` 和 Binding，并严格按 Binding、Consumer、Filter 顺序清理，不使用命令型 Consumer。虚拟磁盘双方法分别调用 `Mount-DiskImage` 和 VirtDisk API，只附加本轮未初始化的 16 MiB 动态 VHD，保持只读、无盘符并在双端复核后精确卸载删除。驱动三项仅使用本轮唯一 SCM 名称与 `.sys` 工作副本；最小驱动无设备、IOCTL 或回调，加载和卸载后精确清理，修改只作用于从未加载的副本。计划任务安全审计子测试只临时启用“其他对象访问事件”成功审核，读取 4698/4702/4699 后恢复原策略；所有任务均使用本轮唯一资源且不会实际执行。服务样本也只操作本轮唯一资源且不会启动服务。网络五项只使用本机回环端点；`win.process.image_load@0.3.0` 包含三个原生 DLL 加载子项和一个托管程序集加载子项。比较器仅使用与本地能力版本完全匹配的 BASELINE。
 
 比较命令会同时生成结构化 `validation-result.json` 和中文 `validation-conclusion.md`；未指定 `--conclusion-out` 时，Markdown 结论自动写入 JSON 同目录。同一个 `EdrTest.exe` 还提供 `export` 和 `inspect` 子命令。运行 `dotnet run --project src/EdrTest -- help` 可查看完整参数。
 

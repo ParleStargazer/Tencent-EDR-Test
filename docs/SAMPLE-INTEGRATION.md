@@ -309,7 +309,7 @@ node --test tests/contract/local-run-contract.test.mjs
 | 五项文件能力 | TXT/JSON Actor 使用 0/1 | 事件和清理使用 1/2 | 符合规范 |
 | URL、DNS 等网络方法 | 各方法 Actor/Helper 使用相同方法索引 0/1 | 各角色分别唯一；事件和清理显式编号 | 符合规范 |
 | 三项注册表能力 | 隔离键/Run Key Actor 使用 0/1 | 事件和清理使用 1/2 | 符合规范 |
-| 三项计划任务能力 | COM/CLI Actor 使用 0/1；CLI Helper 使用 1 | 事件和清理使用 1/2 | 符合规范 |
+| 三项计划任务能力 | COM Actor 使用 0；安全审计 Actor/Helper 使用 1 | 事件和清理使用 1/2 | 符合规范 |
 | 三项服务能力 | 单次 SCM 行为只写一个 Actor；API Hook/Event Log 是 EDR 检测方法 | 单个本地事件和清理 | 无重复入库 |
 | 三项哈希能力 | 每项只有一个文件行为 Actor；JSON/EXE 是能力间或单方法标签 | 单个本地事件和清理 | 无重复入库 |
 | 组策略修改 | 隔离策略/L2 Actor 使用 0/1 | 事件和清理使用 1/2 | 已修复默认序号冲突 |

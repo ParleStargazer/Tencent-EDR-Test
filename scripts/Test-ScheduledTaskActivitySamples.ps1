@@ -7,6 +7,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+try {
+    $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
+    if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw "计划任务安全审计端到端测试需要管理员权限，以便临时启用并恢复‘其他对象访问事件’成功审核。"
+    }
+} finally {
+    $identity.Dispose()
+}
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $repositoryRoot "artifacts\scheduled-task-activity-e2e"
 }
@@ -19,7 +28,8 @@ if ($LASTEXITCODE -ne 0) { throw "计划任务活动能力包构建失败。" }
 
 $capabilityIds = @("win.scheduled_task.create", "win.scheduled_task.modify", "win.scheduled_task.delete")
 $runnerArguments = @(
-    "run", "--runs-dir", (Join-Path $OutputRoot "runs"), "--suite-id", "scheduled-task-activity-e2e", "--next-delay-seconds", "0"
+    "run", "--runs-dir", (Join-Path $OutputRoot "runs"), "--suite-id", "scheduled-task-activity-e2e",
+    "--next-delay-seconds", "0", "--allow-high-risk"
 )
 foreach ($capabilityId in $capabilityIds) {
     $runnerArguments += @("--manifest", (Join-Path $samplesRoot "$capabilityId\capability.json"))
@@ -54,16 +64,17 @@ foreach ($capability in $localRun.capabilities) {
         $operation = $event.event_action
         $method = if ($event.data.method) { [string]$event.data.method } else { "task_scheduler_com" }
         $prefix = "scheduled_task.$method"
-        $eventType = if ($operation -in @("create", "modify") -and $method -eq "task_scheduler_com") { "scheduled_task_rpc" } else { "scheduled_task" }
+        $isSecurityAudit = $method -ne "task_scheduler_com"
+        $eventType = if ($operation -in @("create", "modify") -and -not $isSecurityAudit) { "scheduled_task_rpc" } else { "scheduled_task" }
         $cloudAction = if ($eventType -eq "scheduled_task_rpc") { "register" } else { $operation }
         $eventLogId = switch ($operation) { "create" { 4698 } "modify" { 4702 } "delete" { 4699 } }
         $actionName = switch ($operation) {
-            "create" { if ($method -eq "task_scheduler_com") { "RpcSchedTaskCreate" } else { "SchedTaskCreate" } }
-            "modify" { if ($method -eq "task_scheduler_com") { "RpcSchedTaskCreate" } else { "SchedTaskUpdate" } }
+            "create" { if (-not $isSecurityAudit) { "RpcSchedTaskCreate" } else { "SchedTaskCreate" } }
+            "modify" { if (-not $isSecurityAudit) { "RpcSchedTaskCreate" } else { "SchedTaskUpdate" } }
             "delete" { "SchedTaskDelete" }
         }
         $taskPath = $facts["$prefix.task_path"]
-        $marker = if ($operation -eq "delete" -or ($operation -eq "modify" -and $method -eq "schtasks_cli")) {
+        $marker = if ($operation -eq "delete") {
             $facts["$prefix.before.marker"]
         } else {
             $facts["$prefix.marker"]
@@ -155,10 +166,10 @@ $assertions = [ordered]@{
     all_exact_test_tasks_removed = $tasksRemoved
     generic_compare_exit_code_is_0 = $genericExit -eq 0
     generic_compare_pass_count_is_3 = $genericResult.summary.pass -eq 3
-    generic_all_six_methods_pass = $genericMethods.Count -eq 6 -and @($genericMethods | Where-Object status -ne "PASS").Count -eq 0
+    generic_all_expected_methods_pass = $genericMethods.Count -eq 5 -and @($genericMethods | Where-Object status -ne "PASS").Count -eq 0
     tencent_compare_exit_code_is_0 = $tencentExit -eq 0
     tencent_compare_pass_count_is_3 = $tencentResult.summary.pass -eq 3
-    tencent_all_six_methods_pass = $tencentMethods.Count -eq 6 -and @($tencentMethods | Where-Object status -ne "PASS").Count -eq 0
+    tencent_all_expected_methods_pass = $tencentMethods.Count -eq 5 -and @($tencentMethods | Where-Object status -ne "PASS").Count -eq 0
 }
 $failedAssertions = @($assertions.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object Key)
 $summary = [ordered]@{

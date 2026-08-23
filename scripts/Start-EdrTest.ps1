@@ -639,7 +639,7 @@ try {
     Write-Warning "无法确认当前 PowerShell 的管理员权限：$($_.Exception.Message)"
 }
 if (-not $isAdministrator) {
-    Write-Warning "当前平台未以管理员身份运行。建议关闭后使用管理员权限重新运行 scripts\Start-EdrTest.ps1；五项用户账号活动、三项服务活动、组策略修改和三项 WMI permanent subscription 需要管理员权限；虚拟磁盘挂载测试需要管理员权限；USB 挂载与卸载以及三项驱动活动也需要管理员权限，否则会被跳过或不可用。"
+    Write-Warning "当前平台未以管理员身份运行。建议关闭后使用管理员权限重新运行 scripts\Start-EdrTest.ps1；五项用户账号活动、三项计划任务安全审计、三项服务活动、组策略修改和三项 WMI permanent subscription 需要管理员权限；虚拟磁盘挂载测试需要管理员权限；USB 挂载与卸载以及三项驱动活动也需要管理员权限，否则会被跳过或不可用。"
 }
 $driverPackage = Resolve-DriverTestPackage -DevelopmentKitRoot $EwdkRoot
 $usbDriverPackage = Resolve-UsbUdeTestPackage -DevelopmentKitRoot $EwdkRoot

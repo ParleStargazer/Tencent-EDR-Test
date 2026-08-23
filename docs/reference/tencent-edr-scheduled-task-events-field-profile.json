@@ -2,17 +2,17 @@
   "schema_version": "1.1",
   "sources": [
     {
-      "path": "reference/scheduled_task/edr_create.json",
-      "sha256": "89fbe5d98f18095cc0579c90a50444efecf507a6747c9b41604de326d91018db",
-      "event_count": 1,
-      "field_count": 106,
+      "path": "reference/scheduled_task/edr_SchedTaskCreate.json",
+      "sha256": "1db12fe3ed1658de6acb212a2802e553f806c4d4464e0a4f4ceb1ff0b3730258",
+      "event_count": 105,
+      "field_count": 107,
       "action_name": "SchedTaskCreate",
       "event_log_id": 4698
     },
     {
-      "path": "reference/scheduled_task/edr_update.json",
-      "sha256": "ebf005529df77cc10a1a518e6d9f35ce764d40b6230ccae277c9cee4470206da",
-      "event_count": 1,
+      "path": "reference/scheduled_task/edr_SchedTaskUpdate.json",
+      "sha256": "79a240c3b833c5bce429d3f93941a2325e86a6ad1f8ddf6a64638ea233b6887b",
+      "event_count": 887,
       "field_count": 106,
       "action_name": "SchedTaskUpdate",
       "event_log_id": 4702
@@ -39,7 +39,7 @@
       "contains_current_test_host": false
     }
   ],
-  "analyzed_at": "2026-08-14",
+  "analyzed_at": "2026-08-23",
   "union_field_count": 107,
   "event_identity": {
     "table": "ScheduleTaskEvents",
@@ -135,8 +135,8 @@
     "semantic_routing": "4698、4702、4699 建立创建、修改、删除语义；RpcSchedTaskCreate 规范化为 register 并建立 COM 创建/更新共用的 RPC Hook 方法，不能冒充具体行为语义。",
     "action_name_filter": "创建默认提供 SchedTaskCreate 与 RpcSchedTaskCreate，修改为 SchedTaskUpdate 与 RpcSchedTaskCreate，删除为 SchedTaskDelete；仍只作用于 EDR JSON。",
     "primary_anchors": ["本轮唯一任务路径", "任务 XML 中 nonce 标记", "相对本地行为时间（强关联默认 15 ms）"],
-    "process_chain": "直接 Actor 与 svchost.exe 服务侧调用链均可作为推荐项通过；服务侧命中时给出调用链优化提示。",
-    "audit_diagnostic": "CLI 方法只读保存 auditpol 与本机 4698/4702/4699 查询；本机无对应事件指向环境前置条件，本机有事件而云端无直接语义事件则指向 EDR 接入/导出。",
-    "delete_status": "4699 为 Windows 标准删除事件；SchedTaskDelete 暂无真实导出样本，按用户假定纳入测试，等待实测校准。"
+    "process_chain": "Parent.* 可能表示直接客户端，也可能表示 Task Scheduler 或其他系统服务侧进程；创建/修改的直接方法只要求进程字段存在并作为推荐证据，不以客户端路径相等作为通过前提。",
+    "audit_diagnostic": "非 RPC 方法通过原生 Audit Policy API 只修改‘其他对象访问事件’子类别：保存原位掩码、临时启用成功审核、以 XML 创建或覆盖更新激发事件、读取精确任务路径对应的事件时间和记录号，然后恢复原位掩码。缺少对应 4698/4702/4699 时本地子测试直接失败。",
+    "delete_status": "4699 为 Windows 标准删除事件，本地安全审计删除子测试必须成功激发；reference/scheduled_task 没有 SchedTaskDelete，腾讯侧按尚未实现处理，不以云端通过作为样本验收目标。"
   }
 }

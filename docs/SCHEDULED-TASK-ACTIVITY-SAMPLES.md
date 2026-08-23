@@ -1,55 +1,52 @@
-# 计划任务活动测试样本设计
+# 计划任务活动测试样本
 
-## 目标与范围
+## 设计依据
 
-本能力包验证计划任务创建、修改、删除三项行为，每项能力均包含 Task Scheduler COM 与系统 `schtasks.exe` 两个独立方法。比较页面分别显示两种方法并采用通过情况最好的方法作为能力结论。创建的直接语义事件为 4698，修改为 4702，删除为 4699；删除的 `SchedTaskDelete` 尚无真实样本，须等待实测校准。
+`reference/scheduled_task/edr_SchedTaskCreate.json` 的 105 条事件全部是 `ScheduleTaskEvents / WinEventLog / 4698 / SchedTaskCreate`；`edr_SchedTaskUpdate.json` 的 887 条事件全部是 `ScheduleTaskEvents / WinEventLog / 4702 / SchedTaskUpdate`。创建事件的已知客户端包含 `schtasks.exe /Create /XML`，两类事件都提供完整任务路径；创建 XML 位于 `Child.TaskContent`，更新后 XML 位于 `Child.TaskContentNew`。`Parent.*` 可能表示直接客户端，也可能是 Task Scheduler 或其他系统服务侧进程，不能作为必需语义证据。
 
-## 260814140000run 结论
+`reference/260814140000run` 已证明 COM 注册可以命中 `ServiceEvents / InjectHook / RpcSchedTaskCreate`。该动作同时承载创建与更新注册调用，不能单独区分语义，因此继续作为独立 RPC 方法保留，但不会替代 4698/4702 直接语义子测试。
 
-- 原 COM 样本已被检测：`ServiceEvents / InjectHook / RpcSchedTaskCreate` 与本地任务路径、Actor PID 完全一致，EDR 时间晚于本地完成时间约 27 ms。
-- `RpcSchedTaskCreate` 表示 `RegisterTaskDefinition` 注册任务的 RPC Hook。创建和更新都可能使用同一个动作名，因此规范化动作是 `register`，不能仅凭该字段区分创建与修改语义。
-- `SchedTaskCreate` 来自另一条 `ScheduleTaskEvents / WinEventLog / 4698` 链。当前测试主机的导出没有任何 `ScheduleTaskEvents`；同目录提供的 560 条相关记录均来自其他主机。
-- Windows 是否生成 4698 受“审核其他对象访问事件（Audit Other Object Access Events）”策略控制。仅凭 EDR 导出无法区分“本机未生成 4698”和“EDR 未接入/导出本机 4698”，因此方法 2 通过语言无关的子类别 GUID `{0CCE9227-69AE-11D9-BED3-505054503030}` 保存 `auditpol` 状态，并保存本机 Security 日志查询结果。
+此前的非 RPC 子测试只读取 `auditpol` 状态，然后执行普通 `schtasks.exe` 命令。即使系统没有启用“其他对象访问事件”成功审核，命令和任务状态仍会成功，本地也不会因缺少 4698/4702 而失败。这会产生“行为成功、EDR 没有可采集源”的假阳性。
 
-完整分析保存在 `reference/EDR能力细节.txt`。
+## 两类独立方法
 
-## 安全模型
+每项能力保留 Task Scheduler COM 方法，并增加各自独立的安全审计方法：
 
-- 每个方法只使用根目录下的唯一任务路径 `\EdrTest_<nonce>_<operation>_<method>`，不枚举、覆盖或删除其他任务。
-- COM 方法创建默认禁用且无触发器的任务。
-- `schtasks.exe` 创建方法启用任务，以贴近常见 4698 样本；任务只有一年后的单次时间触发器，动作是系统 `cmd.exe` 的无害 `rem`。修改方法对无触发器的禁用任务使用 `/Change /ENABLE`，避免 `/TR` 触发运行身份密码交互；删除方法使用 `/Delete`。测试过程绝不启动任务并在采证后立即精确清理。
-- Controller 独立查询 Task Scheduler 2.0 COM 服务，清理只删除精确任务路径并再次确认不存在。
-- 样本只读取审计策略与 Security 日志，不会自动修改本机审计策略。
+| 能力 | 方法 ID | 激发操作 | 本机直接证据 | 腾讯动作 |
+|---|---|---|---|---|
+| 创建 | `security_audit_create` | `schtasks.exe /Create /TN <唯一任务> /XML <定义> /F` | Security 4698 | `SchedTaskCreate` |
+| 修改 | `security_audit_update` | 预置禁用任务后，以 `/Create /XML /F` 覆盖完整定义 | Security 4702 | `SchedTaskUpdate` |
+| 删除 | `security_audit_delete` | 预置任务后执行 `schtasks.exe /Delete /F` | Security 4699 | 腾讯侧尚未实现 |
 
-## 行为与云端主证据
+安全审计方法通过原生 Audit Policy API 精确保存“其他对象访问事件”子类别的位掩码，仅在行为窗口内补充成功审核位，并在读取证据后恢复原值。它不解析本地化的 `auditpol.exe` 文本，也不备份或覆盖其他审核子类别。三项能力因此需要管理员权限并标记为 L2。
 
-| 能力/方法 | Actor 行为 | 本地绝对结论 | 云端主证据 |
-|---|---|---|---|
-| 创建 / `task_scheduler_com` | COM `RegisterTask` | 前不存在、后存在、任务禁用、XML/主体/动作完整 | `ServiceEvents`、`InjectHook`、`RpcSchedTaskCreate`、任务路径、客户端 PID |
-| 创建 / `schtasks_cli` | 系统 `schtasks.exe /Create /SC ONCE` | 前不存在、后存在、任务启用、包含未来 `TimeTrigger`；同时记录本机 4698 诊断 | `ScheduleTaskEvents`、`WinEventLog`、4698、任务路径、任务 XML 中动作标记 |
-| 修改 / `task_scheduler_com` | COM `RegisterTaskDefinition(TASK_UPDATE)` | 前后均存在、XML 哈希不同、修改后标记可读 | `ServiceEvents`、`RpcSchedTaskCreate` 注册 RPC、任务路径、客户端 PID；它只证明注册调用，不单独证明修改语义 |
-| 修改 / `schtasks_cli` | 系统 `schtasks.exe /Change /ENABLE` | 前后均存在、XML 哈希不同、由禁用变为启用、动作保持不变且任务无触发器；同时记录本机 4702 诊断 | `ScheduleTaskEvents`、`SchedTaskUpdate`、4702、任务路径、`Child.TaskContentNew` 中唯一预置标记 |
-| 删除 / `task_scheduler_com` | COM 删除精确任务路径 | 前存在、后不存在 | 4699、任务路径；Action.Name 暂定 `SchedTaskDelete` |
-| 删除 / `schtasks_cli` | 系统 `schtasks.exe /Delete /TN ... /F` | 前存在、后不存在；同时记录本机 4699 诊断 | 4699、任务路径；Action.Name 暂定 `SchedTaskDelete` |
+Actor 只有同时满足以下条件才报告本地成功：
 
-修改和删除的预置创建可能同时产生创建事件，因此比较器仍要求目标事件的行为语义与 EventLog ID。Action.Name 是 EDR 侧可选消歧规则，不参与也不改变本地基准。创建默认值为 `SchedTaskCreate, RpcSchedTaskCreate`，修改默认值为 `SchedTaskUpdate, RpcSchedTaskCreate`，以免全局筛选提前排除任一方法；删除仍为 `SchedTaskDelete`。
+1. 计划任务操作前后状态符合创建、修改或删除语义；
+2. Security 日志出现本轮唯一任务路径对应的 4698、4702 或 4699；
+3. 事件记录号与事件自身 UTC 时间已提取；
+4. 审核策略恢复为操作前的精确位掩码。
 
-## 字段映射与关联
+## BASELINE 与关联
 
-- 4698/4702/4699：`Child.TaskName`（兼容 `Child.NodeName`）→ `scheduled_task.name`
-- 4698/4702：`Child.TaskContent` / `Child.TaskContentNew` → `scheduled_task.content`
-- RPC Hook：`Child.TaskName` → `scheduled_task.name`，`Child.NodeName`/`Child.FilePath` → `scheduled_task.command`，`Child.TaskArg` → `scheduled_task.arguments`
-- `Action.EventLogId` → `winlog.event_id`
-- `Child.Subject*` → `user.*`
-- `Parent.*` → `process.*`
+本地运行日志仍是绝对基准。创建与修改的云端必需条件是任务路径、任务 XML 中的本轮唯一标记和 Windows 事件 ID。关联时间使用本机 Security 事件自身的 `System/TimeCreated/@SystemTime`，而不是 `schtasks.exe` 退出时间，因此可继续使用 15 ms 强关联阈值。进程路径和命令行只作推荐证据，避免 EDR 仅保留服务侧调用链时误判。
 
-任务路径是强锚点，Actor PID/路径及 15 ms 时间差是强/中等证据。真实 WinEventLog 可能只保留 `svchost.exe`，因此它能通过推荐项，但页面会提示“EDR 仅保留 Task Scheduler 服务侧调用链，需要补充客户端调用链”。CLI 方法分别只读查询本机 4698/4702/4699；若本机找到对应事件而云端没有直接语义事件，结论应指向 EDR 接入或导出链，若本机也没有，则先检查审计策略。
+腾讯 EDR 当前没有可验证的 `SchedTaskDelete` 导出样本。删除能力仍执行与创建、修改相同完整度的本地激发、自验证、证据保存和策略恢复；腾讯云端要求保留为规划项，真实离线比较预计显示未通过，不作为本轮样本实现验收目标。
+
+## 安全与清理
+
+- 每个方法使用 `\EdrTest_<nonce>_<operation>_<method>` 唯一路径，拒绝操作该命名范围外的任务。
+- 任务动作只包含不会被调度执行的 `cmd.exe /c rem` 标记，安全审计创建与更新使用一年后的时间触发器。
+- Controller 在每个方法结束后精确删除对应任务；审核策略由 Actor 在退出前恢复。
+- 审核策略设置、实际启用值、恢复值、事件 XML、事件时间和记录号均写入本地事实或证据文件，便于前端展开排查。
+- Security 事件 XML 可能包含当前账号、域和 SID，对应证据文件标记为敏感；导出或共享运行结果前应按平台规范脱敏。
 
 ## 构建与验证
 
 ```powershell
 pwsh -NoProfile -File .\scripts\Build-ScheduledTaskActivitySamples.ps1
+# 需要管理员权限；会执行三项本地安全审计子测试及合成云端比较回归
 pwsh -NoProfile -File .\scripts\Test-ScheduledTaskActivitySamples.ps1
 ```
 
-字段清单与脱敏示例见 `docs/reference/tencent-edr-scheduled-task-events-field-profile.json`。
+脱敏字段清单与采集统计见 `docs/reference/tencent-edr-scheduled-task-events-field-profile.json`。

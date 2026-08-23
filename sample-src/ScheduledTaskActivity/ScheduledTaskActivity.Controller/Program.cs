@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json.Nodes;
 using EdrTest;
 
@@ -40,24 +41,33 @@ internal static class Program
             var actorDefinition = package.Manifest.Participants.Single(participant => participant.Role == "actor");
             var actorPath = package.ResolveProgram(actorDefinition.Executable);
             var holdMs = parameters["post_operation_hold_ms"]?.GetValue<int>() ?? 1_500;
-            var methods = new[] { "task_scheduler_com", "schtasks_cli" };
+            var securityAuditMethod = operation switch
+            {
+                "create" => "security_audit_create",
+                "modify" => "security_audit_update",
+                "delete" => "security_audit_delete",
+                _ => throw new InvalidDataException($"没有为计划任务操作 {operation} 定义安全审计子测试。"),
+            };
+            var methods = new[] { "task_scheduler_com", securityAuditMethod };
             var allSucceeded = true;
             string? firstError = null;
             foreach (var (method, index) in methods.Select((value, index) => (value, index)))
             {
-                var methodTag = method == "schtasks_cli" ? "cli" : "com";
+                var isSecurityAuditMethod = IsSecurityAuditMethod(method);
+                var methodTag = isSecurityAuditMethod ? "audit" : "rpc";
                 taskPath = $"\\EdrTest_{tag}_{operation}_{methodTag}";
                 var beforeMarker = $"EDRTEST|{invocation.Nonce}|SCHEDULED_TASK|{method}|BEFORE";
                 var expectedMarker = $"EDRTEST|{invocation.Nonce}|SCHEDULED_TASK|{method}|{operation.ToUpperInvariant()}";
                 var beforeXml = ScheduledTaskClient.CreateDefinition(taskPath, principalSid, beforeMarker, "/d /c exit 0");
-                var enabledFutureTask = operation == "create" && method == "schtasks_cli";
+                var enabledFutureTask = isSecurityAuditMethod && (operation is "create" or "modify");
                 var afterArguments = $"/d /c rem EDRTEST_{tag}_{methodTag}_{operation.ToUpperInvariant()}";
                 var afterXml = ScheduledTaskClient.CreateDefinition(taskPath, principalSid, expectedMarker, afterArguments,
                     enabled: enabledFutureTask, futureStartUtc: enabledFutureTask ? DateTimeOffset.UtcNow.AddYears(1) : null);
                 var beforeDefinitionPath = Path.Combine(invocation.WorkDir, $"scheduled-task-before-{method}.xml");
                 var afterDefinitionPath = Path.Combine(invocation.WorkDir, $"scheduled-task-after-{method}.xml");
-                File.WriteAllText(beforeDefinitionPath, beforeXml);
-                File.WriteAllText(afterDefinitionPath, afterXml);
+                // CreateDefinition 声明 UTF-16；schtasks.exe /XML 会按声明解码文件，必须保持字节编码一致。
+                File.WriteAllText(beforeDefinitionPath, beforeXml, Encoding.Unicode);
+                File.WriteAllText(afterDefinitionPath, afterXml, Encoding.Unicode);
 
                 Prepare(operation, taskPath, beforeXml, beforeMarker);
                 var resultPath = Path.Combine(invocation.WorkDir, $"scheduled-task-actor-result-{method}.json");
@@ -160,19 +170,22 @@ internal static class Program
     private static bool Verify(string method, string operation, string marker, string actionArguments,
         BehaviorResult result, TaskSnapshot independentlyObserved) => operation switch
     {
-        "create" => !result.Before.Exists && result.After.Exists && result.After.Enabled == (method == "schtasks_cli")
-            && (method == "schtasks_cli"
+        "create" => !result.Before.Exists && result.After.Exists && result.After.Enabled == IsSecurityAuditMethod(method)
+            && (IsSecurityAuditMethod(method)
                 ? string.Equals(result.After.ActionArguments, actionArguments, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(independentlyObserved.ActionArguments, actionArguments, StringComparison.OrdinalIgnoreCase)
                 : result.After.Marker == marker && independentlyObserved.Marker == marker)
             && independentlyObserved.Exists
-            && (method != "schtasks_cli" || independentlyObserved.Triggers?.Contains("TimeTrigger", StringComparer.Ordinal) == true),
+            && (!IsSecurityAuditMethod(method) || result.After.Marker == marker && independentlyObserved.Marker == marker)
+            && (!IsSecurityAuditMethod(method) || independentlyObserved.Triggers?.Contains("TimeTrigger", StringComparer.Ordinal) == true),
         "modify" => result.Before.Exists && result.After.Exists && result.Before.XmlSha256 != result.After.XmlSha256
             && independentlyObserved.Exists
-            && (method == "schtasks_cli"
+            && (IsSecurityAuditMethod(method)
                 ? result.Before.Enabled == false && result.After.Enabled == true && independentlyObserved.Enabled == true
-                    && string.Equals(result.After.ActionArguments, result.Before.ActionArguments, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(independentlyObserved.ActionArguments, result.Before.ActionArguments, StringComparison.OrdinalIgnoreCase)
+                    && result.After.Marker == marker && independentlyObserved.Marker == marker
+                    && string.Equals(result.After.ActionArguments, actionArguments, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(independentlyObserved.ActionArguments, actionArguments, StringComparison.OrdinalIgnoreCase)
+                    && independentlyObserved.Triggers?.Contains("TimeTrigger", StringComparer.Ordinal) == true
                 : result.After.Marker == marker && independentlyObserved.Marker == marker),
         "delete" => result.Before.Exists && !result.After.Exists && !independentlyObserved.Exists,
         _ => false,
@@ -228,9 +241,14 @@ internal static class Program
         BehaviorResult result, ProgramObservation actor, string artifactId) => new()
     {
         CaseRunId = invocation.CaseRunId, Sequence = index + 1, EventType = "scheduled_task", EventAction = operation,
-        Nonce = invocation.Nonce, OccurredAtUtc = result.CompletedAtUtc, ObservedAtUtc = DateTimeOffset.UtcNow,
+        Nonce = invocation.Nonce, OccurredAtUtc = IsSecurityAuditMethod(method)
+            ? result.SecurityEventOccurredAtUtc ?? result.OccurredAtUtc
+            : result.CompletedAtUtc,
+        ObservedAtUtc = DateTimeOffset.UtcNow,
         MonotonicOffsetMs = stopwatch.ElapsedMilliseconds, Source = "scheduled_task_activity_controller",
-        CollectionMethod = method == "schtasks_cli" ? "schtasks_cli_plus_independent_query_and_security_event_diagnostic" : "task_scheduler_2_com_plus_independent_query",
+        CollectionMethod = IsSecurityAuditMethod(method)
+            ? "temporary_native_audit_policy_plus_schtasks_xml_and_exact_security_event"
+            : "task_scheduler_2_com_plus_independent_query",
         Confidence = "high", ActorProgramId = actor.ProgramInstanceId,
         Data = new JsonObject
         {
@@ -254,6 +272,9 @@ internal static class Program
             [$"{prefix}.{operation}_succeeded"] = JsonValue.Create(succeeded),
             [$"{prefix}.occurred_at_utc"] = JsonValue.Create(Values.Utc(result.OccurredAtUtc)),
             [$"{prefix}.completed_at_utc"] = JsonValue.Create(Values.Utc(result.CompletedAtUtc)),
+            [$"{prefix}.correlation_at_utc"] = JsonValue.Create(Values.Utc(IsSecurityAuditMethod(method)
+                ? result.SecurityEventOccurredAtUtc ?? result.OccurredAtUtc
+                : result.CompletedAtUtc)),
             [$"{prefix}.task_path"] = JsonValue.Create(result.TaskPath), [$"{prefix}.marker"] = JsonValue.Create(result.ExpectedMarker),
             [$"{prefix}.actor_pid"] = JsonValue.Create(actor.Pid), [$"{prefix}.actor_executable"] = JsonValue.Create(actor.ExecutablePath),
             [$"{prefix}.actor_command_line"] = JsonValue.Create(actor.CommandLine),
@@ -268,6 +289,16 @@ internal static class Program
             [$"{prefix}.after.triggers"] = StringArray(result.After.Triggers),
             [$"{prefix}.security_event_id"] = JsonValue.Create(result.SecurityEventId),
             [$"{prefix}.security_event_found"] = JsonValue.Create(result.SecurityEventFound),
+            [$"{prefix}.security_event_occurred_at_utc"] = JsonValue.Create(result.SecurityEventOccurredAtUtc is null
+                ? null : Values.Utc(result.SecurityEventOccurredAtUtc.Value)),
+            [$"{prefix}.security_event_record_id"] = JsonValue.Create(result.SecurityEventRecordId),
+            [$"{prefix}.audit_subcategory_id"] = JsonValue.Create(result.AuditSubcategoryId),
+            [$"{prefix}.audit_policy_before"] = JsonValue.Create(result.AuditPolicyBefore),
+            [$"{prefix}.audit_policy_active"] = JsonValue.Create(result.AuditPolicyActive),
+            [$"{prefix}.audit_success_enabled"] = JsonValue.Create(result.AuditSuccessEnabled),
+            [$"{prefix}.audit_policy_restored"] = JsonValue.Create(result.AuditPolicyRestored),
+            [$"{prefix}.audit_policy_changed"] = JsonValue.Create(result.AuditPolicyChanged),
+            [$"{prefix}.audit_policy_restore_succeeded"] = JsonValue.Create(result.AuditPolicyRestoreSucceeded),
             [$"{prefix}.audit_policy_output"] = JsonValue.Create(result.AuditPolicyOutput),
             [$"{prefix}.security_event_query_output"] = JsonValue.Create(result.SecurityEventQueryOutput),
             [$"{prefix}.diagnostic_error"] = JsonValue.Create(result.DiagnosticError),
@@ -300,7 +331,7 @@ internal static class Program
             CaseRunId = invocation.CaseRunId, Kind = "behavior_protocol",
             RelativePath = Path.GetRelativePath(runDirectory, resultPath).Replace('\\', '/'), MediaType = "application/json",
             Sha256 = Hashing.FileSha256(resultPath), SizeBytes = new FileInfo(resultPath).Length,
-            CreatedAtUtc = File.GetCreationTimeUtc(resultPath), Sensitive = false,
+            CreatedAtUtc = File.GetCreationTimeUtc(resultPath), Sensitive = IsSecurityAuditMethod(method),
             Metadata = new JsonObject { ["operation"] = operation, ["method"] = method, ["task_path"] = taskPath, ["task_enabled"] = enabled },
         };
     }
@@ -364,6 +395,9 @@ internal static class Program
         var tag = new string(nonce.Where(char.IsLetterOrDigit).Take(16).ToArray()).ToLowerInvariant();
         return tag.Length >= 8 ? tag : throw new InvalidDataException("本轮 nonce 不能生成安全的计划任务名称。");
     }
+
+    private static bool IsSecurityAuditMethod(string method) =>
+        method is "security_audit_create" or "security_audit_update" or "security_audit_delete";
 
     private static TaskSnapshot SafeSnapshot(string taskPath)
     {
