@@ -15,6 +15,10 @@ capability:
 local_requirements:
   - { field: facts.usb.environment.ready, operator: equals, expected: true }
   - { field: facts.usb.package.signature_valid, operator: equals, expected: true }
+  - { field: facts.usb.package.inf_sha256, operator: present }
+  - { field: facts.usb.package.catalog_sha256, operator: present }
+  - { field: facts.usb.package.certificate_sha256, operator: present }
+  - { field: facts.usb.package.catalog_membership_verified, operator: equals, expected: true }
   - { field: facts.usb.operation_succeeded, operator: equals, expected: true }
   - { field: facts.usb.operation, operator: equals, expected: mount }
   - { field: facts.usb.method, operator: equals, expected: USB_UDE_PNP }

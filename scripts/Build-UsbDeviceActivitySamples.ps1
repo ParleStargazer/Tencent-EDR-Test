@@ -46,15 +46,32 @@ if (-not (Test-Path -LiteralPath $DriverCertificatePath -PathType Leaf)) {
 $metadata = Get-Content -LiteralPath (Join-Path $UsbDriverPackagePath "usb-driver-package.json") -Raw |
     ConvertFrom-Json
 $driverPath = Join-Path $UsbDriverPackagePath "UsbUdeTest.sys"
+$infPath = Join-Path $UsbDriverPackagePath "UsbUdeTest.inf"
+$catalogPath = Join-Path $UsbDriverPackagePath "UsbUdeTest.cat"
 $actualHash = (Get-FileHash -LiteralPath $driverPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$actualInfHash = (Get-FileHash -LiteralPath $infPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$actualCatalogHash = (Get-FileHash -LiteralPath $catalogPath -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actualHash -ne $metadata.sha256) { throw "UsbUdeTest.sys SHA256 与 usb-driver-package.json 不一致。" }
+if ([string]::IsNullOrWhiteSpace([string]$metadata.inf_sha256) -or $actualInfHash -ne $metadata.inf_sha256) {
+    throw "UsbUdeTest.inf SHA256 与 usb-driver-package.json 不一致；签名后的 INF 可能被 Git 换行转换。"
+}
+if ([string]::IsNullOrWhiteSpace([string]$metadata.catalog_sha256) -or $actualCatalogHash -ne $metadata.catalog_sha256) {
+    throw "UsbUdeTest.cat SHA256 与 usb-driver-package.json 不一致。"
+}
 if ($metadata.signature_valid -ne $true) { throw "USB UDE 能力包拒绝使用未签名的 SYS/CAT。" }
+if ($metadata.catalog_membership_verified -ne $true) { throw "USB UDE 包未声明 SYS/INF 已纳入 CAT。" }
 if ($metadata.private_key_in_package -ne $false) { throw "USB UDE 包元数据必须明确 private_key_in_package=false。" }
 if ($metadata.hardware_id -ne "ROOT\USB_UDE_TEST") { throw "USB UDE 包硬件 ID 与样本协议不一致。" }
 
 $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($DriverCertificatePath)
 try {
     if ($certificate.HasPrivateKey) { throw "仓库能力包只能包含公开证书，不能包含私钥。" }
+    $actualCertificateHash = $certificate.GetCertHashString(
+        [Security.Cryptography.HashAlgorithmName]::SHA256).ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace([string]$metadata.certificate_sha256) `
+        -or $actualCertificateHash -ne $metadata.certificate_sha256) {
+        throw "公开证书 SHA256 与 USB UDE 包元数据不一致。"
+    }
     $expectedThumbprint = ([string]$metadata.certificate_thumbprint).Replace(" ", "").ToUpperInvariant()
     if ([string]::IsNullOrWhiteSpace($expectedThumbprint) -or $certificate.Thumbprint -ne $expectedThumbprint) {
         throw "公开证书指纹与 USB UDE 包元数据不一致。"

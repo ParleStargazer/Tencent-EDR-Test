@@ -41,8 +41,10 @@ internal static class Program
                 ?? throw new InvalidDataException("无法定位 USB 能力包目录。");
             var driverPath = Path.Combine(packageDirectory, "UsbUdeTest.sys");
             var infPath = Path.Combine(packageDirectory, "UsbUdeTest.inf");
+            var catalogPath = Path.Combine(packageDirectory, "UsbUdeTest.cat");
+            var certificatePath = Path.Combine(packageDirectory, "EdrTestDriverTest.cer");
             var metadataPath = Path.Combine(packageDirectory, "usb-driver-package.json");
-            var environment = EvaluateEnvironment(driverPath, infPath, metadataPath);
+            var environment = EvaluateEnvironment(driverPath, infPath, catalogPath, certificatePath, metadataPath);
             AddEnvironmentFacts(database, invocation, environment);
             if (!environment.Ready)
             {
@@ -153,21 +155,32 @@ internal static class Program
         }
     }
 
-    private static UsbEnvironmentCheck EvaluateEnvironment(string driverPath, string infPath, string metadataPath)
+    private static UsbEnvironmentCheck EvaluateEnvironment(string driverPath, string infPath, string catalogPath,
+        string certificatePath, string metadataPath)
     {
         if (!OperatingSystem.IsWindows()) return UsbEnvironmentCheck.NotReady("仅支持 Windows。", driverPath);
         if (RuntimeInformation.ProcessArchitecture != Architecture.X64)
             return UsbEnvironmentCheck.NotReady("USB UDE 样本仅支持 x64 进程。", driverPath);
         if (!IsAdministrator()) return UsbEnvironmentCheck.NotReady("USB UDE 能力需要管理员权限。", driverPath);
-        if (!File.Exists(driverPath) || !File.Exists(infPath) || !File.Exists(metadataPath))
-            return UsbEnvironmentCheck.NotReady("能力包缺少 UsbUdeTest SYS、INF 或元数据。", driverPath);
+        if (!File.Exists(driverPath) || !File.Exists(infPath) || !File.Exists(catalogPath)
+            || !File.Exists(certificatePath) || !File.Exists(metadataPath))
+            return UsbEnvironmentCheck.NotReady("能力包缺少 UsbUdeTest SYS、INF、CAT、公开 CER 或元数据。", driverPath);
         var metadata = JsonNode.Parse(File.ReadAllText(metadataPath))?.AsObject()
             ?? throw new InvalidDataException("usb-driver-package.json 不是 JSON 对象。");
         var actualHash = UsbDeviceActivity.Hashing.Sha256(driverPath);
+        var actualInfHash = UsbDeviceActivity.Hashing.Sha256(infPath);
+        var actualCatalogHash = UsbDeviceActivity.Hashing.Sha256(catalogPath);
+        using var certificate = new X509Certificate2(certificatePath);
+        var actualCertificateHash = certificate.GetCertHashString(
+            System.Security.Cryptography.HashAlgorithmName.SHA256).ToLowerInvariant();
         var expectedHash = metadata["sha256"]?.GetValue<string>();
+        var expectedInfHash = metadata["inf_sha256"]?.GetValue<string>();
+        var expectedCatalogHash = metadata["catalog_sha256"]?.GetValue<string>();
+        var expectedCertificateHash = metadata["certificate_sha256"]?.GetValue<string>();
         var signatureValid = metadata["signature_valid"]?.GetValue<bool>() ?? false;
+        var catalogMembershipVerified = metadata["catalog_membership_verified"]?.GetValue<bool>() ?? false;
         var signer = metadata["signer"]?.GetValue<string>();
-        var thumbprint = metadata["certificate_thumbprint"]?.GetValue<string>();
+        var thumbprint = metadata["certificate_thumbprint"]?.GetValue<string>()?.Replace(" ", "").ToUpperInvariant();
         var requiresTestSigning = metadata["requires_test_signing"]?.GetValue<bool>() ?? true;
         var privateKeyInPackage = metadata["private_key_in_package"]?.GetValue<bool>() ?? true;
         var hardwareId = metadata["hardware_id"]?.GetValue<string>();
@@ -175,23 +188,50 @@ internal static class Program
         var productId = metadata["emulated_product_id"]?.GetValue<string>();
         if (string.IsNullOrWhiteSpace(expectedHash) || !string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
             return UsbEnvironmentCheck.NotReady("UsbUdeTest.sys 与元数据 SHA256 不一致。", driverPath, actualHash,
-                signer, signatureValid, thumbprint, requiresTestSigning);
+                signer, signatureValid, thumbprint, requiresTestSigning, actualInfHash, actualCatalogHash,
+                actualCertificateHash, catalogMembershipVerified);
+        if (string.IsNullOrWhiteSpace(expectedInfHash)
+            || !string.Equals(actualInfHash, expectedInfHash, StringComparison.OrdinalIgnoreCase))
+            return UsbEnvironmentCheck.NotReady("UsbUdeTest.inf 与元数据 SHA256 不一致；文件可能被 Git 换行转换。",
+                driverPath, actualHash, signer, signatureValid, thumbprint, requiresTestSigning, actualInfHash,
+                actualCatalogHash, actualCertificateHash, catalogMembershipVerified);
+        if (string.IsNullOrWhiteSpace(expectedCatalogHash)
+            || !string.Equals(actualCatalogHash, expectedCatalogHash, StringComparison.OrdinalIgnoreCase))
+            return UsbEnvironmentCheck.NotReady("UsbUdeTest.cat 与元数据 SHA256 不一致。", driverPath, actualHash,
+                signer, signatureValid, thumbprint, requiresTestSigning, actualInfHash, actualCatalogHash,
+                actualCertificateHash, catalogMembershipVerified);
+        if (string.IsNullOrWhiteSpace(expectedCertificateHash)
+            || !string.Equals(actualCertificateHash, expectedCertificateHash, StringComparison.OrdinalIgnoreCase)
+            || certificate.HasPrivateKey
+            || !string.Equals(certificate.Thumbprint, thumbprint, StringComparison.OrdinalIgnoreCase))
+            return UsbEnvironmentCheck.NotReady("USB UDE 公开证书哈希、指纹或私钥边界与元数据不一致。",
+                driverPath, actualHash, signer, signatureValid, thumbprint, requiresTestSigning, actualInfHash,
+                actualCatalogHash, actualCertificateHash, catalogMembershipVerified);
         if (!signatureValid || string.IsNullOrWhiteSpace(thumbprint))
             return UsbEnvironmentCheck.NotReady("UsbUdeTest.sys 未完成可验证的测试签名。", driverPath, actualHash,
-                signer, signatureValid, thumbprint, requiresTestSigning);
+                signer, signatureValid, thumbprint, requiresTestSigning, actualInfHash, actualCatalogHash,
+                actualCertificateHash, catalogMembershipVerified);
+        if (!catalogMembershipVerified)
+            return UsbEnvironmentCheck.NotReady("USB UDE 包未声明 SYS/INF 已纳入 CAT。", driverPath, actualHash,
+                signer, signatureValid, thumbprint, requiresTestSigning, actualInfHash, actualCatalogHash,
+                actualCertificateHash, catalogMembershipVerified);
         if (privateKeyInPackage
             || !string.Equals(hardwareId, UsbTestConstants.HardwareId, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(vendorId, UsbTestConstants.VendorId, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(productId, UsbTestConstants.ProductId, StringComparison.OrdinalIgnoreCase))
             return UsbEnvironmentCheck.NotReady("USB UDE 包元数据的私钥边界、Hardware ID 或 VID/PID 与样本协议不一致。",
-                driverPath, actualHash, signer, signatureValid, thumbprint, requiresTestSigning);
+                driverPath, actualHash, signer, signatureValid, thumbprint, requiresTestSigning, actualInfHash,
+                actualCatalogHash, actualCertificateHash, catalogMembershipVerified);
         if (!CertificateTrusted(thumbprint))
             return UsbEnvironmentCheck.NotReady("USB UDE 测试证书尚未同时导入 LocalMachine\\Root 与 TrustedPublisher。",
-                driverPath, actualHash, signer, signatureValid, thumbprint, requiresTestSigning);
+                driverPath, actualHash, signer, signatureValid, thumbprint, requiresTestSigning, actualInfHash,
+                actualCatalogHash, actualCertificateHash, catalogMembershipVerified);
         if (requiresTestSigning && !TestSigningEnabled())
             return UsbEnvironmentCheck.NotReady("当前启动项未启用 testsigning；USB 挂载和卸载能力不可用。",
-                driverPath, actualHash, signer, signatureValid, thumbprint, requiresTestSigning);
-        return new UsbEnvironmentCheck(true, null, driverPath, actualHash, signer, signatureValid, thumbprint, requiresTestSigning);
+                driverPath, actualHash, signer, signatureValid, thumbprint, requiresTestSigning, actualInfHash,
+                actualCatalogHash, actualCertificateHash, catalogMembershipVerified);
+        return new UsbEnvironmentCheck(true, null, driverPath, actualHash, actualInfHash, actualCatalogHash,
+            actualCertificateHash, signer, signatureValid, thumbprint, requiresTestSigning, catalogMembershipVerified);
     }
 
     private static ActorExecution ExecuteActor(ControllerInvocation invocation, string actorPath, string operation,
@@ -313,6 +353,11 @@ internal static class Program
         AddFact(database, invocation, "usb.environment.ready", JsonValue.Create(environment.Ready), null);
         AddFact(database, invocation, "usb.environment.reason", JsonValue.Create(environment.Reason), null);
         AddFact(database, invocation, "usb.package.sha256", JsonValue.Create(environment.Sha256), null);
+        AddFact(database, invocation, "usb.package.inf_sha256", JsonValue.Create(environment.InfSha256), null);
+        AddFact(database, invocation, "usb.package.catalog_sha256", JsonValue.Create(environment.CatalogSha256), null);
+        AddFact(database, invocation, "usb.package.certificate_sha256", JsonValue.Create(environment.CertificateSha256), null);
+        AddFact(database, invocation, "usb.package.catalog_membership_verified",
+            JsonValue.Create(environment.CatalogMembershipVerified), null);
         AddFact(database, invocation, "usb.package.signer", JsonValue.Create(environment.Signer), null);
         AddFact(database, invocation, "usb.package.signature_valid", JsonValue.Create(environment.SignatureValid), null);
         AddFact(database, invocation, "usb.package.certificate_thumbprint", JsonValue.Create(environment.CertificateThumbprint), null);
@@ -505,10 +550,15 @@ internal static class Program
 
     private sealed record ActorExecution(Process Process, ProgramObservation Observation, UsbBehaviorResult Result, string ResultPath);
     private sealed record UsbEnvironmentCheck(bool Ready, string? Reason, string DriverPath, string? Sha256,
-        string? Signer, bool SignatureValid, string? CertificateThumbprint, bool RequiresTestSigning)
+        string? InfSha256, string? CatalogSha256, string? CertificateSha256, string? Signer,
+        bool SignatureValid, string? CertificateThumbprint, bool RequiresTestSigning,
+        bool CatalogMembershipVerified)
     {
         public static UsbEnvironmentCheck NotReady(string reason, string driverPath, string? sha256 = null,
-            string? signer = null, bool signatureValid = false, string? thumbprint = null, bool requiresTestSigning = true) =>
-            new(false, reason, driverPath, sha256, signer, signatureValid, thumbprint, requiresTestSigning);
+            string? signer = null, bool signatureValid = false, string? thumbprint = null,
+            bool requiresTestSigning = true, string? infSha256 = null, string? catalogSha256 = null,
+            string? certificateSha256 = null, bool catalogMembershipVerified = false) =>
+            new(false, reason, driverPath, sha256, infSha256, catalogSha256, certificateSha256, signer,
+                signatureValid, thumbprint, requiresTestSigning, catalogMembershipVerified);
     }
 }

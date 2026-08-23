@@ -17,7 +17,8 @@
   "timeouts": { "execute_seconds": 120, "cleanup_seconds": 60 },
   "network": { "required": false },
   "expected_fact_keys": [
-    "usb.environment.ready", "usb.environment.reason", "usb.package.sha256", "usb.package.signer",
+    "usb.environment.ready", "usb.environment.reason", "usb.package.sha256", "usb.package.inf_sha256",
+    "usb.package.catalog_sha256", "usb.package.certificate_sha256", "usb.package.catalog_membership_verified", "usb.package.signer",
     "usb.package.signature_valid", "usb.package.certificate_thumbprint", "usb.package.requires_test_signing",
     "usb.operation_succeeded", "usb.operation", "usb.method", "usb.occurred_at_utc", "usb.completed_at_utc",
     "usb.instance_id", "usb.class_guid", "usb.vendor_id", "usb.product_id", "usb.serial_number",

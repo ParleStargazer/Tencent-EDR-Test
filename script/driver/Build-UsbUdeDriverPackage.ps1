@@ -87,8 +87,15 @@ if ($signed) {
 }
 
 $driverHash = (Get-FileHash -LiteralPath $driverPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$infHash = (Get-FileHash -LiteralPath $infPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$catalogHash = (Get-FileHash -LiteralPath $catPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$certificateHash = if ($null -eq $certificate) {
+    $null
+} else {
+    $certificate.GetCertHashString([Security.Cryptography.HashAlgorithmName]::SHA256).ToLowerInvariant()
+}
 $metadata = [ordered]@{
-    schema_version = "1.0"
+    schema_version = "1.1"
     package_name = "UsbUdeTest"
     architecture = "x64"
     configuration = $Configuration
@@ -96,8 +103,14 @@ $metadata = [ordered]@{
     wdk_version = $kitVersion
     built_at_utc = [DateTimeOffset]::UtcNow.ToString("O")
     sha256 = $driverHash
+    inf_sha256 = $infHash
+    catalog_sha256 = $catalogHash
+    certificate_sha256 = $certificateHash
     size_bytes = (Get-Item -LiteralPath $driverPath).Length
+    inf_size_bytes = (Get-Item -LiteralPath $infPath).Length
+    catalog_size_bytes = (Get-Item -LiteralPath $catPath).Length
     signature_valid = $signed
+    catalog_membership_verified = $true
     signer = if ($null -eq $certificate) { $null } else { $certificate.Subject }
     certificate_thumbprint = if ($null -eq $certificate) { $null } else { $certificate.Thumbprint }
     requires_test_signing = $true
@@ -118,4 +131,4 @@ if ($UpdatePrebuilt) {
 }
 
 Write-Host "[已生成] USB UDE 驱动包：$OutputPath"
-Write-Host "[签名状态] $signed；SHA256=$driverHash"
+Write-Host "[签名状态] $signed；SYS=$driverHash；INF=$infHash；CAT=$catalogHash"

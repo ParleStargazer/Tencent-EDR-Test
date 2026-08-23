@@ -54,7 +54,7 @@
 
 准备好 .NET 8 SDK（或更高版本）、PowerShell 7、Node.js 22.13+ 和 pnpm 11.9+ 后，双击仓库根目录的 `启动平台.cmd`。脚本会构建框架与能力包、构建前端、启动本地服务并打开 `http://127.0.0.1:3000/`。
 
-五项用户账号活动、三项服务活动、组策略修改、三项 permanent WMI subscription 活动、虚拟磁盘挂载和驱动三项需要管理员权限。组策略修改与虚拟磁盘挂载为 L2，驱动三项为 L3，都必须在前端确认高风险或向 CLI 传入 `--allow-high-risk`。驱动默认直接使用仓库中已签名的 SYS/CAT 与仅含公钥的 CER，不要求测试机安装 EWDK；仅当仓库包缺失或校验失败时，启动脚本才探测 `-EwdkRoot` 并尝试后备构建，两者都不可用时只跳过驱动三项。启动脚本还会检测管理员权限与当前启动项的 `testsigning`；若签名包对应的公开测试证书尚未受信任，会询问是否导入到 `LocalMachine\Root` 和 `LocalMachine\TrustedPublisher`。平台不会自动开启 `testsigning`，不开启时会明确提示驱动能力不可用。驱动 Controller 仍会复核驱动哈希、签名和证书信任；不满足时封存为 `SKIPPED / ENVIRONMENT_NOT_READY`，不会尝试加载驱动或计作 EDR 失败。
+五项用户账号活动、三项服务活动、组策略修改、三项 permanent WMI subscription 活动、虚拟磁盘挂载和驱动三项需要管理员权限。组策略修改与虚拟磁盘挂载为 L2，驱动三项为 L3，都必须在前端确认高风险或向 CLI 传入 `--allow-high-risk`。驱动默认直接使用仓库中已签名的 SYS/CAT 与仅含公钥的 CER，不要求测试机安装 EWDK；仅当仓库包缺失或校验失败时，启动脚本才探测 `-EwdkRoot` 并尝试后备构建，两者都不可用时只跳过对应驱动能力。启动脚本会检测包内 SYS/INF/CAT/CER 完整性、SYS/CAT 当前 Windows 信任链、管理员权限与当前启动项的 `testsigning`；若签名包对应的公开测试证书尚未受信任，会询问是否导入到 `LocalMachine\Root` 和 `LocalMachine\TrustedPublisher`。平台不会自动开启 `testsigning`，不开启时会明确提示驱动能力不可用。驱动 Controller 仍会复核驱动哈希、签名和证书信任；不满足时封存为 `SKIPPED / ENVIRONMENT_NOT_READY`，不会尝试加载驱动或计作 EDR 失败。
 
 ```powershell
 pwsh -NoProfile -File scripts/Start-EdrTest.ps1

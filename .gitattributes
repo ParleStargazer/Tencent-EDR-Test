@@ -9,3 +9,9 @@
 *.yaml text eol=lf
 *.yml text eol=lf
 *.json text eol=lf
+
+# 驱动目录文件属于已签名包，任何换行转换都会破坏 CAT 成员哈希。
+drivers/**/prebuilt/**/*.inf -text
+drivers/**/prebuilt/**/*.cat binary
+drivers/**/prebuilt/**/*.sys binary
+drivers/cert/**/*.cer binary

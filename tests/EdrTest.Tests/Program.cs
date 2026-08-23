@@ -1580,6 +1580,10 @@ public static class Program
             {
                 ["usb.environment.ready"] = true,
                 ["usb.package.signature_valid"] = true,
+                ["usb.package.inf_sha256"] = new string('1', 64),
+                ["usb.package.catalog_sha256"] = new string('2', 64),
+                ["usb.package.certificate_sha256"] = new string('3', 64),
+                ["usb.package.catalog_membership_verified"] = true,
                 ["usb.operation_succeeded"] = true,
                 ["usb.operation"] = operation,
                 ["usb.method"] = "USB_UDE_PNP",

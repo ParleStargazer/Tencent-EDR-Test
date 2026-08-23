@@ -35,7 +35,7 @@
 
 ### 3.1 USB 设备挂载
 
-1. Controller 校验管理员权限、x64、`testsigning`、公开证书信任、SYS 签名与 SHA-256。
+1. Controller 校验管理员权限、x64、`testsigning`、公开证书双信任区，以及 SYS、INF、CAT、CER 的 SHA-256 和 CAT 成员声明。
 2. 将 INF/SYS/CAT 安装到 Driver Store，创建受控 ROOT devnode，等待 UDE 控制接口出现。
 3. 确认本轮序列号对应的 USB PnP Instance 不存在。
 4. 启动操作 Actor，Actor 发送 Attach IOCTL；驱动调用 `UdecxUsbDevicePlugIn()`。
@@ -87,7 +87,9 @@ BASELINE 文件：
 
 `.cer` 只包含公钥，私钥保留在驱动构建机的证书存储中且不可导出。普通测试机无需安装 EWDK；平台启动时优先验证仓库预构建包，缺失或损坏时才尝试 `F:\EWDK`，该路径也可通过 `-EwdkRoot` 覆盖。
 
-平台不会自动开启 `testsigning`。启动时会报告管理员、当前启动项 `testsigning`、包签名和证书信任状态；导入公开证书需要用户确认。条件不满足时，两个 USB 能力包会被跳过，其他能力继续可用。
+平台不会自动开启 `testsigning`。启动时会报告管理员、当前启动项 `testsigning`、包完整性、SYS/CAT 当前 Windows 信任链和证书双信任区状态；导入公开证书需要用户确认。能力 Controller 在安装前还会复核 SYS、INF、CAT、CER 哈希和证书指纹。条件不满足时，两个 USB 能力包会被跳过，其他能力继续可用。
+
+预构建目录中的 INF 是已签名 CAT 的成员，字节内容不可改变。仓库通过 `.gitattributes` 对 `drivers/**/prebuilt/**/*.inf` 禁用文本转换，避免 Windows 的 `core.autocrlf` 把 LF 转为 CRLF 后产生 `0xE000024B`（INF 哈希不在 CAT 中）。构建脚本会把四个文件的 SHA-256 与 `catalog_membership_verified` 写入元数据；启动脚本和 Controller 均拒绝继续使用任何不一致的包。
 
 ## 6. 构建与验证
 

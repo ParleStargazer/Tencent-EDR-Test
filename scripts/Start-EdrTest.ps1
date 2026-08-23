@@ -147,7 +147,8 @@ function Get-DriverPackageValidation(
     [string]$DriverFileName = "EdrTestDriver.sys",
     [string]$InfFileName = "EdrTestDriver.inf",
     [string]$CatalogFileName = "EdrTestDriver.cat",
-    [string]$MetadataFileName = "driver-package.json"
+    [string]$MetadataFileName = "driver-package.json",
+    [switch]$RequireCatalogIntegrity
 ) {
     $required = @($DriverFileName, $InfFileName, $CatalogFileName, $MetadataFileName)
     $missing = @($required | Where-Object {
@@ -165,7 +166,9 @@ function Get-DriverPackageValidation(
         $metadata = Get-Content -LiteralPath (Join-Path $PackagePath $MetadataFileName) -Raw |
             ConvertFrom-Json
         $driverPath = Join-Path $PackagePath $DriverFileName
+        $infPath = Join-Path $PackagePath $InfFileName
         $catalogPath = Join-Path $PackagePath $CatalogFileName
+        $metadataPath = Join-Path $PackagePath $MetadataFileName
         $actualHash = (Get-FileHash -LiteralPath $driverPath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($metadata.signature_valid -ne $true) {
             return [pscustomobject]@{ Available = $false; Reason = "$MetadataFileName 未声明签名包" }
@@ -185,6 +188,27 @@ function Get-DriverPackageValidation(
         if ($certificate.Thumbprint -ne $expectedThumbprint) {
             return [pscustomobject]@{ Available = $false; Reason = "公开证书指纹与元数据不一致" }
         }
+        if ($RequireCatalogIntegrity) {
+            $actualInfHash = (Get-FileHash -LiteralPath $infPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $actualCatalogHash = (Get-FileHash -LiteralPath $catalogPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $actualCertificateHash = $certificate.GetCertHashString(
+                [Security.Cryptography.HashAlgorithmName]::SHA256).ToLowerInvariant()
+            if ([string]::IsNullOrWhiteSpace([string]$metadata.inf_sha256) `
+                -or $actualInfHash -ne [string]$metadata.inf_sha256) {
+                return [pscustomobject]@{ Available = $false; Reason = "INF 的 SHA256 与签名包元数据不一致；文件可能被 Git 换行转换" }
+            }
+            if ([string]::IsNullOrWhiteSpace([string]$metadata.catalog_sha256) `
+                -or $actualCatalogHash -ne [string]$metadata.catalog_sha256) {
+                return [pscustomobject]@{ Available = $false; Reason = "CAT 的 SHA256 与签名包元数据不一致" }
+            }
+            if ([string]::IsNullOrWhiteSpace([string]$metadata.certificate_sha256) `
+                -or $actualCertificateHash -ne [string]$metadata.certificate_sha256) {
+                return [pscustomobject]@{ Available = $false; Reason = "公开 CER 的 SHA256 与签名包元数据不一致" }
+            }
+            if ($metadata.catalog_membership_verified -ne $true) {
+                return [pscustomobject]@{ Available = $false; Reason = "元数据未声明 INF/SYS 已纳入 CAT" }
+            }
+        }
         $driverSignature = Get-AuthenticodeSignature -LiteralPath $driverPath
         $catalogSignature = Get-AuthenticodeSignature -LiteralPath $catalogPath
         if ($null -eq $driverSignature.SignerCertificate `
@@ -201,11 +225,38 @@ function Get-DriverPackageValidation(
             PackagePath = [IO.Path]::GetFullPath($PackagePath)
             CertificatePath = [IO.Path]::GetFullPath($CertificatePath)
             Thumbprint = $expectedThumbprint
+            DriverPath = [IO.Path]::GetFullPath($driverPath)
+            InfPath = [IO.Path]::GetFullPath($infPath)
+            CatalogPath = [IO.Path]::GetFullPath($catalogPath)
+            MetadataPath = [IO.Path]::GetFullPath($metadataPath)
         }
     } catch {
         return [pscustomobject]@{ Available = $false; Reason = $_.Exception.Message }
     } finally {
         if ($null -ne $certificate) { $certificate.Dispose() }
+    }
+}
+
+function Get-DriverPackageTrustValidation([psobject]$DriverPackage) {
+    if ($null -eq $DriverPackage -or -not $DriverPackage.Available) {
+        return [pscustomobject]@{ Ready = $false; DriverStatus = "Unavailable"; CatalogStatus = "Unavailable"; Reason = "驱动包不可用" }
+    }
+    try {
+        $driverSignature = Get-AuthenticodeSignature -LiteralPath $DriverPackage.DriverPath
+        $catalogSignature = Get-AuthenticodeSignature -LiteralPath $DriverPackage.CatalogPath
+        $ready = $driverSignature.Status -eq [System.Management.Automation.SignatureStatus]::Valid `
+            -and $catalogSignature.Status -eq [System.Management.Automation.SignatureStatus]::Valid
+        $reason = if ($ready) { $null } else {
+            "SYS=$($driverSignature.Status)：$($driverSignature.StatusMessage)；CAT=$($catalogSignature.Status)：$($catalogSignature.StatusMessage)"
+        }
+        return [pscustomobject]@{
+            Ready = $ready
+            DriverStatus = [string]$driverSignature.Status
+            CatalogStatus = [string]$catalogSignature.Status
+            Reason = $reason
+        }
+    } catch {
+        return [pscustomobject]@{ Ready = $false; DriverStatus = "Error"; CatalogStatus = "Error"; Reason = $_.Exception.Message }
     }
 }
 
@@ -268,6 +319,7 @@ function Resolve-UsbUdeTestPackage([string]$DevelopmentKitRoot) {
         InfFileName = "UsbUdeTest.inf"
         CatalogFileName = "UsbUdeTest.cat"
         MetadataFileName = "usb-driver-package.json"
+        RequireCatalogIntegrity = $true
     }
     $repositoryResult = Get-DriverPackageValidation @validationArguments
     if ($repositoryResult.Available) {
@@ -424,10 +476,17 @@ function Test-DriverEnvironmentAtStartup(
             Write-Warning "测试用公开证书缺失或与签名驱动包指纹不一致；驱动加载与卸载能力不可用。"
         }
 
+        $trustValidation = Get-DriverPackageTrustValidation $DriverPackage
+        if ($certificateTrusted -and -not $trustValidation.Ready) {
+            Write-Warning "驱动 SYS/CAT 未通过当前 Windows 信任链校验：$($trustValidation.Reason)"
+        }
         $administratorText = if ($IsAdministrator) { "是" } else { "否" }
         $testSigningText = if ($testSigningEnabled) { "已开启" } else { "未开启" }
         $certificateText = if ($certificateTrusted) { "已导入" } else { "未就绪" }
-        Write-Host "[驱动环境] 驱动包=$($DriverPackage.Source)；管理员=$administratorText；testsigning=$testSigningText；测试证书=$certificateText。" -ForegroundColor Cyan
+        $signatureText = if ($trustValidation.Ready) { "有效" } else { "无效" }
+        $environmentReady = $IsAdministrator -and $testSigningEnabled -and $certificateTrusted -and $trustValidation.Ready
+        $readinessText = if ($environmentReady) { "通过" } else { "未通过" }
+        Write-Host "[驱动环境] 驱动包=$($DriverPackage.Source)；完整性=通过；SYS/CAT 信任链=$signatureText；管理员=$administratorText；testsigning=$testSigningText；测试证书=$certificateText；运行预检=$readinessText。" -ForegroundColor Cyan
         if (-not $testSigningEnabled) {
             Write-Warning "当前启动项未开启 testsigning。平台不会自动修改启动配置；不开启会导致驱动加载与卸载能力不可用。"
         }
@@ -523,10 +582,17 @@ function Test-UsbDeviceEnvironmentAtStartup(
             Write-Warning "USB UDE 公开证书缺失、包含私钥或与签名包指纹不一致；USB 挂载与卸载能力不可用。"
         }
 
+        $trustValidation = Get-DriverPackageTrustValidation $DriverPackage
+        if ($certificateTrusted -and -not $trustValidation.Ready) {
+            Write-Warning "USB UDE SYS/CAT 未通过当前 Windows 信任链校验：$($trustValidation.Reason)"
+        }
         $administratorText = if ($IsAdministrator) { "是" } else { "否" }
         $testSigningText = if ($testSigningEnabled) { "已开启" } else { "未开启" }
         $certificateText = if ($certificateTrusted) { "已导入" } else { "未就绪" }
-        Write-Host "[USB UDE 环境] 驱动包=$($DriverPackage.Source)；管理员=$administratorText；testsigning=$testSigningText；测试证书=$certificateText。" -ForegroundColor Cyan
+        $signatureText = if ($trustValidation.Ready) { "有效" } else { "无效" }
+        $environmentReady = $IsAdministrator -and $testSigningEnabled -and $certificateTrusted -and $trustValidation.Ready
+        $readinessText = if ($environmentReady) { "通过" } else { "未通过" }
+        Write-Host "[USB UDE 环境] 驱动包=$($DriverPackage.Source)；完整性=通过；INF/CAT 字节校验=通过；SYS/CAT 信任链=$signatureText；管理员=$administratorText；testsigning=$testSigningText；测试证书=$certificateText；运行预检=$readinessText。" -ForegroundColor Cyan
         if (-not $testSigningEnabled) {
             Write-Warning "当前启动项未开启 testsigning。平台不会自动修改启动配置；不开启会导致 USB 挂载与卸载能力不可用。"
         }
