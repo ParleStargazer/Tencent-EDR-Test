@@ -102,6 +102,8 @@ BASELINE 文件：
 
 失败时会在本轮 work 目录生成 `usb-driver-install-diagnostic.json`，并以 `usb_driver_install_diagnostic` artifact 进入本地导出。错误消息同时包含 install stage、Win32 错误、OEM INF、服务绑定、CM status/problem、驱动初始化阶段/NTSTATUS、两侧 GUID 和接口状态；清理 ROOT devnode 与 OEM INF 之前完成快照。
 
+测试机曾在 `UdecxWdfDeviceAddUsbDeviceEmulation` 返回 `0xC000000D / STATUS_INVALID_PARAMETER`。原因是代码在 `UDECX_WDF_DEVICE_CONFIG_INIT` 已生成受支持的默认拓扑后，又把 `NumberOfUsb30Ports` 改成了 0。驱动现保留初始化器的 1 个 USB 2.0 加 1 个 USB 3.0 端口；测试设备仍通过 `Usb20PortNumber = 1` 接入 USB 2.0 端口。
+
 ## 6. 构建与验证
 
 构建能力包：

@@ -72,6 +72,8 @@ test("USB 挂载卸载使用 UDE 真 PnP 行为、完整本地基准与直接遥
   assert.match(driver, /evt_device_add_entered/);
   assert.match(driver, /device_interface_create_succeeded/);
   assert.match(driver, /evt_device_add_succeeded/);
+  assert.match(driver, /Keep the UdeCx initializer's supported topology/);
+  assert.doesNotMatch(driver, /NumberOfUsb(?:20|30)Ports\s*=\s*0/);
   assert.match(driver, /\{77DC40F2-80FB-4F86-A6D4-793AB56D2D45\}/);
   assert.equal((driver.match(/77DC40F2-80FB-4F86-A6D4-793AB56D2D45/gi) ?? []).length, 1);
   assert.match(protocol, /77DC40F2-80FB-4F86-A6D4-793AB56D2D45/);

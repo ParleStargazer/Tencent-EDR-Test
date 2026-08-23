@@ -349,8 +349,9 @@ NTSTATUS UsbUdeEvtDeviceAdd(
     context->ControlQueue = NULL;
 
     UDECX_WDF_DEVICE_CONFIG_INIT(&udeConfig, UsbUdeEvtQueryUsbCapability);
-    udeConfig.NumberOfUsb20Ports = 1;
-    udeConfig.NumberOfUsb30Ports = 0;
+    // Keep the UdeCx initializer's supported topology: one USB 2.0 port and
+    // one USB 3.0 port. Setting either count to zero is rejected by UdeCx
+    // with STATUS_INVALID_PARAMETER on the validated Windows 10 host.
     status = UdecxWdfDeviceAddUsbDeviceEmulation(device, &udeConfig);
     if (!NT_SUCCESS(status)) {
         UsbUdeWriteInitializationDiagnostic(Driver, L"udecx_emulation_add_failed", status);
