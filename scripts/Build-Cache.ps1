@@ -126,6 +126,126 @@ function Test-EdrCapabilityPackage {
     }
 }
 
+function Get-EdrRepositoryRelativePath {
+    param(
+        [Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    $root = [System.IO.Path]::GetFullPath($RepositoryRoot)
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $relativePath = [System.IO.Path]::GetRelativePath($root, $fullPath).Replace('\', '/')
+    if ($relativePath.StartsWith("..", [System.StringComparison]::Ordinal) `
+        -or [System.IO.Path]::IsPathRooted($relativePath)) {
+        throw "构建指纹路径必须位于仓库内：$fullPath"
+    }
+    return $relativePath
+}
+
+function Get-EdrCapabilityPackageContentFingerprint {
+    param(
+        [Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string]$PackagePath
+    )
+
+    return Get-EdrBuildFingerprint -RepositoryRoot $RepositoryRoot -InputPaths @($PackagePath) -Properties @{
+        cache_contract = "capability-package-content-v1"
+    }
+}
+
+function Test-EdrRepositoryCapabilityFingerprint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$FingerprintPath,
+        [Parameter(Mandatory)][string]$SourceFingerprint,
+        [Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string[]]$CapabilityPackagePaths
+    )
+
+    if (-not (Test-Path -LiteralPath $FingerprintPath -PathType Leaf)) { return $false }
+    try {
+        $record = Get-Content -LiteralPath $FingerprintPath -Raw | ConvertFrom-Json -Depth 30
+        if ($record.schema_version -ne "1.0" -or $record.source_fingerprint -ne $SourceFingerprint) {
+            return $false
+        }
+        $expectedPackages = @($record.packages)
+        if ($expectedPackages.Count -ne $CapabilityPackagePaths.Count) { return $false }
+
+        foreach ($packagePath in $CapabilityPackagePaths) {
+            if (-not (Test-EdrCapabilityPackage -PackagePath $packagePath)) { return $false }
+            $relativePath = Get-EdrRepositoryRelativePath -RepositoryRoot $RepositoryRoot -Path $packagePath
+            $expected = @($expectedPackages | Where-Object {
+                [string]::Equals($_.path, $relativePath, [System.StringComparison]::OrdinalIgnoreCase)
+            }) | Select-Object -First 1
+            if ($null -eq $expected) { return $false }
+            $snapshot = Get-EdrDirectorySnapshot -Path $packagePath
+            if ($null -eq $snapshot `
+                -or [int]$expected.file_count -ne $snapshot.file_count `
+                -or [long]$expected.total_bytes -ne $snapshot.total_bytes) {
+                return $false
+            }
+            $contentFingerprint = Get-EdrCapabilityPackageContentFingerprint `
+                -RepositoryRoot $RepositoryRoot -PackagePath $packagePath
+            if (-not [string]::Equals($expected.content_fingerprint, $contentFingerprint,
+                    [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $false
+            }
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Set-EdrRepositoryCapabilityFingerprint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$FingerprintPath,
+        [Parameter(Mandatory)][string]$CapabilityKey,
+        [Parameter(Mandatory)][string]$SourceFingerprint,
+        [Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string[]]$CapabilityPackagePaths
+    )
+
+    $packages = @($CapabilityPackagePaths | Sort-Object | ForEach-Object {
+        if (-not (Test-EdrCapabilityPackage -PackagePath $_)) {
+            throw "无法记录仓库能力包指纹，能力包不完整：$_"
+        }
+        $snapshot = Get-EdrDirectorySnapshot -Path $_
+        [ordered]@{
+            path = Get-EdrRepositoryRelativePath -RepositoryRoot $RepositoryRoot -Path $_
+            content_fingerprint = Get-EdrCapabilityPackageContentFingerprint `
+                -RepositoryRoot $RepositoryRoot -PackagePath $_
+            file_count = $snapshot.file_count
+            total_bytes = $snapshot.total_bytes
+        }
+    })
+    $record = [ordered]@{
+        schema_version = "1.0"
+        cache_contract = "repository-capability-v1"
+        capability_key = $CapabilityKey
+        source_fingerprint = $SourceFingerprint
+        packages = $packages
+    }
+    $serialized = $record | ConvertTo-Json -Depth 20
+    if (Test-Path -LiteralPath $FingerprintPath -PathType Leaf) {
+        $current = Get-Content -LiteralPath $FingerprintPath -Raw
+        if ([string]::Equals($current.Trim(), $serialized.Trim(), [System.StringComparison]::Ordinal)) {
+            return
+        }
+    }
+
+    $parent = Split-Path -Parent $FingerprintPath
+    [System.IO.Directory]::CreateDirectory($parent) | Out-Null
+    $temporaryPath = "$FingerprintPath.tmp-$([Guid]::NewGuid().ToString('N'))"
+    try {
+        Set-Content -LiteralPath $temporaryPath -Value $serialized -Encoding utf8NoBOM
+        Move-Item -LiteralPath $temporaryPath -Destination $FingerprintPath -Force
+    } finally {
+        if (Test-Path -LiteralPath $temporaryPath) { Remove-Item -LiteralPath $temporaryPath -Force }
+    }
+}
+
 function Test-EdrBuildCache {
     [CmdletBinding()]
     param(

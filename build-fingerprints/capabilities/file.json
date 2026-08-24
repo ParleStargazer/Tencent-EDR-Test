@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "file",
+  "source_fingerprint": "64e19a4610deadada10c627bf1674b29c967ba6be744f4267cffcbd32e7b5581",
+  "packages": [
+    {
+      "path": "samples/win.file.create",
+      "content_fingerprint": "00161b43ebecbc72cafafcfa3356e81096d84d16804cbc0ff3d03c5d468e8e29",
+      "file_count": 47,
+      "total_bytes": 35937964
+    },
+    {
+      "path": "samples/win.file.delete",
+      "content_fingerprint": "745442851686e54b8a0e1e92fd1d2f3714117d26728c621393be195267e14473",
+      "file_count": 47,
+      "total_bytes": 35941020
+    },
+    {
+      "path": "samples/win.file.modify",
+      "content_fingerprint": "878a71a78161d65a870b0bc4ca334fd685ebc21f0d3e4588d134cd58b84805a0",
+      "file_count": 47,
+      "total_bytes": 35937974
+    },
+    {
+      "path": "samples/win.file.open",
+      "content_fingerprint": "d27610969c45cbb043ecaba2a1316601e66d003d83043e7c18dc50de03df7add",
+      "file_count": 47,
+      "total_bytes": 35938112
+    },
+    {
+      "path": "samples/win.file.rename",
+      "content_fingerprint": "3a4ac1f3fefd87d76ce8a46916d95de7928f80158692f4fdf378f6598a67d35a",
+      "file_count": 47,
+      "total_bytes": 35938159
+    }
+  ]
+}

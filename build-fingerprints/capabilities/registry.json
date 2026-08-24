@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "registry",
+  "source_fingerprint": "7c1d32cb7de6dd0c19ab7bdc32084bcb24f264cf90e8fe5681d2f2f53b517670",
+  "packages": [
+    {
+      "path": "samples/win.registry.create",
+      "content_fingerprint": "742d9faefbb28de36d564f323931d7ebf9d1530256971a7a9d03b676bd5c60e6",
+      "file_count": 47,
+      "total_bytes": 35927262
+    },
+    {
+      "path": "samples/win.registry.delete",
+      "content_fingerprint": "568ac3e61d30968b01683f3566bd24eaa426c3b317d2f2a1c9b396b0ec1ed743",
+      "file_count": 47,
+      "total_bytes": 35927093
+    },
+    {
+      "path": "samples/win.registry.modify",
+      "content_fingerprint": "8c9ff4ad99d0122e4e324915f02687339a6855ba24f413e115e0e558f81efa73",
+      "file_count": 47,
+      "total_bytes": 35927154
+    }
+  ]
+}

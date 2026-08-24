@@ -206,11 +206,26 @@ public static class UsbUdeClient
 
     public static void Detach(bool ignoreMissing = false)
     {
-        using var handle = Open();
-        if (DeviceIoControl(handle, IoctlDetach, null, 0, null, 0, out _, IntPtr.Zero)) return;
-        var error = Marshal.GetLastWin32Error();
-        if (ignoreMissing && error is 1167 or 2) return;
-        throw new Win32Exception(error, $"USB UDE Detach IOCTL 失败：{error}");
+        SafeFileHandle handle;
+        try
+        {
+            handle = Open();
+        }
+        catch (FileNotFoundException) when (ignoreMissing)
+        {
+            return;
+        }
+        catch (Win32Exception exception) when (ignoreMissing && exception.NativeErrorCode is 2 or 1167)
+        {
+            return;
+        }
+        using (handle)
+        {
+            if (DeviceIoControl(handle, IoctlDetach, null, 0, null, 0, out _, IntPtr.Zero)) return;
+            var error = Marshal.GetLastWin32Error();
+            if (ignoreMissing && error is 1167 or 2) return;
+            throw new Win32Exception(error, $"USB UDE Detach IOCTL 失败：{error}");
+        }
     }
 
     public static string WaitForInterface(int timeoutMs)
@@ -564,12 +579,18 @@ public static class UsbDriverInstaller
 
     public static void Uninstall(UsbDriverPackageLease? lease)
     {
-        try { UsbUdeClient.Detach(ignoreMissing: true); } catch { }
-        RemoveRootDevices();
+        var errors = new List<Exception>();
+        try { UsbUdeClient.Detach(ignoreMissing: true); }
+        catch (Exception exception) { errors.Add(exception); }
+        try { RemoveRootDevices(); }
+        catch (Exception exception) { errors.Add(exception); }
         if (!string.IsNullOrWhiteSpace(lease?.PublishedInfPath))
         {
-            UninstallPublishedInf(lease.PublishedInfPath);
+            try { UninstallPublishedInf(lease.PublishedInfPath); }
+            catch (Exception exception) { errors.Add(exception); }
         }
+        if (errors.Count > 0)
+            throw new AggregateException("USB UDE 清理未全部成功。", errors);
     }
 
     public static bool IsRootDevicePresent() => FindRootInstanceId() is not null;

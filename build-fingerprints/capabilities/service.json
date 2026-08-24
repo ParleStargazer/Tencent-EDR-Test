@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "service",
+  "source_fingerprint": "2ab60157ed921279d30662c75bc53eb3a7f02a919106764928eba8eb6fdc0d2a",
+  "packages": [
+    {
+      "path": "samples/win.service.create",
+      "content_fingerprint": "88db2791a4d9477e8012c78d4b1ad5d271bbb8947cc5ea50352e6780aba0ae0f",
+      "file_count": 47,
+      "total_bytes": 35935978
+    },
+    {
+      "path": "samples/win.service.delete",
+      "content_fingerprint": "3891472b5ab3ee72c7fd520b1d67d803d55354423a084582792a8dec7b8e2e07",
+      "file_count": 47,
+      "total_bytes": 35935840
+    },
+    {
+      "path": "samples/win.service.modify",
+      "content_fingerprint": "ffcfe2eafb2babe177eb737d47457cebc7b88447d0d5868febb3ef2c5fa3b98e",
+      "file_count": 47,
+      "total_bytes": 35936134
+    }
+  ]
+}

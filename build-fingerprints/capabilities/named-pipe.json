@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "named-pipe",
+  "source_fingerprint": "fdae0199804aec56e50ae7c829848198ba9e6e5444e1c7db655699dd2f87ab54",
+  "packages": [
+    {
+      "path": "samples/win.named_pipe.connect",
+      "content_fingerprint": "663dbe16edd7956c7a2d4df11995f5d2f4bff8ccc71a0f32c92cd7b50251ae9d",
+      "file_count": 48,
+      "total_bytes": 36063375
+    },
+    {
+      "path": "samples/win.named_pipe.create",
+      "content_fingerprint": "6d1c8ca4a3a7d19414cd61db7022f500f57d9f85e62c9c3993be7cc93013cfcc",
+      "file_count": 48,
+      "total_bytes": 36063360
+    }
+  ]
+}

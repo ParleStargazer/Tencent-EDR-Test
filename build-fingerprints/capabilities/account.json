@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "account",
+  "source_fingerprint": "f294a3004b010f9dd13d31c7a9fe2123fe7375287b43dadfac2f6954b5bc00d7",
+  "packages": [
+    {
+      "path": "samples/win.account.local.create",
+      "content_fingerprint": "b2a21f0167bc5a7f9632e8c6df216e98cb57c62b0da3a849a4679df5a89b122b",
+      "file_count": 47,
+      "total_bytes": 35927744
+    },
+    {
+      "path": "samples/win.account.local.delete",
+      "content_fingerprint": "ad184a1d06197b3677c63c0e7b689445490ad958b8885cb62651aba05e4fe8d3",
+      "file_count": 47,
+      "total_bytes": 35927732
+    },
+    {
+      "path": "samples/win.account.local.modify",
+      "content_fingerprint": "07196828b41c69ead6470e0cfb339a45feeda7c5bdc75383f3b8c1ef2bf12a5f",
+      "file_count": 47,
+      "total_bytes": 35927787
+    },
+    {
+      "path": "samples/win.account.login",
+      "content_fingerprint": "f473b8e2f30784259a119856cdc8513426e12059153e3120f180597462fe8b4e",
+      "file_count": 47,
+      "total_bytes": 35927818
+    },
+    {
+      "path": "samples/win.account.logoff",
+      "content_fingerprint": "b14c44795dc8348e033d4872ff1b0bd45c8ed7b4df6186785de02af674e5e146",
+      "file_count": 47,
+      "total_bytes": 35927823
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "powershell",
+  "source_fingerprint": "8f41ea807c663424c280883449ba9cf272cb2c50b905ab0c9f19822e0abf7b37",
+  "packages": [
+    {
+      "path": "samples/win.powershell.script_block",
+      "content_fingerprint": "92d8197348a313b699fda7e443b6ee5ccc6f9451eb20c7d694b123b2553fe930",
+      "file_count": 47,
+      "total_bytes": 35941744
+    }
+  ]
+}

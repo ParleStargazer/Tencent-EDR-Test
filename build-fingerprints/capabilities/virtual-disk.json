@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "virtual-disk",
+  "source_fingerprint": "f8094db0a72e5c76c96d1ea52058030126e17c094a3b56f1355d69cbe7f7618f",
+  "packages": [
+    {
+      "path": "samples/win.device.virtual_disk.mount",
+      "content_fingerprint": "9d5a6d271d037d59480f1e77a23637ba75726d381caa92f14a0c235d80e8c5ec",
+      "file_count": 47,
+      "total_bytes": 35969383
+    }
+  ]
+}

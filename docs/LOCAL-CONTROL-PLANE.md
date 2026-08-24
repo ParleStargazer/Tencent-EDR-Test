@@ -32,7 +32,9 @@ flowchart LR
 6. 隐藏启动 API 与前端，等待两个服务通过健康检查；
 7. 写入 `.edr-test/services.json` 并打开浏览器。
 
-构建指纹缓存位于 `.edr-test/build-cache/`。能力指纹包含能力源码、manifest、能力构建脚本、公共协议、Runner 公共代码、嵌入式数据库 Schema、.NET SDK 版本，以及适用时的预构建驱动和公开证书。缓存命中还要求对应能力目录、`capability.json` 和参与程序存在，程序 SHA-256 与 manifest 一致，且输出目录的文件数与总大小未变化；删除或破坏产物会自动触发重建。
+构建指纹分为两层。本机缓存位于 `.edr-test/build-cache/`，包含 .NET SDK 版本和输出目录快照；可移植的能力包指纹跟踪在 `build-fingerprints/capabilities/`，记录源码指纹、各能力包内容 SHA-256、文件数与总大小。增量启动优先使用本机缓存；本机缓存不存在或因 SDK 变化失效时，会用仓库指纹验证已有 `samples/` 并重建本机缓存，避免 `git pull` 后无条件重建能力包。
+
+能力指纹包含能力源码、manifest、能力构建脚本、公共协议、Runner 公共代码、嵌入式数据库 Schema，以及适用时的预构建驱动和公开证书。命中任意一层缓存都要求对应能力目录、`capability.json` 和参与程序存在，程序 SHA-256 与 manifest 一致；删除、替换或破坏产物仍会自动触发重建。构建成功后会同时更新本机缓存和仓库能力包指纹。
 
 `停止平台.cmd` 读取状态文件，先校验记录的仓库路径和进程命令行，再停止对应服务及其子进程。它不会按进程名批量终止其他 .NET、Node 或 PowerShell 进程。
 
@@ -47,6 +49,9 @@ pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -BuildMode Full
 
 # 完全跳过构建；仅在人工确认框架、样本和 web/dist 均可用时使用
 pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -SkipBuild
+
+# 开发机单独回读已构建 samples 并更新可提交的能力包指纹
+pwsh -NoProfile -File scripts/Update-CapabilityBuildFingerprints.ps1
 ```
 
 运行日志位于 `.edr-test/logs/`。端口被占用时脚本会直接报错，不会自动漂移到其他端口。

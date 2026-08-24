@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "hash",
+  "source_fingerprint": "1cc3677536e314e81ce9922710d0f39b05268da3d3bb2add350f6f6cf3fe9888",
+  "packages": [
+    {
+      "path": "samples/win.hash.imphash",
+      "content_fingerprint": "00dd395d87872eb96efefcfd7b4c8dd1e93620220479ab7a2c4b4a45b05c78df",
+      "file_count": 47,
+      "total_bytes": 35927358
+    },
+    {
+      "path": "samples/win.hash.md5",
+      "content_fingerprint": "33d75cb47b4684d0e18f98c0382808aa697bfe13997a9e43d7dd2575f23a6a75",
+      "file_count": 47,
+      "total_bytes": 35927180
+    },
+    {
+      "path": "samples/win.hash.sha",
+      "content_fingerprint": "8d676326fa1abefd6590bcf0290cf49a8a682dc26fbba416cd8ca1e493a24c86",
+      "file_count": 47,
+      "total_bytes": 35927226
+    }
+  ]
+}

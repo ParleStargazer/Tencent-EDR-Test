@@ -135,5 +135,8 @@ pwsh -NoProfile -File .\scripts\Test-UsbDeviceActivitySamples.ps1
 - 两项能力均为 L3，Runner 必须收到显式高风险授权。
 - IOCTL 设备接口仅允许 Administrators 和 SYSTEM。
 - 驱动只模拟单个 vendor-specific USB 设备，不提供存储、输入、网络或任意内核读写能力。
+- Attach/Detach IOCTL 固定在 `WdfExecutionLevelPassive` 下执行，满足 `UdecxUsbDevicePlugIn` 和 `UdecxUsbDevicePlugOutAndDelete` 的 IRQL 约束。
+- 显式 Detach 在调用 PlugOut 前先从上下文取出并失效 `UDECXUSBDEVICE` 句柄；父 WDFDEVICE 的 PnP Cleanup 不再重复 PlugOut，而是由 WDF/UdeCx 父子对象销毁流程完成回收。
 - 正常和异常路径都必须执行 Detach、ROOT devnode 删除和本轮 Driver Store 暂存包清理。
+- 除“设备或接口已不存在”外，Detach、ROOT devnode 删除和 INF 卸载错误不得被吞掉；尝试完成其余清理后统一上报。
 - 若清理后仍存在目标 Instance、ROOT devnode 或控制接口，能力状态必须是 `CLEANUP_ERROR`，不能用本地通过覆盖清理失败。

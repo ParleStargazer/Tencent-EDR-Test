@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "network",
+  "source_fingerprint": "ee8cedb1be449f25bc7f0e82ae7b4eb7eab9273683e18e0f9ec1853d408c5ac8",
+  "packages": [
+    {
+      "path": "samples/win.network.dns",
+      "content_fingerprint": "eb218262fa5e579e38b827762e86cb1b9d88a9b2c01c0c14cdf17f1ae72ede72",
+      "file_count": 48,
+      "total_bytes": 36141832
+    },
+    {
+      "path": "samples/win.network.file_download",
+      "content_fingerprint": "70146c917d096f338c12ab6e163e18225b596347c0be0ba6054a5bd75ff9166c",
+      "file_count": 48,
+      "total_bytes": 36142407
+    },
+    {
+      "path": "samples/win.network.tcp",
+      "content_fingerprint": "df89b777889982b57237f1f6174f19017d1e11edd915f378018b0f497ad5788f",
+      "file_count": 48,
+      "total_bytes": 36141453
+    },
+    {
+      "path": "samples/win.network.udp",
+      "content_fingerprint": "c9b4c6172e0bb29493e2f8e4197a2cae07e885072ff38d16e7b65e282f882448",
+      "file_count": 48,
+      "total_bytes": 36141466
+    },
+    {
+      "path": "samples/win.network.url",
+      "content_fingerprint": "165d81a569303c6ac465f76a22fd093ad11d9ccb0fb3515aff975a075fd879c9",
+      "file_count": 48,
+      "total_bytes": 36141806
+    }
+  ]
+}

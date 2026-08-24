@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "scheduled-task",
+  "source_fingerprint": "ddfac1fef197bd717e1a52ceb09a59286de9825bc44ba739378d08791b70102a",
+  "packages": [
+    {
+      "path": "samples/win.scheduled_task.create",
+      "content_fingerprint": "5b83a72bf92cffcaca884669b8b849b8052ed725956ef04ae94d409d9ae6beb2",
+      "file_count": 47,
+      "total_bytes": 35972508
+    },
+    {
+      "path": "samples/win.scheduled_task.delete",
+      "content_fingerprint": "45203b59359d578e0591d2a9068238bb89dbcb270ac58acecabe9ae860fc178a",
+      "file_count": 47,
+      "total_bytes": 35971874
+    },
+    {
+      "path": "samples/win.scheduled_task.modify",
+      "content_fingerprint": "451baa942548a649c6969b7d0368843e71ff4a114cd39687ec5e5839a783c43b",
+      "file_count": 47,
+      "total_bytes": 35972423
+    }
+  ]
+}

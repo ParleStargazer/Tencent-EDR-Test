@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "group-policy",
+  "source_fingerprint": "ae22c10d0e4defed711dfa442d3bc27d461392c1654babf439a063393979a4aa",
+  "packages": [
+    {
+      "path": "samples/win.group_policy.modify",
+      "content_fingerprint": "cc86f7df87ce9992e41631666ef549e4d5646917f09103e124e1807dee4d55f9",
+      "file_count": 47,
+      "total_bytes": 35944137
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "wmi",
+  "source_fingerprint": "749fe940d08c1fc7a380dabc0e73cf5ea56540490bbc6ac87a5eefaf060d4e48",
+  "packages": [
+    {
+      "path": "samples/win.wmi.consumer",
+      "content_fingerprint": "d47fee419c339926d7049a3d8cb9c5de2cdc52d1b1adc2d6ff09c30e04254e0e",
+      "file_count": 50,
+      "total_bytes": 36507888
+    },
+    {
+      "path": "samples/win.wmi.consumer_filter.bind",
+      "content_fingerprint": "59267ef7470703e38ff403c7b20dc28bd15612e3ce18bb877cd1c2414f1acfc9",
+      "file_count": 50,
+      "total_bytes": 36508164
+    },
+    {
+      "path": "samples/win.wmi.filter",
+      "content_fingerprint": "5a32bc6675ac369e3a211d00c72298b168ca42054ca48c86c468d47feaa73590",
+      "file_count": 50,
+      "total_bytes": 36507857
+    }
+  ]
+}

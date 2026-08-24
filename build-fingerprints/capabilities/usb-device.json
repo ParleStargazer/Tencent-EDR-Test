@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "usb-device",
+  "source_fingerprint": "95bb13d5c5c0e937ad98eb6f02312afb47516404eb7973f7f551795d37d90f6f",
+  "packages": [
+    {
+      "path": "samples/win.device.usb.mount",
+      "content_fingerprint": "eebfa1c3921b28cd56a877ab81f9b71b6038f4aacd1c3f78e619a0809ff0a9bf",
+      "file_count": 48,
+      "total_bytes": 35844232
+    },
+    {
+      "path": "samples/win.device.usb.unmount",
+      "content_fingerprint": "624c167c139cda4e7a52f29a03bea6ab93eb4e2194f167fc422730f0daf5d505",
+      "file_count": 48,
+      "total_bytes": 35844307
+    }
+  ]
+}

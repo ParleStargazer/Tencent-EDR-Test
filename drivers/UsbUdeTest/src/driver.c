@@ -36,7 +36,6 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext);
 
 DRIVER_INITIALIZE DriverEntry;
 EVT_WDF_DRIVER_DEVICE_ADD UsbUdeEvtDeviceAdd;
-EVT_WDF_OBJECT_CONTEXT_CLEANUP UsbUdeEvtDeviceCleanup;
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL UsbUdeEvtIoDeviceControl;
 EVT_WDF_IO_QUEUE_IO_INTERNAL_DEVICE_CONTROL UsbUdeEvtIoInternalDeviceControl;
 EVT_UDECX_USB_ENDPOINT_RESET UsbUdeEvtEndpointReset;
@@ -272,19 +271,20 @@ FreeInit:
 
 static NTSTATUS UsbUdeDetach(_In_ WDFDEVICE Device)
 {
-    NTSTATUS status;
     PDEVICE_CONTEXT context;
+    UDECXUSBDEVICE usbDevice;
 
     context = DeviceGetContext(Device);
     if (!context->Attached || context->UsbDevice == NULL) {
         return STATUS_DEVICE_NOT_CONNECTED;
     }
 
-    status = UdecxUsbDevicePlugOutAndDelete(context->UsbDevice);
-    if (NT_SUCCESS(status)) {
-        UsbUdeClearState(context);
-    }
-    return status;
+    // UdeCx invalidates the UDECXUSBDEVICE handle when PlugOutAndDelete returns,
+    // including failure returns. Claim and clear the context first so that PnP
+    // teardown cannot observe a stale handle and attempt a second deletion.
+    usbDevice = context->UsbDevice;
+    UsbUdeClearState(context);
+    return UdecxUsbDevicePlugOutAndDelete(usbDevice);
 }
 
 NTSTATUS DriverEntry(
@@ -336,7 +336,9 @@ NTSTATUS UsbUdeEvtDeviceAdd(
     UsbUdeWriteInitializationDiagnostic(Driver, L"udecx_device_init_succeeded", status);
 
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, DEVICE_CONTEXT);
-    attributes.EvtCleanupCallback = UsbUdeEvtDeviceCleanup;
+    // UdecxUsbDevicePlugIn/PlugOutAndDelete require PASSIVE_LEVEL. The default
+    // device execution level can otherwise allow queue callbacks at DISPATCH_LEVEL.
+    attributes.ExecutionLevel = WdfExecutionLevelPassive;
     status = WdfDeviceCreate(&DeviceInit, &attributes, &device);
     if (!NT_SUCCESS(status)) {
         UsbUdeWriteInitializationDiagnostic(Driver, L"wdf_device_create_failed", status);
@@ -385,17 +387,6 @@ NTSTATUS UsbUdeEvtDeviceAdd(
         NT_SUCCESS(status) ? L"evt_device_add_succeeded" : L"default_queue_create_failed",
         status);
     return status;
-}
-
-VOID UsbUdeEvtDeviceCleanup(_In_ WDFOBJECT Object)
-{
-    PDEVICE_CONTEXT context;
-
-    context = DeviceGetContext((WDFDEVICE)Object);
-    if (context->Attached && context->UsbDevice != NULL) {
-        (VOID)UdecxUsbDevicePlugOutAndDelete(context->UsbDevice);
-        UsbUdeClearState(context);
-    }
 }
 
 VOID UsbUdeEvtIoDeviceControl(

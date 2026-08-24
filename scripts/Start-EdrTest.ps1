@@ -24,6 +24,7 @@ $runnerDll = Join-Path $repositoryRoot "src\EdrTest\bin\Release\net8.0-windows\E
 $apiUrl = "http://127.0.0.1:$ApiPort"
 $webUrl = "http://127.0.0.1:$WebPort"
 $buildCacheRoot = Join-Path $stateRoot "build-cache"
+$repositoryCapabilityFingerprintRoot = Join-Path $repositoryRoot "build-fingerprints\capabilities"
 
 . (Join-Path $PSScriptRoot "Build-Cache.ps1")
 
@@ -743,6 +744,15 @@ if (-not $SkipBuild) {
         configuration = "Release"
         dotnet_sdk = $dotnetVersion
     }
+    $repositorySharedSampleFingerprint = Get-EdrBuildFingerprint -RepositoryRoot $repositoryRoot -InputPaths @(
+        "Directory.Build.props",
+        "sample-src\Common",
+        "src\EdrTest",
+        "schemas\run-db.sql"
+    ) -Properties @{
+        cache_contract = "repository-capability-source-v1"
+        configuration = "Release"
+    }
 
     $capabilityBuilds = @(
         [pscustomobject]@{ Key = "process"; Title = "进程活动"; Source = "ProcessActivity"; Script = "Build-ProcessActivitySamples.ps1"; Arguments = @(); Enabled = $true; ContinueOnFailure = $false },
@@ -789,14 +799,41 @@ if (-not $SkipBuild) {
             dotnet_sdk = $dotnetVersion
             shared = $sharedSampleFingerprint
         }
+        $repositoryFingerprint = Get-EdrBuildFingerprint -RepositoryRoot $repositoryRoot -InputPaths (@(
+            $sourceDirectory,
+            (Join-Path $PSScriptRoot $definition.Script)
+        ) + $extraInputs) -Properties @{
+            cache_contract = "repository-capability-source-v1"
+            configuration = "Release"
+            shared = $repositorySharedSampleFingerprint
+        }
         $cachePath = Join-Path $buildCacheRoot "capability-$($definition.Key).json"
-        $isCurrent = $definition.Enabled -and -not $forceBuild -and (Test-EdrBuildCache `
+        $localIsCurrent = $definition.Enabled -and -not $forceBuild -and (Test-EdrBuildCache `
             -CachePath $cachePath -Fingerprint $fingerprint `
             -DirectoryPaths $packagePaths -CapabilityPackagePaths $packagePaths)
+        $repositoryFingerprintPath = Join-Path $repositoryCapabilityFingerprintRoot "$($definition.Key).json"
+        $repositoryIsCurrent = $definition.Enabled -and -not $forceBuild -and -not $localIsCurrent -and `
+            (Test-EdrRepositoryCapabilityFingerprint -FingerprintPath $repositoryFingerprintPath `
+                -SourceFingerprint $repositoryFingerprint -RepositoryRoot $repositoryRoot `
+                -CapabilityPackagePaths $packagePaths)
+        $isCurrent = $localIsCurrent -or $repositoryIsCurrent
+        if ($localIsCurrent) {
+            Set-EdrRepositoryCapabilityFingerprint -FingerprintPath $repositoryFingerprintPath `
+                -CapabilityKey $definition.Key -SourceFingerprint $repositoryFingerprint `
+                -RepositoryRoot $repositoryRoot -CapabilityPackagePaths $packagePaths
+        } elseif ($repositoryIsCurrent) {
+            Set-EdrBuildCache -CachePath $cachePath -Fingerprint $fingerprint `
+                -DirectoryPaths $packagePaths -Metadata @{
+                    build_mode = $BuildMode
+                    source = "repository_fingerprint"
+                }
+        }
         $definition | Add-Member -NotePropertyName Fingerprint -NotePropertyValue $fingerprint
         $definition | Add-Member -NotePropertyName CachePath -NotePropertyValue $cachePath
         $definition | Add-Member -NotePropertyName PackagePaths -NotePropertyValue $packagePaths
         $definition | Add-Member -NotePropertyName IsCurrent -NotePropertyValue $isCurrent
+        $definition | Add-Member -NotePropertyName RepositoryFingerprint -NotePropertyValue $repositoryFingerprint
+        $definition | Add-Member -NotePropertyName RepositoryFingerprintPath -NotePropertyValue $repositoryFingerprintPath
     }
 
     $buildQueue = @($capabilityBuilds | Where-Object { $_.Enabled -and -not $_.IsCurrent })
@@ -854,6 +891,9 @@ if (-not $SkipBuild) {
                 build_mode = $BuildMode
                 source = $definition.Source
             }
+        Set-EdrRepositoryCapabilityFingerprint -FingerprintPath $definition.RepositoryFingerprintPath `
+            -CapabilityKey $definition.Key -SourceFingerprint $definition.RepositoryFingerprint `
+            -RepositoryRoot $repositoryRoot -CapabilityPackagePaths $definition.PackagePaths
     }
     if (-not $runnerIsCurrent -or $buildQueue.Count -gt 0) {
         # Controller 发布会再次生成其 ProjectReference 的 EdrTest 输出，因此必须在所有

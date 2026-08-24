@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "process",
+  "source_fingerprint": "6fbb527c395cace1818cf15753553e8daa938c6724659ecbef0405fd8365dda7",
+  "packages": [
+    {
+      "path": "samples/win.process.access",
+      "content_fingerprint": "28f93d18e605f2d4c4e1a66c1a41e8610f2ac381668db62917b03c3569db8ce2",
+      "file_count": 48,
+      "total_bytes": 36133775
+    },
+    {
+      "path": "samples/win.process.create",
+      "content_fingerprint": "923b5d53a5afc0d1db7692709358767eb92742fe8551cec9e746669bb549d682",
+      "file_count": 48,
+      "total_bytes": 36133783
+    },
+    {
+      "path": "samples/win.process.image_load",
+      "content_fingerprint": "005245b292f0002b7c284754eee88ec1b28051ffd0b747488d0aaf56a1600cec",
+      "file_count": 48,
+      "total_bytes": 36137475
+    },
+    {
+      "path": "samples/win.process.remote_thread",
+      "content_fingerprint": "cc186433d607feb839bb0eab1c6d456bb8e0c981afbd917df5d27998665ad722",
+      "file_count": 48,
+      "total_bytes": 36133900
+    },
+    {
+      "path": "samples/win.process.tampering",
+      "content_fingerprint": "c2237490c9214757da2fdc44a4086936810af5c707def4d655a32ec5e5381772",
+      "file_count": 48,
+      "total_bytes": 36133866
+    },
+    {
+      "path": "samples/win.process.terminate",
+      "content_fingerprint": "948c5c2a7d7db663181bf505282ff08d51907bd68a7e1ae4068eccd171565e99",
+      "file_count": 48,
+      "total_bytes": 36133788
+    }
+  ]
+}

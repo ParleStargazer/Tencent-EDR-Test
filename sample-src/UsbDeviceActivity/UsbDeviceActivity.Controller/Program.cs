@@ -68,7 +68,7 @@ internal static class Program
                 throw;
             }
             var serial = UsbTestConstants.CreateSerial(invocation.Nonce);
-            try { UsbUdeClient.Detach(ignoreMissing: true); } catch { }
+            UsbUdeClient.Detach(ignoreMissing: true);
             var before = UsbDeviceDiscovery.WaitFor(serial, present: false, 5_000);
             if (before.Present) throw new InvalidOperationException("本轮 USB 测试设备在操作前已经存在。");
 

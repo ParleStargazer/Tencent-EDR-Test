@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "driver",
+  "source_fingerprint": "17792457e604ba9633ae46bf7d646e318377bdaee08a594463b1278037d5737e",
+  "packages": [
+    {
+      "path": "samples/win.driver.load",
+      "content_fingerprint": "7496ea1edcbe155935f50012f549d122e50931c81d5877b10f06a393b1b8f54f",
+      "file_count": 52,
+      "total_bytes": 35957283
+    },
+    {
+      "path": "samples/win.driver.modify",
+      "content_fingerprint": "87e3a6d50fcbe2b73f8b270dcda686ed1d73e8fc97da9029058d1b1ecd7fa135",
+      "file_count": 52,
+      "total_bytes": 35957209
+    },
+    {
+      "path": "samples/win.driver.unload",
+      "content_fingerprint": "085c02e302d6d8fba81594f840745803a22e7b8cfe9fb793808ffbfabdbff3c9",
+      "file_count": 52,
+      "total_bytes": 35957402
+    }
+  ]
+}

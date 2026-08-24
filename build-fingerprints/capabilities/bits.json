@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "cache_contract": "repository-capability-v1",
+  "capability_key": "bits",
+  "source_fingerprint": "27234e57f4523105407092aaccc77aeba18c5e003d877502c13268164aca7462",
+  "packages": [
+    {
+      "path": "samples/win.bits.job",
+      "content_fingerprint": "39588c8afc6298468dbc52e13086ed5cdaffce75aeda4c0dbaed5906cec147fb",
+      "file_count": 47,
+      "total_bytes": 35972991
+    }
+  ]
+}
