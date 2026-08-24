@@ -1,6 +1,6 @@
 schema_version: "1.1"
 baseline_id: win.file.delete
-version: "0.4.0"
+version: "0.4.1"
 title: Windows 文件删除遥测
 description: 同轮执行即时 TXT、即时 JSON、延迟 JSON 三个既有方法，并新增 DLL + File.Delete、JSON + FileDispositionInfo、DLL + FileDispositionInfo 三种落地 5 秒删除方法；本地逐项验证，云端分别判定并采用结果最好的方法形成能力结论。
 platform:
@@ -89,7 +89,6 @@ cloud_expectations:
       - { field: file.path, operator: equals, expected_from_local: facts.file.txt.path, severity: required, normalizers: [windows_path] }
       - { field: process.pid, operator: equals, expected_from_local: facts.file.txt.actor_pid, severity: required }
       - { field: process.executable, operator: equals, expected_from_local: facts.file.txt.actor_executable, severity: required, normalizers: [windows_path] }
-      - { field: file.size, operator: equals, expected_from_local: facts.file.txt.before.size_bytes, severity: required }
       - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.txt.before.md5, severity: recommended, normalizers: [lowercase] }
       - { field: user.name, operator: present, severity: recommended }
   - id: file-delete-json-event
@@ -106,7 +105,6 @@ cloud_expectations:
       - { field: file.path, operator: equals, expected_from_local: facts.file.json.path, severity: required, normalizers: [windows_path] }
       - { field: process.pid, operator: equals, expected_from_local: facts.file.json.actor_pid, severity: required }
       - { field: process.executable, operator: equals, expected_from_local: facts.file.json.actor_executable, severity: required, normalizers: [windows_path] }
-      - { field: file.size, operator: equals, expected_from_local: facts.file.json.before.size_bytes, severity: required }
       - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.json.before.md5, severity: recommended, normalizers: [lowercase] }
       - { field: user.name, operator: present, severity: recommended }
   - id: file-delete-json-delayed-5s-event
@@ -123,7 +121,6 @@ cloud_expectations:
       - { field: file.path, operator: equals, expected_from_local: facts.file.json_delayed_5s.path, severity: required, normalizers: [windows_path] }
       - { field: process.pid, operator: equals, expected_from_local: facts.file.json_delayed_5s.actor_pid, severity: required }
       - { field: process.executable, operator: equals, expected_from_local: facts.file.json_delayed_5s.actor_executable, severity: required, normalizers: [windows_path] }
-      - { field: file.size, operator: present, severity: recommended }
       - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.json_delayed_5s.before.md5, severity: recommended, normalizers: [lowercase] }
       - { field: user.name, operator: present, severity: recommended }
   - id: file-delete-dll-dotnet-5s-event
@@ -140,7 +137,6 @@ cloud_expectations:
       - { field: file.path, operator: equals, expected_from_local: facts.file.dll_dotnet_delete_5s.path, severity: required, normalizers: [windows_path] }
       - { field: process.pid, operator: equals, expected_from_local: facts.file.dll_dotnet_delete_5s.actor_pid, severity: required }
       - { field: process.executable, operator: equals, expected_from_local: facts.file.dll_dotnet_delete_5s.actor_executable, severity: required, normalizers: [windows_path] }
-      - { field: file.size, operator: equals, expected_from_local: facts.file.dll_dotnet_delete_5s.before.size_bytes, severity: recommended }
       - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.dll_dotnet_delete_5s.before.md5, severity: recommended, normalizers: [lowercase] }
       - { field: user.name, operator: present, severity: recommended }
   - id: file-delete-json-disposition-5s-event
@@ -157,7 +153,6 @@ cloud_expectations:
       - { field: file.path, operator: equals, expected_from_local: facts.file.json_disposition_5s.path, severity: required, normalizers: [windows_path] }
       - { field: process.pid, operator: equals, expected_from_local: facts.file.json_disposition_5s.actor_pid, severity: required }
       - { field: process.executable, operator: equals, expected_from_local: facts.file.json_disposition_5s.actor_executable, severity: required, normalizers: [windows_path] }
-      - { field: file.size, operator: present, severity: recommended }
       - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.json_disposition_5s.before.md5, severity: recommended, normalizers: [lowercase] }
       - { field: user.name, operator: present, severity: recommended }
   - id: file-delete-dll-disposition-5s-event
@@ -174,12 +169,11 @@ cloud_expectations:
       - { field: file.path, operator: equals, expected_from_local: facts.file.dll_disposition_5s.path, severity: required, normalizers: [windows_path] }
       - { field: process.pid, operator: equals, expected_from_local: facts.file.dll_disposition_5s.actor_pid, severity: required }
       - { field: process.executable, operator: equals, expected_from_local: facts.file.dll_disposition_5s.actor_executable, severity: required, normalizers: [windows_path] }
-      - { field: file.size, operator: equals, expected_from_local: facts.file.dll_disposition_5s.before.size_bytes, severity: recommended }
       - { field: file.hash.md5, operator: equals, expected_from_local: facts.file.dll_disposition_5s.before.md5, severity: recommended, normalizers: [lowercase] }
       - { field: user.name, operator: present, severity: recommended }
 scoring: { weight: 1.0, required_field_weight: 1.0, recommended_field_weight: 0.25 }
 metadata:
   owner: edr-validation-team
   status: active
-  change_reason: reference/edr_FileDelete.json 的 1187 条 FileDelete 记录中没有任何 TXT 或 JSON；文件类型仅有 DLL、EXE、PS1、JS、SYS、XML、PNG，报告大小在 4–16 KiB 的 28 条记录全部为 DLL，主要由 dotnet/MSBuild 删除。因此在保留三个既有方法的基础上，新增 DLL + File.Delete、JSON + FileDispositionInfo、DLL + FileDispositionInfo 三种落地至少 5 秒的独立方法，以分别验证文件类型和删除调用链两个变量；继续以 15 ms 时间、完整路径、Actor 路径和 PID 为强关联，大小及 MD5 为推荐证据。
-  references: [reference/edr_FileDelete.json, reference/EDR日志-字段表.txt, Tencent EDR FileEvents / FileDelete]
+  change_reason: reference/edr_filedeletion.json 与 runs/20260824 证明 FileDelete 的 Child.FileSize=0 是异步删除事件中的未补全值，而非文件真实大小。同一 DLL 在删除前 FileWriteClose 中为 14848 字节，紧随的 FileDelete 在 File.Delete 与 FileDispositionInfo 两种独立方法中均为 0，但路径、Actor PID、MD5 和 1–2 ms 时间关联均正确。因此云端删除结论不再要求 file.size；本地仍保留删除前字节数作为绝对基准，云端以时间、完整路径、Actor 路径、PID 和 MD5 形成删除能力证据。
+  references: [reference/edr_filedeletion.json, reference/EDR日志-字段表.txt, runs/20260824, Tencent EDR FileEvents / FileDelete]

@@ -47,6 +47,8 @@ type ApiMapping = {
   description: string;
 };
 
+const defaultMappingProfileId = "tencent-edr-proc-events-v1";
+
 type ApiRunStep = {
   capability_id: string;
   name_zh: string;
@@ -661,7 +663,10 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
       setAvailableCapabilities(capabilities);
       setBaselines(baselineList);
       setMappings(mappingList);
-      setMappingId((current) => current || mappingList[0]?.profile_id || "");
+      setMappingId((current) => current
+        || mappingList.find((mapping) => mapping.profile_id === defaultMappingProfileId)?.profile_id
+        || mappingList[0]?.profile_id
+        || "");
       setRecentRuns(runs);
       setSelectedRunId((current) => current || runs.find((run) => run.local_export_available)?.operation_id || "");
       setSelectedIds((current) => current.length ? current.filter((id) => capabilities.some((item) => item.capability_id === id)) : capabilities.map((item) => item.capability_id));
