@@ -46,6 +46,17 @@ public sealed class ApiCloudAutomationStartRequest
     public DateTimeOffset? LogStartTime { get; init; }
     public int DelaySeconds { get; init; } = 30;
     public bool DebugMode { get; init; }
+    public ApiCloudAutomationTimingRequest? Timing { get; init; }
+}
+
+public sealed class ApiCloudAutomationTimingRequest
+{
+    public int StepTimeoutMs { get; init; } = 60_000;
+    public int PostLoginTimeoutMs { get; init; } = 180_000;
+    public int StepSettleMs { get; init; } = 1_600;
+    public int DomainLookupDelayMs { get; init; } = 15_000;
+    public int FilterActionDelayMs { get; init; } = 150;
+    public int QueryResultSettleMs { get; init; } = 6_000;
 }
 
 public sealed record ApiCloudProgressEntry(
@@ -862,8 +873,8 @@ internal sealed class ApiRunCoordinator
             if (cloudConfig is null) return;
             try
             {
-                var queryStartUtc = cloudConfig.RequestedStartTime ?? result.StartedAtUtc.AddSeconds(-30);
-                var queryEndUtc = result.EndedAtUtc.AddSeconds(30);
+                var queryStartUtc = cloudConfig.RequestedStartTime ?? result.StartedAtUtc.AddSeconds(-10);
+                var queryEndUtc = result.EndedAtUtc.AddSeconds(10);
                 state.BeginCloudWait(queryStartUtc, queryEndUtc);
                 for (var remaining = cloudConfig.DelaySeconds; remaining > 0; remaining--)
                 {
@@ -900,6 +911,8 @@ internal sealed class ApiRunCoordinator
             throw new ApiRequestException(400, "设备名称无效。");
         if (request.DelaySeconds is < 0 or > 3600)
             throw new ApiRequestException(400, "云端日志等待时间必须在 0..3600 秒内。");
+        var timing = request.Timing ?? new ApiCloudAutomationTimingRequest();
+        ValidateCloudAutomationTiming(timing);
         return new CloudExportAutomationConfig
         {
             Account = account,
@@ -908,7 +921,30 @@ internal sealed class ApiRunCoordinator
             RequestedStartTime = request.LogStartTime,
             DelaySeconds = request.DelaySeconds,
             DebugMode = request.DebugMode,
+            Timing = new CloudAutomationTimingConfig(
+                timing.StepTimeoutMs,
+                timing.PostLoginTimeoutMs,
+                timing.StepSettleMs,
+                timing.DomainLookupDelayMs,
+                timing.FilterActionDelayMs,
+                timing.QueryResultSettleMs),
         };
+    }
+
+    private static void ValidateCloudAutomationTiming(ApiCloudAutomationTimingRequest timing)
+    {
+        if (timing.StepTimeoutMs is < 1_000 or > 300_000)
+            throw new ApiRequestException(400, "普通控件超时时间必须在 1000..300000 毫秒内。");
+        if (timing.PostLoginTimeoutMs is < 1_000 or > 300_000)
+            throw new ApiRequestException(400, "登录后状态超时时间必须在 1000..300000 毫秒内。");
+        if (timing.StepSettleMs is < 0 or > 5_000)
+            throw new ApiRequestException(400, "步骤稳定等待时间必须在 0..5000 毫秒内。");
+        if (timing.DomainLookupDelayMs is < 0 or > 30_000)
+            throw new ApiRequestException(400, "域定位前等待时间必须在 0..30000 毫秒内。");
+        if (timing.FilterActionDelayMs is < 0 or > 2_000)
+            throw new ApiRequestException(400, "筛选动作前后等待时间必须在 0..2000 毫秒内。");
+        if (timing.QueryResultSettleMs is < 0 or > 30_000)
+            throw new ApiRequestException(400, "检索结果等待时间必须在 0..30000 毫秒内。");
     }
 
     private IReadOnlyList<ApiRunSnapshot> ReadHistoricalRuns() => ReadHistoricalRunFiles().Select(value => value.Snapshot).ToArray();

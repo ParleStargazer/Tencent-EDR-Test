@@ -32,6 +32,26 @@ test("云端自动化请求只接受受限的本地 JSON 下载目标", () => {
     filterActionDelayMs: 150,
     queryResultSettleMs: 6_000,
   });
+  const configuredTiming = validateRequest({
+    ...debugValue,
+    timeout_ms: 300_000,
+    timing: {
+      step_timeout_ms: 45_000,
+      post_login_timeout_ms: 120_000,
+      step_settle_ms: 900,
+      domain_lookup_delay_ms: 20_000,
+      filter_action_delay_ms: 300,
+      query_result_settle_ms: 8_000,
+    },
+  });
+  assert.deepEqual(buildAutomationTiming(configuredTiming), {
+    stepTimeoutMs: 45_000,
+    postLoginTimeoutMs: 120_000,
+    stepSettleMs: 900,
+    domainLookupDelayMs: 20_000,
+    filterActionDelayMs: 300,
+    queryResultSettleMs: 8_000,
+  });
   assert.deepEqual(buildAutomationTiming(debugValue, { stepTimeoutMs: 9_000, postLoginTimeoutMs: 12_000, stepSettleMs: 0, domainLookupDelayMs: 0, filterActionDelayMs: 0, queryResultSettleMs: 0 }), {
     stepTimeoutMs: 9_000,
     postLoginTimeoutMs: 12_000,
@@ -45,6 +65,10 @@ test("云端自动化请求只接受受限的本地 JSON 下载目标", () => {
   assert.throws(() => validateRequest({ ...value, query_start_local: "2026/08/22" }), /yyyy-MM-dd HH:mm:ss/);
   assert.throws(() => validateRequest({ ...value, query_end_local: "2026/08/22" }), /yyyy-MM-dd HH:mm:ss/);
   assert.throws(() => validateRequest({ ...value, query_end_local: value.query_start_local }), /必须晚于起始时间/);
+  assert.throws(() => validateRequest({ ...value, timing: [] }), /timing 必须是对象/);
+  assert.throws(() => validateRequest({ ...value, timing: { unknown_wait_ms: 10 } }), /未知字段/);
+  assert.throws(() => validateRequest({ ...value, timing: { filter_action_delay_ms: 2_001 } }), /0\.\.2000/);
+  assert.throws(() => validateRequest({ ...value, timing: { step_timeout_ms: 30_001 } }), /1000\.\.30000/);
 });
 
 test("调试模式在 Edge 启动失败时保留阶段并脱敏异常", async () => {

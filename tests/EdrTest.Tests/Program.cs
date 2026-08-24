@@ -109,6 +109,22 @@ public static class Program
 
         var progressFields = typeof(ApiCloudProgressEntry).GetProperties().Select(value => value.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         Assert(progressFields.IsSupersetOf(["TimestampUtc", "Stage", "Message", "Progress", "Detailed"]), "云端导入进度缺少浏览器诊断所需字段。");
+        var timingDefaults = new ApiCloudAutomationTimingRequest();
+        Assert(timingDefaults.StepTimeoutMs == 60_000
+            && timingDefaults.PostLoginTimeoutMs == 180_000
+            && timingDefaults.StepSettleMs == 1_600
+            && timingDefaults.DomainLookupDelayMs == 15_000
+            && timingDefaults.FilterActionDelayMs == 150
+            && timingDefaults.QueryResultSettleMs == 6_000,
+            "浏览器自动化高级等待选项的 API 默认值发生漂移。");
+        Assert(JsonNamingPolicy.SnakeCaseLower.ConvertName(nameof(ApiCloudAutomationTimingRequest.StepTimeoutMs)) == "step_timeout_ms"
+            && JsonNamingPolicy.SnakeCaseLower.ConvertName(nameof(ApiCloudAutomationTimingRequest.QueryResultSettleMs)) == "query_result_settle_ms",
+            "浏览器自动化高级等待选项的 API 字段名必须与前端及 Node 请求一致。");
+        var timingRequest = JsonSerializer.Deserialize<ApiCloudAutomationStartRequest>(
+            "{\"enabled\":true,\"timing\":{\"step_timeout_ms\":45000,\"query_result_settle_ms\":8000}}",
+            JsonDefaults.Options);
+        Assert(timingRequest?.Timing?.StepTimeoutMs == 45_000 && timingRequest.Timing.QueryResultSettleMs == 8_000,
+            "本地 API 必须正确反序列化前端提交的高级等待参数。");
         var journalType = typeof(ApiCloudImportRecord).Assembly.GetType("EdrTest.CloudAutomationJournal")
             ?? throw new InvalidOperationException("未找到云端自动化日志组件。");
         var debugLogPath = Path.Combine(fixture.Path, "cloud-automation-debug.jsonl");

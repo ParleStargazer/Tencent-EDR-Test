@@ -27,14 +27,39 @@ function timingValue(value, fallback, minimum, maximum) {
 
 export function buildAutomationTiming(request, runtime = {}) {
   const maximum = request.timeout_ms;
+  const configured = request.timing ?? {};
   return {
-    stepTimeoutMs: timingValue(runtime.stepTimeoutMs, Math.min(DEFAULT_STEP_TIMEOUT_MS, maximum), 1_000, maximum),
-    postLoginTimeoutMs: timingValue(runtime.postLoginTimeoutMs, Math.min(DEFAULT_POST_LOGIN_TIMEOUT_MS, maximum), 1_000, maximum),
-    stepSettleMs: timingValue(runtime.stepSettleMs, DEFAULT_STEP_SETTLE_MS, 0, 5_000),
-    domainLookupDelayMs: timingValue(runtime.domainLookupDelayMs, DEFAULT_DOMAIN_LOOKUP_DELAY_MS, 0, 30_000),
-    filterActionDelayMs: timingValue(runtime.filterActionDelayMs, DEFAULT_FILTER_ACTION_DELAY_MS, 0, 2_000),
-    queryResultSettleMs: timingValue(runtime.queryResultSettleMs, DEFAULT_QUERY_RESULT_SETTLE_MS, 0, 30_000),
+    stepTimeoutMs: timingValue(runtime.stepTimeoutMs ?? configured.step_timeout_ms, Math.min(DEFAULT_STEP_TIMEOUT_MS, maximum), 1_000, maximum),
+    postLoginTimeoutMs: timingValue(runtime.postLoginTimeoutMs ?? configured.post_login_timeout_ms, Math.min(DEFAULT_POST_LOGIN_TIMEOUT_MS, maximum), 1_000, maximum),
+    stepSettleMs: timingValue(runtime.stepSettleMs ?? configured.step_settle_ms, DEFAULT_STEP_SETTLE_MS, 0, 5_000),
+    domainLookupDelayMs: timingValue(runtime.domainLookupDelayMs ?? configured.domain_lookup_delay_ms, DEFAULT_DOMAIN_LOOKUP_DELAY_MS, 0, 30_000),
+    filterActionDelayMs: timingValue(runtime.filterActionDelayMs ?? configured.filter_action_delay_ms, DEFAULT_FILTER_ACTION_DELAY_MS, 0, 2_000),
+    queryResultSettleMs: timingValue(runtime.queryResultSettleMs ?? configured.query_result_settle_ms, DEFAULT_QUERY_RESULT_SETTLE_MS, 0, 30_000),
   };
+}
+
+function validateTimingOptions(value, timeoutMs) {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new AutomationError("INVALID_REQUEST", "timing 必须是对象。");
+  const constraints = {
+    step_timeout_ms: [1_000, timeoutMs],
+    post_login_timeout_ms: [1_000, timeoutMs],
+    step_settle_ms: [0, 5_000],
+    domain_lookup_delay_ms: [0, 30_000],
+    filter_action_delay_ms: [0, 2_000],
+    query_result_settle_ms: [0, 30_000],
+  };
+  const unknown = Object.keys(value).find((field) => !(field in constraints));
+  if (unknown) throw new AutomationError("INVALID_REQUEST", `timing 包含未知字段 ${unknown}。`);
+  const result = {};
+  for (const [field, [minimum, maximum]] of Object.entries(constraints)) {
+    if (value[field] === undefined) continue;
+    if (!Number.isInteger(value[field]) || value[field] < minimum || value[field] > maximum)
+      throw new AutomationError("INVALID_REQUEST", `${field} 必须在 ${minimum}..${maximum} 毫秒范围内。`);
+    result[field] = value[field];
+  }
+  return result;
 }
 
 async function firstVisibleNow(locators) {
@@ -163,10 +188,12 @@ export function validateRequest(request) {
     throw new AutomationError("INVALID_REQUEST", "timeout_ms 必须在 30000..900000 范围内。");
   if (request.debug_mode !== undefined && typeof request.debug_mode !== "boolean")
     throw new AutomationError("INVALID_REQUEST", "debug_mode 必须是布尔值。");
+  const timing = validateTimingOptions(request.timing, timeoutMs);
   return {
     ...request,
     timeout_ms: timeoutMs,
     debug_mode: request.debug_mode === true,
+    timing,
     download_path: resolve(request.download_path),
   };
 }

@@ -49,6 +49,45 @@ type ApiMapping = {
 
 const defaultMappingProfileId = "tencent-edr-proc-events-v1";
 
+type CloudAutomationTiming = {
+  step_timeout_ms: number;
+  post_login_timeout_ms: number;
+  step_settle_ms: number;
+  domain_lookup_delay_ms: number;
+  filter_action_delay_ms: number;
+  query_result_settle_ms: number;
+};
+
+const defaultCloudAutomationTiming: CloudAutomationTiming = {
+  step_timeout_ms: 60_000,
+  post_login_timeout_ms: 180_000,
+  step_settle_ms: 1_600,
+  domain_lookup_delay_ms: 15_000,
+  filter_action_delay_ms: 150,
+  query_result_settle_ms: 6_000,
+};
+
+const cloudAutomationTimingFields: Array<{
+  key: keyof CloudAutomationTiming;
+  label: string;
+  help: string;
+  minimum: number;
+  maximum: number;
+  step: number;
+}> = [
+  { key: "step_timeout_ms", label: "普通控件超时", help: "定位、点击或填写普通控件的最长等待。", minimum: 1_000, maximum: 300_000, step: 1_000 },
+  { key: "post_login_timeout_ms", label: "登录后状态超时", help: "等待域选择器或 EDR 事件页出现的最长时间。", minimum: 1_000, maximum: 300_000, step: 1_000 },
+  { key: "step_settle_ms", label: "步骤稳定等待", help: "每个主要步骤完成后的页面稳定等待。", minimum: 0, maximum: 5_000, step: 100 },
+  { key: "domain_lookup_delay_ms", label: "域定位前等待", help: "提交登录后，开始定位域选择器之前的固定等待。", minimum: 0, maximum: 30_000, step: 1_000 },
+  { key: "filter_action_delay_ms", label: "筛选动作前后等待", help: "添加主机名和时间条件时，每个 UI 动作前后分别等待。", minimum: 0, maximum: 2_000, step: 50 },
+  { key: "query_result_settle_ms", label: "检索结果等待", help: "提交时间范围检索后，进入导出步骤前的等待。", minimum: 0, maximum: 30_000, step: 1_000 },
+];
+
+function validCloudAutomationTiming(value: CloudAutomationTiming) {
+  return cloudAutomationTimingFields.every((field) => Number.isInteger(value[field.key])
+    && value[field.key] >= field.minimum && value[field.key] <= field.maximum);
+}
+
 type ApiRunStep = {
   capability_id: string;
   name_zh: string;
@@ -614,6 +653,7 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
   const [cloudDeviceName, setCloudDeviceName] = useState("");
   const [cloudStartTime, setCloudStartTime] = useState("");
   const [cloudDelaySeconds, setCloudDelaySeconds] = useState(30);
+  const [cloudAutomationTiming, setCloudAutomationTiming] = useState<CloudAutomationTiming>(defaultCloudAutomationTiming);
   const [activeRun, setActiveRun] = useState<ApiRun | null>(null);
   const [recentRuns, setRecentRuns] = useState<ApiRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState("");
@@ -769,6 +809,7 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
     if (cloudAutomationEnabled && (!cloudAccount.trim() || !cloudPassword || !cloudDeviceName.trim())) { setNotice("云端自动下载需要填写子账号、密码和设备名称。"); return; }
     if (cloudAutomationEnabled && (!Number.isInteger(cloudDelaySeconds) || cloudDelaySeconds < 0 || cloudDelaySeconds > 3600)) { setNotice("云端日志等待时间必须是 0–3600 秒的整数。"); return; }
     if (cloudAutomationEnabled && cloudStartTime && Number.isNaN(new Date(cloudStartTime).getTime())) { setNotice("日志起始时间无效。"); return; }
+    if (cloudAutomationEnabled && !validCloudAutomationTiming(cloudAutomationTiming)) { setNotice("浏览器自动化高级等待参数超出允许范围。"); return; }
     try {
       const run = await apiRequest<ApiRun>("/runs", {
         method: "POST",
@@ -788,6 +829,7 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
             log_start_time: cloudAutomationEnabled && cloudStartTime ? new Date(cloudStartTime).toISOString() : undefined,
             delay_seconds: cloudDelaySeconds,
             debug_mode: cloudDebugMode,
+            timing: cloudAutomationTiming,
           },
         }),
       });
@@ -967,10 +1009,11 @@ export function LiveControlPlane({ view = "overview" }: { view?: ControlPlaneVie
           apiState={apiState} availableIds={availableIds} administratorRequiredIds={administratorRequiredIds} selectedIds={selectedIds} activeRun={activeRun} recentRuns={recentRuns}
           runName={runName} environment={environment} nextDelay={nextDelay} subtestDelayMs={subtestDelayMs} allowHighRisk={allowHighRisk} selectedRisk={selectedRisk} hasHighRisk={hasHighRisk}
           cloudAutomationAvailable={cloudAutomationAvailable} cloudAutomationEnabled={cloudAutomationEnabled} cloudDebugMode={cloudDebugMode} cloudAccount={cloudAccount} cloudPassword={cloudPassword}
-          cloudDeviceName={cloudDeviceName} cloudStartTime={cloudStartTime} cloudDelaySeconds={cloudDelaySeconds}
+          cloudDeviceName={cloudDeviceName} cloudStartTime={cloudStartTime} cloudDelaySeconds={cloudDelaySeconds} cloudAutomationTiming={cloudAutomationTiming}
           onRunName={setRunName} onEnvironment={setEnvironment} onNextDelay={setNextDelay} onSubtestDelayMs={setSubtestDelayMs} onAllowHighRisk={setAllowHighRisk}
           onCloudAutomationEnabled={setCloudAutomationEnabled} onCloudDebugMode={setCloudDebugMode} onCloudAccount={setCloudAccount} onCloudPassword={setCloudPassword}
           onCloudDeviceName={setCloudDeviceName} onCloudStartTime={setCloudStartTime} onCloudDelaySeconds={setCloudDelaySeconds}
+          onCloudAutomationTiming={(key, value) => setCloudAutomationTiming((current) => ({ ...current, [key]: value }))}
           onToggle={toggleCapability} onSelectAll={() => setSelectedIds([...availableIds])} onClear={() => setSelectedIds([])}
           onStart={() => void startRun()} onCancel={() => void cancelRun()} onDownload={(run) => void downloadLocalExport(run)} onDownloadCloudDebugLog={(run) => void downloadCloudDebugLog(run)} onInspect={setActiveRun} onRefresh={() => void refreshRuns()}
         />}
@@ -1040,10 +1083,11 @@ function Overview({ apiState, capabilities, baselines, recentRuns }: { apiState:
 type TestWorkspaceProps = {
   apiState: ApiState; availableIds: Set<string>; administratorRequiredIds: Set<string>; selectedIds: string[]; activeRun: ApiRun | null; recentRuns: ApiRun[];
   runName: string; environment: string; nextDelay: number; subtestDelayMs: number; allowHighRisk: boolean; selectedRisk: string; hasHighRisk: boolean;
-  cloudAutomationAvailable: boolean; cloudAutomationEnabled: boolean; cloudDebugMode: boolean; cloudAccount: string; cloudPassword: string; cloudDeviceName: string; cloudStartTime: string; cloudDelaySeconds: number;
+  cloudAutomationAvailable: boolean; cloudAutomationEnabled: boolean; cloudDebugMode: boolean; cloudAccount: string; cloudPassword: string; cloudDeviceName: string; cloudStartTime: string; cloudDelaySeconds: number; cloudAutomationTiming: CloudAutomationTiming;
   onRunName: (value: string) => void; onEnvironment: (value: string) => void; onNextDelay: (value: number) => void; onSubtestDelayMs: (value: number) => void; onAllowHighRisk: (value: boolean) => void;
   onCloudAutomationEnabled: (value: boolean) => void; onCloudDebugMode: (value: boolean) => void; onCloudAccount: (value: string) => void; onCloudPassword: (value: string) => void;
   onCloudDeviceName: (value: string) => void; onCloudStartTime: (value: string) => void; onCloudDelaySeconds: (value: number) => void;
+  onCloudAutomationTiming: (key: keyof CloudAutomationTiming, value: number) => void;
   onToggle: (id: string) => void; onSelectAll: () => void; onClear: () => void; onStart: () => void; onCancel: () => void;
   onDownload: (run: ApiRun) => void; onDownloadCloudDebugLog: (run: ApiRun) => void; onInspect: (run: ApiRun) => void; onRefresh: () => void;
 };
@@ -1083,8 +1127,14 @@ function TestWorkspace(props: TestWorkspaceProps) {
               <label className="field-label">腾讯云子账号<input type="text" value={props.cloudAccount} autoComplete="off" maxLength={512} onChange={(event) => props.onCloudAccount(event.target.value)} /><span className="field-help">仅用于本轮，提交后立即从前端清除。</span></label>
               <label className="field-label">登录密码<input type="password" value={props.cloudPassword} autoComplete="new-password" maxLength={4096} onChange={(event) => props.onCloudPassword(event.target.value)} /><span className="field-help">通过标准输入交给浏览器进程，不写入配置或日志。</span></label>
               <label className="field-label">设备名称<input type="text" value={props.cloudDeviceName} maxLength={255} onChange={(event) => props.onCloudDeviceName(event.target.value)} /><span className="field-help">默认当前计算机名；手动修改值不会保存。</span></label>
-              <label className="field-label">日志起始时间（可选）<input type="datetime-local" step="1" value={props.cloudStartTime} onChange={(event) => props.onCloudStartTime(event.target.value)} /><span className="field-help">留空时取本轮实际开始时间前 30 秒；查询结束时间固定取本轮实际结束时间后 30 秒。</span></label>
+              <label className="field-label">日志起始时间（可选）<input type="datetime-local" step="1" value={props.cloudStartTime} onChange={(event) => props.onCloudStartTime(event.target.value)} /><span className="field-help">留空时取本轮实际开始时间前 10 秒；查询结束时间固定取本轮实际结束时间后 10 秒。</span></label>
               <label className="field-label">测试结束后等待（秒）<input type="number" min="0" max="3600" step="1" value={props.cloudDelaySeconds} onChange={(event) => props.onCloudDelaySeconds(Math.min(3600, Math.max(0, Number(event.target.value) || 0)))} /><span className="field-help">默认 30 秒，等待 EDR 云端完成入库。</span></label>
+              <details className="cloud-automation-advanced">
+                <summary><span>高级等待选项</span><em>按页面加载与网络情况调整，单位均为毫秒</em></summary>
+                <div className="cloud-automation-timing-grid">
+                  {cloudAutomationTimingFields.map((field) => <label className="field-label" key={field.key}>{field.label}<input type="number" min={field.minimum} max={field.maximum} step={field.step} value={props.cloudAutomationTiming[field.key]} onChange={(event) => props.onCloudAutomationTiming(field.key, Math.min(field.maximum, Math.max(field.minimum, Math.trunc(Number(event.target.value) || 0))))} /><span className="field-help">{field.help} 范围 {field.minimum}–{field.maximum} ms。</span></label>)}
+                </div>
+              </details>
             </div>}
           </section>
           {props.hasHighRisk && <label className="risk-confirm"><input type="checkbox" checked={props.allowHighRisk} onChange={(event) => props.onAllowHighRisk(event.target.checked)} /><span>我确认在隔离测试机执行 L2/L3 高风险样本</span></label>}

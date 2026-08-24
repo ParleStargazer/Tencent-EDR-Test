@@ -1570,6 +1570,14 @@ tbody tr:last-child td { border-bottom: 0; }
 .cloud-automation-toggle em { margin-top: 4px; color: var(--quiet); font-size: 9px; font-style: normal; line-height: 1.5; }
 .cloud-automation-toggle:has(input:disabled) { cursor: not-allowed; opacity: 0.68; }
 .cloud-automation-fields { display: grid; gap: 12px; padding: 13px; border-top: 1px solid var(--line); }
+.cloud-automation-advanced { border: 1px solid #b9cbc4; background: rgba(255, 255, 255, 0.58); }
+.cloud-automation-advanced > summary { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 10px 11px; cursor: pointer; list-style: none; }
+.cloud-automation-advanced > summary::-webkit-details-marker { display: none; }
+.cloud-automation-advanced > summary::after { content: "+"; color: var(--accent); font-family: Consolas, monospace; font-size: 13px; }
+.cloud-automation-advanced[open] > summary::after { content: "−"; }
+.cloud-automation-advanced > summary span { font-size: 10px; font-weight: 700; }
+.cloud-automation-advanced > summary em { margin-left: auto; color: var(--quiet); font-size: 8px; font-style: normal; }
+.cloud-automation-timing-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 11px; border-top: 1px solid var(--line); }
 .cloud-debug-toggle { display: flex; gap: 10px; align-items: flex-start; padding: 11px 12px; border: 1px solid #9fbfb4; background: #eaf5f1; cursor: pointer; }
 .cloud-debug-toggle input { margin-top: 2px; accent-color: var(--accent); }
 .cloud-debug-toggle span,
@@ -1662,6 +1670,7 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 
 @media (max-width: 650px) {
+  .cloud-automation-timing-grid { grid-template-columns: 1fr; }
   .journey-card { min-height: 210px; padding: 20px; }
   .step-timeline { grid-template-columns: 1fr; }
   .step-timeline li { border-right: 1px solid var(--line); border-bottom: 0; }

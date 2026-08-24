@@ -36,6 +36,7 @@ internal sealed class CloudExportAutomationConfig : IDisposable
     public required DateTimeOffset? RequestedStartTime { get; init; }
     public required int DelaySeconds { get; init; }
     public required bool DebugMode { get; init; }
+    public required CloudAutomationTimingConfig Timing { get; init; }
 
     public void Dispose()
     {
@@ -43,6 +44,14 @@ internal sealed class CloudExportAutomationConfig : IDisposable
         Password = string.Empty;
     }
 }
+
+internal sealed record CloudAutomationTimingConfig(
+    int StepTimeoutMilliseconds,
+    int PostLoginTimeoutMilliseconds,
+    int StepSettleMilliseconds,
+    int DomainLookupDelayMilliseconds,
+    int FilterActionDelayMilliseconds,
+    int QueryResultSettleMilliseconds);
 
 internal sealed class CloudImportStore
 {
@@ -317,6 +326,15 @@ internal sealed class TencentEdrCloudExportService
             ["download_path"] = Path.GetFullPath(cloudPath),
             ["timeout_ms"] = 300_000,
             ["debug_mode"] = config.DebugMode,
+            ["timing"] = new JsonObject
+            {
+                ["step_timeout_ms"] = config.Timing.StepTimeoutMilliseconds,
+                ["post_login_timeout_ms"] = config.Timing.PostLoginTimeoutMilliseconds,
+                ["step_settle_ms"] = config.Timing.StepSettleMilliseconds,
+                ["domain_lookup_delay_ms"] = config.Timing.DomainLookupDelayMilliseconds,
+                ["filter_action_delay_ms"] = config.Timing.FilterActionDelayMilliseconds,
+                ["query_result_settle_ms"] = config.Timing.QueryResultSettleMilliseconds,
+            },
         }.ToJsonString(JsonDefaults.Options);
         await process.StandardInput.WriteAsync(payload.AsMemory(), cancellationToken);
         await process.StandardInput.FlushAsync(cancellationToken);
