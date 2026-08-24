@@ -227,6 +227,7 @@ internal sealed class TencentEdrCloudExportService
         RunResult run,
         CloudExportAutomationConfig config,
         DateTimeOffset queryStartUtc,
+        DateTimeOffset queryEndUtc,
         Action<ApiCloudProgressEntry>? progressCallback,
         CancellationToken cancellationToken)
     {
@@ -244,7 +245,6 @@ internal sealed class TencentEdrCloudExportService
             if (!Available)
                 throw new CloudAutomationException("AUTOMATION_RUNTIME_UNAVAILABLE", "未找到 Node.js、Playwright Core 或自动化脚本；可继续手动导入。");
             journal.Report("runtime_ready", "Node.js、Playwright Core 与自动化脚本已就绪。", 5);
-            var queryEndUtc = DateTimeOffset.UtcNow;
             if (queryEndUtc <= queryStartUtc)
                 throw new CloudAutomationException("INVALID_QUERY_WINDOW", "云端日志结束时间必须晚于起始时间。");
             await RunBrowserAutomationAsync(config, queryStartUtc, queryEndUtc, cloudPath, journal, cancellationToken);
@@ -272,7 +272,7 @@ internal sealed class TencentEdrCloudExportService
             journal?.Report("acquisition_error", $"{code}：{message}", journal.CurrentProgress, "error");
             var failed = new ApiCloudImportRecord(
                 "1.0", importId, run.RunId, "failed", "tencent_edr_browser_automation", config.DeviceName,
-                queryStartUtc, null, createdAt, null, File.Exists(cloudPath) ? Path.GetFileName(cloudPath) : null,
+                queryStartUtc, queryEndUtc, createdAt, null, File.Exists(cloudPath) ? Path.GetFileName(cloudPath) : null,
                 null, null, null, File.Exists(cloudPath) ? new FileInfo(cloudPath).Length : null, null, code, message);
             try { store.Write(importDirectory, failed); } catch (Exception writeException) { Console.Error.WriteLine($"无法写入云端导入失败记录：{writeException.Message}"); }
             return failed;

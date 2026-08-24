@@ -1083,7 +1083,7 @@ function TestWorkspace(props: TestWorkspaceProps) {
               <label className="field-label">腾讯云子账号<input type="text" value={props.cloudAccount} autoComplete="off" maxLength={512} onChange={(event) => props.onCloudAccount(event.target.value)} /><span className="field-help">仅用于本轮，提交后立即从前端清除。</span></label>
               <label className="field-label">登录密码<input type="password" value={props.cloudPassword} autoComplete="new-password" maxLength={4096} onChange={(event) => props.onCloudPassword(event.target.value)} /><span className="field-help">通过标准输入交给浏览器进程，不写入配置或日志。</span></label>
               <label className="field-label">设备名称<input type="text" value={props.cloudDeviceName} maxLength={255} onChange={(event) => props.onCloudDeviceName(event.target.value)} /><span className="field-help">默认当前计算机名；手动修改值不会保存。</span></label>
-              <label className="field-label">日志起始时间（可选）<input type="datetime-local" step="1" value={props.cloudStartTime} onChange={(event) => props.onCloudStartTime(event.target.value)} /><span className="field-help">留空时取本轮开始时间前 10 秒。</span></label>
+              <label className="field-label">日志起始时间（可选）<input type="datetime-local" step="1" value={props.cloudStartTime} onChange={(event) => props.onCloudStartTime(event.target.value)} /><span className="field-help">留空时取本轮实际开始时间前 30 秒；查询结束时间固定取本轮实际结束时间后 30 秒。</span></label>
               <label className="field-label">测试结束后等待（秒）<input type="number" min="0" max="3600" step="1" value={props.cloudDelaySeconds} onChange={(event) => props.onCloudDelaySeconds(Math.min(3600, Math.max(0, Number(event.target.value) || 0)))} /><span className="field-help">默认 30 秒，等待 EDR 云端完成入库。</span></label>
             </div>}
           </section>

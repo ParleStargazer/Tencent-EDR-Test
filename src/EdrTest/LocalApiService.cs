@@ -862,15 +862,16 @@ internal sealed class ApiRunCoordinator
             if (cloudConfig is null) return;
             try
             {
-                var queryStartUtc = cloudConfig.RequestedStartTime ?? state.StartedAt.AddSeconds(-10);
-                state.BeginCloudWait(queryStartUtc);
+                var queryStartUtc = cloudConfig.RequestedStartTime ?? result.StartedAtUtc.AddSeconds(-30);
+                var queryEndUtc = result.EndedAtUtc.AddSeconds(30);
+                state.BeginCloudWait(queryStartUtc, queryEndUtc);
                 for (var remaining = cloudConfig.DelaySeconds; remaining > 0; remaining--)
                 {
                     state.UpdateCloudWaitRemaining(remaining);
                     await Task.Delay(TimeSpan.FromSeconds(1));
                 }
                 state.BeginCloudAcquisition();
-                var import = await cloudExporter.ExportAndImportAsync(result, cloudConfig, queryStartUtc, state.ApplyCloudProgress, CancellationToken.None);
+                var import = await cloudExporter.ExportAndImportAsync(result, cloudConfig, queryStartUtc, queryEndUtc, state.ApplyCloudProgress, CancellationToken.None);
                 state.CompleteCloudAcquisition(import, cloudImportStore.ResolveDebugLog(result.RunDirectory, import.ImportId) is not null);
             }
             catch (Exception exception)
@@ -1250,7 +1251,7 @@ internal sealed class ApiRunState
         }
     }
 
-    public void BeginCloudWait(DateTimeOffset queryStartUtc)
+    public void BeginCloudWait(DateTimeOffset queryStartUtc, DateTimeOffset queryEndUtc)
     {
         lock (sync)
         {
@@ -1262,7 +1263,7 @@ internal sealed class ApiRunState
                 DateTimeOffset.UtcNow,
                 "info",
                 "waiting_ingestion",
-                $"本地测试已完成，等待 {cloudDelaySeconds ?? 0} 秒后获取云端日志。",
+                $"本地测试已完成，云端查询范围为 {queryStartUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} 至 {queryEndUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}；等待 {cloudDelaySeconds ?? 0} 秒后获取云端日志。",
                 0,
                 false));
         }

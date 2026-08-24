@@ -18,7 +18,14 @@ public sealed record RunRequest(
     Action<RunProgressUpdate>? ProgressCallback = null,
     int InterSubtestDelayMilliseconds = SubtestTiming.DefaultDelayMilliseconds);
 
-public sealed record RunResult(string RunId, string RunDirectory, string DatabasePath, string LocalExportPath, string Status);
+public sealed record RunResult(
+    string RunId,
+    string RunDirectory,
+    string DatabasePath,
+    string LocalExportPath,
+    string Status,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset EndedAtUtc);
 
 public sealed record RunProgressUpdate(
     DateTimeOffset TimestampUtc,
@@ -60,6 +67,7 @@ public sealed class RunnerService
         Directory.CreateDirectory(workRoot);
 
         var runStatus = "COMPLETED";
+        DateTimeOffset ended;
         using (var database = RunDatabase.Create(databasePath, new RunSeed(runId, request.SuiteId, request.EnvironmentId, started)))
         {
             try
@@ -123,7 +131,8 @@ public sealed class RunnerService
                     if (capabilityStatus == "CLEANUP_ERROR") break;
                     await WaitBeforeNextAsync(request, package, index, packages.Length, cancellationToken);
                 }
-                database.Seal(runStatus, DateTimeOffset.UtcNow);
+                ended = DateTimeOffset.UtcNow;
+                database.Seal(runStatus, ended);
                 Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "run_completed", runStatus == "COMPLETED" ? "info" : "warning", runStatus == "COMPLETED" ? "全部能力执行完成，本地数据库已封存。" : "测试轮次已结束，但有能力未通过本地自验证。", 97, packages.Length, Important: true));
             }
             catch (OperationCanceledException)
@@ -143,7 +152,7 @@ public sealed class RunnerService
         Directory.CreateDirectory(Path.GetDirectoryName(exportPath)!);
         ExportService.Export(databasePath, exportPath);
         Report(request, new RunProgressUpdate(DateTimeOffset.UtcNow, "export_completed", "info", "本地运行结果 JSON 已生成，可以进入离线比较。", 100, packages.Length, Important: true));
-        return new RunResult(runId, runDirectory, databasePath, exportPath, runStatus);
+        return new RunResult(runId, runDirectory, databasePath, exportPath, runStatus, started, ended);
     }
 
     private static async Task<string> ExecuteControllerAsync(

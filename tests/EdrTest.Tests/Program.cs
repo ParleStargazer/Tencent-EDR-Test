@@ -2454,6 +2454,12 @@ public static class Program
         stopwatch.Stop();
         var local = JsonNode.Parse(File.ReadAllText(result.LocalExportPath))!.AsObject();
         Assert(local["capabilities"]?.AsArray().Count == 2, "一轮应保存两个能力。");
+        var persistedRun = local["run"]?.AsObject() ?? throw new InvalidOperationException("本地导出缺少轮次信息。");
+        Assert(DateTimeOffset.Parse(persistedRun["started_at_utc"]!.GetValue<string>()) == result.StartedAtUtc,
+            "RunResult 的开始时间必须使用 SQLite 轮次创建时间。");
+        Assert(DateTimeOffset.Parse(persistedRun["ended_at_utc"]!.GetValue<string>()) == result.EndedAtUtc,
+            "RunResult 的结束时间必须使用 SQLite 封存时间。");
+        Assert(result.EndedAtUtc >= result.StartedAtUtc, "轮次结束时间不得早于开始时间。");
         Assert(local["programs"]?.AsArray().Count == 6, "两个能力应分别保存三个程序实例。");
         Assert(local["local_events"]?.AsArray().Count == 2, "两个能力应分别保存本地事件。");
         Assert(local["capabilities"]?[0]?["sequence"]?.GetValue<int>() == 1, "首个能力顺序应为 1。");

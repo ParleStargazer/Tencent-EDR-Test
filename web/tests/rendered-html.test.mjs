@@ -130,6 +130,8 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(livePage, /cloud_automation:/);
   assert.match(livePage, /腾讯云子账号/);
   assert.match(livePage, /日志起始时间（可选）/);
+  assert.match(livePage, /实际开始时间前 30 秒/);
+  assert.match(livePage, /实际结束时间后 30 秒/);
   assert.match(livePage, /调试模式（浏览器界面可见）/);
   assert.match(livePage, /debug_mode: cloudDebugMode/);
   assert.match(livePage, /aria-label="云端日志导入进度"/);
@@ -167,6 +169,8 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.equal((cloudAutomation.match(/await runFilterAction\(page, timing/g) ?? []).length, 22);
   assert.match(cloudAutomation, /endTimeInput\.press\("Enter"\)/);
   assert.match(cloudAutomation, /query_end_local/);
+  assert.match(localApi, /result\.StartedAtUtc\.AddSeconds\(-30\)/);
+  assert.match(localApi, /result\.EndedAtUtc\.AddSeconds\(30\)/);
   assert.match(cloudAutomation, /firstVisibleState/);
   assert.doesNotMatch(cloudAutomation, /selectDefaultDomain\(page, 30_000\)/);
   assert.match(cloudService, /TimeSpan\.FromMinutes\(10\)/);
