@@ -1,6 +1,8 @@
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 namespace FileManipulation;
 
@@ -12,6 +14,7 @@ internal static class Program
     {
         string? resultPath = null;
         string operation = "unknown";
+        string? deletionMethod = null;
         string path = string.Empty;
         try
         {
@@ -21,10 +24,11 @@ internal static class Program
             resultPath = Path.GetFullPath(options.Require("result"));
             var destination = options.Get("destination") is { } value ? Path.GetFullPath(value) : null;
             var nonce = options.Require("nonce");
+            deletionMethod = options.Get("delete-method");
             var payloadSize = options.GetInt("payload-size", 8_192, 256, 1_048_576);
             var holdMs = options.GetInt("hold-ms", 1_500, 0, 30_000);
 
-            var result = Execute(operation, path, destination, nonce, payloadSize);
+            var result = Execute(operation, path, destination, nonce, payloadSize, deletionMethod);
             ProtocolJson.WriteAtomic(resultPath, result);
             if (holdMs > 0) Thread.Sleep(holdMs);
             return result.Succeeded ? 0 : BehaviorError;
@@ -37,6 +41,7 @@ internal static class Program
                 ProtocolJson.WriteAtomic(resultPath, new BehaviorResult
                 {
                     Operation = operation,
+                    DeletionMethod = deletionMethod,
                     Succeeded = false,
                     OccurredAtUtc = DateTimeOffset.UtcNow,
                     Win32Error = error == 0 ? null : error,
@@ -51,7 +56,13 @@ internal static class Program
         }
     }
 
-    private static BehaviorResult Execute(string operation, string path, string? destination, string nonce, int payloadSize)
+    private static BehaviorResult Execute(
+        string operation,
+        string path,
+        string? destination,
+        string nonce,
+        int payloadSize,
+        string? deletionMethod)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var before = Snapshot(path);
@@ -108,8 +119,16 @@ internal static class Program
             }
             case "delete":
                 if (!before.Exists) throw new FileNotFoundException("删除测试要求文件事先存在。", path);
-                occurred = DateTimeOffset.UtcNow;
-                File.Delete(path);
+                if (string.Equals(deletionMethod, "file_disposition_info", StringComparison.Ordinal))
+                {
+                    occurred = DeleteWithFileDispositionInfo(path);
+                }
+                else
+                {
+                    occurred = DateTimeOffset.UtcNow;
+                    File.Delete(path);
+                    deletionMethod = "dotnet_file_delete";
+                }
                 break;
             case "rename":
                 if (destination is null) throw new ArgumentException("重命名测试缺少 --destination。");
@@ -138,6 +157,7 @@ internal static class Program
         return new BehaviorResult
         {
             Operation = operation,
+            DeletionMethod = operation == "delete" ? deletionMethod : null,
             Succeeded = succeeded,
             OccurredAtUtc = occurred,
             Win32Error = 0,
@@ -157,6 +177,70 @@ internal static class Program
             WriteOffset = bytesWritten is null ? null : 0,
         };
     }
+
+    private static DateTimeOffset DeleteWithFileDispositionInfo(string path)
+    {
+        using var file = CreateFileW(
+            path,
+            DeleteAccess,
+            FileShareRead | FileShareWrite | FileShareDelete,
+            IntPtr.Zero,
+            OpenExisting,
+            FileAttributeNormal,
+            IntPtr.Zero);
+        if (file.IsInvalid)
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateFileW(DELETE) 打开待删除文件失败。");
+        }
+        var disposition = new FileDispositionInfo { DeleteFile = true };
+        var occurredAtUtc = DateTimeOffset.UtcNow;
+        if (!SetFileInformationByHandle(
+                file,
+                FileInfoByHandleClass.FileDispositionInfo,
+                ref disposition,
+                (uint)Marshal.SizeOf<FileDispositionInfo>()))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "SetFileInformationByHandle(FileDispositionInfo) 删除标记失败。");
+        }
+        return occurredAtUtc;
+    }
+
+    private const uint DeleteAccess = 0x00010000;
+    private const uint FileShareRead = 0x00000001;
+    private const uint FileShareWrite = 0x00000002;
+    private const uint FileShareDelete = 0x00000004;
+    private const uint OpenExisting = 3;
+    private const uint FileAttributeNormal = 0x00000080;
+
+    private enum FileInfoByHandleClass
+    {
+        FileDispositionInfo = 4,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileDispositionInfo
+    {
+        [MarshalAs(UnmanagedType.Bool)]
+        public bool DeleteFile;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFileInformationByHandle(
+        SafeFileHandle file,
+        FileInfoByHandleClass fileInformationClass,
+        ref FileDispositionInfo fileInformation,
+        uint bufferSize);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(
+        string fileName,
+        uint desiredAccess,
+        uint shareMode,
+        IntPtr securityAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
 
     private static byte[] Payload(string nonce, string operation, int size, string path)
     {

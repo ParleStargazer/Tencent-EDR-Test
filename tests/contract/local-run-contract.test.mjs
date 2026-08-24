@@ -194,7 +194,7 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
       "utf8",
     );
     assert.equal(manifest.capability_id, `win.file.${operation}`);
-    assert.equal(manifest.version, operation === "delete" ? "0.3.0" : "0.2.0");
+    assert.equal(manifest.version, operation === "delete" ? "0.4.0" : "0.2.0");
     assert.equal(manifest.risk_level, "L0");
     assert.deepEqual(manifest.participants.map((item) => item.role), ["actor"]);
     assert.ok(manifest.expected_fact_keys.includes(`file.${operation}_succeeded`));
@@ -219,11 +219,22 @@ test("File Manipulation 五项源码清单、Canonical 字段与腾讯路由完�
   );
   assert.ok(deleteManifest.expected_fact_keys.includes("file.json_delayed_5s.delete_succeeded"));
   assert.ok(deleteManifest.expected_fact_keys.includes("file.json_delayed_5s.landed_to_delete_ms"));
+  assert.ok(deleteManifest.expected_fact_keys.includes("file.dll_dotnet_delete_5s.delete_succeeded"));
+  assert.ok(deleteManifest.expected_fact_keys.includes("file.json_disposition_5s.delete_succeeded"));
+  assert.ok(deleteManifest.expected_fact_keys.includes("file.dll_disposition_5s.delete_succeeded"));
+  assert.ok(deleteManifest.expected_fact_keys.includes("file.dll_disposition_5s.deletion_method"));
   assert.match(deleteBaseline, /method: \{ id: json_delayed_5s, title: JSON 文件 · 落地 5 秒后删除 \}/);
+  assert.match(deleteBaseline, /method: \{ id: dll_dotnet_delete_5s, title: DLL 文件 · 落地 5 秒 · File\.Delete \}/);
+  assert.match(deleteBaseline, /method: \{ id: json_disposition_5s, title: JSON 文件 · 落地 5 秒 · FileDispositionInfo \}/);
+  assert.match(deleteBaseline, /method: \{ id: dll_disposition_5s, title: DLL 文件 · 落地 5 秒 · FileDispositionInfo \}/);
   assert.match(deleteBaseline, /max_time_difference_ms: 15/);
   assert.match(deleteBaseline, /reference\/edr_FileDelete\.json/);
   assert.match(controller, /DelayedDeleteWaitMs = 5_000/);
   assert.match(controller, /WaitForMinimumDelay\(DelayedDeleteWaitMs\)/);
+  assert.match(controller, /FileManipulation\.Protocol\.dll/);
+  assert.match(controller, /DllDotNetDeleteSubtest/);
+  assert.match(controller, /JsonDispositionDeleteSubtest/);
+  assert.match(controller, /file_disposition_info/);
 
   const imageLoadBaseline = await readFile(
     new URL("baselines/windows/process_image_load.yaml", root),

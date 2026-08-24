@@ -10,9 +10,20 @@ namespace FileManipulation;
 internal static class Program
 {
     private const string DelayedDeleteSubtest = "json_delayed_5s";
+    private const string DllDotNetDeleteSubtest = "dll_dotnet_delete_5s";
+    private const string JsonDispositionDeleteSubtest = "json_disposition_5s";
+    private const string DllDispositionDeleteSubtest = "dll_disposition_5s";
     private const int DelayedDeleteWaitMs = 5_000;
     private static readonly string[] DefaultSubtests = ["txt", "json"];
-    private static readonly string[] DeleteSubtests = ["txt", "json", DelayedDeleteSubtest];
+    private static readonly string[] DeleteSubtests =
+    [
+        "txt",
+        "json",
+        DelayedDeleteSubtest,
+        DllDotNetDeleteSubtest,
+        JsonDispositionDeleteSubtest,
+        DllDispositionDeleteSubtest,
+    ];
 
     private static readonly IReadOnlyDictionary<string, string> Operations = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -147,7 +158,14 @@ internal static class Program
         var actorPath = package.ResolveProgram(actorDefinition.Executable);
         var tag = new string(invocation.Nonce.Where(char.IsLetterOrDigit).Take(12).ToArray()).ToLowerInvariant();
         var extension = ExtensionForSubtest(subtest);
-        var methodSuffix = subtest == DelayedDeleteSubtest ? "_delayed_5s" : string.Empty;
+        var methodSuffix = subtest switch
+        {
+            DelayedDeleteSubtest => "_delayed_5s",
+            DllDotNetDeleteSubtest => "_dll_dotnet_5s",
+            JsonDispositionDeleteSubtest => "_json_disposition_5s",
+            DllDispositionDeleteSubtest => "_disposition_5s",
+            _ => string.Empty,
+        };
         var path = Path.Combine(invocation.WorkDir, $"edrtest_{tag}_file_{operation}{methodSuffix}.{extension}");
         var destination = operation == "rename"
             ? Path.Combine(invocation.WorkDir, $"edrtest_{tag}_file_renamed.{extension}")
@@ -162,17 +180,29 @@ internal static class Program
 
         var payloadSize = parameters["payload_size"]?.GetValue<int>() ?? 8_192;
         var holdMs = parameters["post_operation_hold_ms"]?.GetValue<int>() ?? 1_500;
+        var deletionMethod = operation == "delete"
+            ? IsDispositionDeleteSubtest(subtest) ? "file_disposition_info" : "dotnet_file_delete"
+            : null;
         DateTimeOffset? landedAtUtc = null;
         long? settleElapsedMs = null;
         if (operation != "create")
         {
-            File.WriteAllBytes(path, Payload(invocation.Nonce, "seed", payloadSize, extension));
+            if (IsDllDeleteSubtest(subtest))
+            {
+                var sourceDll = package.ResolveProgram("FileManipulation.Protocol.dll");
+                if (!File.Exists(sourceDll)) throw new FileNotFoundException("能力包缺少 DLL 删除子测试源文件。", sourceDll);
+                File.Copy(sourceDll, path, overwrite: false);
+            }
+            else
+            {
+                File.WriteAllBytes(path, Payload(invocation.Nonce, "seed", payloadSize, extension));
+            }
             using (var seed = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
             {
                 seed.Flush(flushToDisk: true);
             }
             if (extension == "json" && !IsValidJson(path)) throw new InvalidDataException("Controller 生成的 JSON 预置文件无效。");
-            if (subtest == DelayedDeleteSubtest)
+            if (IsDelayedDeleteSubtest(subtest))
             {
                 landedAtUtc = DateTimeOffset.UtcNow;
                 settleElapsedMs = WaitForMinimumDelay(DelayedDeleteWaitMs);
@@ -188,6 +218,11 @@ internal static class Program
             "--payload-size", payloadSize.ToString(),
             "--hold-ms", holdMs.ToString(),
         };
+        if (deletionMethod is not null)
+        {
+            arguments.Add("--delete-method");
+            arguments.Add(deletionMethod);
+        }
         if (destination is not null)
         {
             arguments.Add("--destination");
@@ -213,12 +248,32 @@ internal static class Program
             destination,
             result,
             landedAtUtc,
-            settleElapsedMs);
+            settleElapsedMs,
+            deletionMethod);
     }
 
     private static IReadOnlyList<string> SubtestsFor(string operation) => operation == "delete" ? DeleteSubtests : DefaultSubtests;
 
-    private static string ExtensionForSubtest(string subtest) => subtest == DelayedDeleteSubtest ? "json" : subtest;
+    private static string ExtensionForSubtest(string subtest) => subtest switch
+    {
+        DelayedDeleteSubtest => "json",
+        DllDotNetDeleteSubtest => "dll",
+        JsonDispositionDeleteSubtest => "json",
+        DllDispositionDeleteSubtest => "dll",
+        _ => subtest,
+    };
+
+    private static bool IsDelayedDeleteSubtest(string subtest) =>
+        subtest is DelayedDeleteSubtest
+            or DllDotNetDeleteSubtest
+            or JsonDispositionDeleteSubtest
+            or DllDispositionDeleteSubtest;
+
+    private static bool IsDllDeleteSubtest(string subtest) =>
+        subtest is DllDotNetDeleteSubtest or DllDispositionDeleteSubtest;
+
+    private static bool IsDispositionDeleteSubtest(string subtest) =>
+        subtest is JsonDispositionDeleteSubtest or DllDispositionDeleteSubtest;
 
     private static long WaitForMinimumDelay(int delayMs)
     {
@@ -320,6 +375,13 @@ internal static class Program
                 ["landed_to_delete_ms"] = (long)Math.Round((result.OccurredAtUtc - landedAtUtc).TotalMilliseconds),
             };
         }
+        if (result.DeletionMethod is not null)
+        {
+            data["delete"] = new JsonObject
+            {
+                ["method"] = result.DeletionMethod,
+            };
+        }
         if (operation == "rename")
         {
             data["source_path"] = result.SourcePath;
@@ -400,6 +462,10 @@ internal static class Program
             values[$"{prefix}.landed_to_delete_ms"] = JsonValue.Create(
                 (long)Math.Round((result.OccurredAtUtc - landedAtUtc).TotalMilliseconds));
         }
+        if (result.DeletionMethod is not null)
+        {
+            values[$"{prefix}.deletion_method"] = JsonValue.Create(result.DeletionMethod);
+        }
         if (operation == "rename")
         {
             values[$"{prefix}.source_path"] = JsonValue.Create(result.SourcePath);
@@ -473,10 +539,12 @@ internal static class Program
                 && result.BytesWritten == result.BytesRead && result.Before.Sha256 == result.After.Sha256
                 && currentSource.Sha256 == result.After.Sha256,
             "delete" => result.Before.Exists && !currentSource.Exists
-                && (state.Subtest != DelayedDeleteSubtest
+                && (!IsDelayedDeleteSubtest(state.Subtest)
                     || state.SettleElapsedMs >= DelayedDeleteWaitMs
                     && state.LandedAtUtc is { } landedAtUtc
-                    && result.OccurredAtUtc >= landedAtUtc.AddMilliseconds(DelayedDeleteWaitMs)),
+                    && result.OccurredAtUtc >= landedAtUtc.AddMilliseconds(DelayedDeleteWaitMs))
+                && (!IsDispositionDeleteSubtest(state.Subtest)
+                    || string.Equals(result.DeletionMethod, "file_disposition_info", StringComparison.Ordinal)),
             "modify" => result.Before.Exists && currentSource.Exists && ValidSubtestContent(state, currentSource.Path) && result.Before.Sha256 != result.After.Sha256
                 && currentSource.SizeBytes == result.BytesWritten && currentSource.Sha256 == result.After.Sha256,
             "rename" => result.Before.Exists && !currentSource.Exists && currentDestination?.Exists == true
@@ -731,7 +799,8 @@ internal static class Program
             string? destination,
             BehaviorResult result,
             DateTimeOffset? landedAtUtc,
-            long? settleElapsedMs)
+            long? settleElapsedMs,
+            string? deletionMethod)
         {
             Subtest = subtest;
             Extension = extension;
@@ -745,6 +814,7 @@ internal static class Program
             Result = result;
             LandedAtUtc = landedAtUtc;
             SettleElapsedMs = settleElapsedMs;
+            DeletionMethod = deletionMethod;
         }
 
         public string Subtest { get; }
@@ -759,6 +829,7 @@ internal static class Program
         public BehaviorResult Result { get; }
         public DateTimeOffset? LandedAtUtc { get; }
         public long? SettleElapsedMs { get; }
+        public string? DeletionMethod { get; }
         public void Dispose() => Actor.Dispose();
     }
 }

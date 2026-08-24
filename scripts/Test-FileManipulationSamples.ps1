@@ -76,7 +76,7 @@ $invalidEvidenceRefs = @($localRun.local_events | ForEach-Object {
 $syntheticCloud = @()
 $syntheticTencent = @()
 foreach ($capability in $localRun.capabilities) {
-    $selectedSubtest = if ($capability.capability_id -eq "win.file.delete") { "json_delayed_5s" } else { "json" }
+    $selectedSubtest = if ($capability.capability_id -eq "win.file.delete") { "dll_disposition_5s" } else { "json" }
     $event = $localRun.local_events | Where-Object { $_.case_run_id -eq $capability.case_run_id -and $_.data.subtest -eq $selectedSubtest } | Select-Object -First 1
     $actor = $event.data.actor
     $actorProgram = $localRun.programs | Where-Object { $_.program_instance_id -eq $event.actor_program_id } | Select-Object -First 1
@@ -213,10 +213,10 @@ $assertions = [ordered]@{
     run_completed = $localRun.run.status -eq "COMPLETED"
     capability_count_is_5 = @($localRun.capabilities).Count -eq 5
     all_capabilities_local_pass = $failedCapabilities.Count -eq 0
-    program_count_is_16 = @($localRun.programs).Count -eq 16
+    program_count_is_19 = @($localRun.programs).Count -eq 19
     controller_count_is_5 = @($localRun.programs | Where-Object { $_.role -eq "controller" }).Count -eq 5
-    actor_count_is_11 = @($localRun.programs | Where-Object { $_.role -eq "actor" }).Count -eq 11
-    event_count_is_11 = @($localRun.local_events).Count -eq 11
+    actor_count_is_14 = @($localRun.programs | Where-Object { $_.role -eq "actor" }).Count -eq 14
+    event_count_is_14 = @($localRun.local_events).Count -eq 14
     txt_subtest_count_is_5 = @($localRun.local_events | Where-Object { $_.data.subtest -eq "txt" -and $_.data.file_extension -eq ".txt" }).Count -eq 5
     json_subtest_count_is_5 = @($localRun.local_events | Where-Object { $_.data.subtest -eq "json" -and $_.data.file_extension -eq ".json" }).Count -eq 5
     delayed_json_delete_subtest_count_is_1 = @($localRun.local_events | Where-Object {
@@ -228,14 +228,42 @@ $assertions = [ordered]@{
             -and [long]$_.data.settle.elapsed_ms -ge 5000 `
             -and [long]$_.data.settle.landed_to_delete_ms -ge 5000
     }).Count -eq 1
+    dll_dotnet_delete_subtest_count_is_1 = @($localRun.local_events | Where-Object {
+        $_.event_action -eq "delete" -and $_.data.subtest -eq "dll_dotnet_delete_5s" `
+            -and $_.data.file_extension -eq ".dll" `
+            -and $_.data.delete.method -eq "dotnet_file_delete"
+    }).Count -eq 1
+    json_disposition_delete_subtest_count_is_1 = @($localRun.local_events | Where-Object {
+        $_.event_action -eq "delete" -and $_.data.subtest -eq "json_disposition_5s" `
+            -and $_.data.file_extension -eq ".json" `
+            -and $_.data.delete.method -eq "file_disposition_info"
+    }).Count -eq 1
+    dll_disposition_delete_subtest_count_is_1 = @($localRun.local_events | Where-Object {
+        $_.event_action -eq "delete" -and $_.data.subtest -eq "dll_disposition_5s" `
+            -and $_.data.file_extension -eq ".dll" `
+            -and $_.data.delete.method -eq "file_disposition_info"
+    }).Count -eq 1
+    dll_disposition_delete_wait_is_at_least_5s = @($localRun.local_events | Where-Object {
+        $_.event_action -eq "delete" -and $_.data.subtest -eq "dll_disposition_5s" `
+            -and [long]$_.data.settle.requested_delay_ms -eq 5000 `
+            -and [long]$_.data.settle.elapsed_ms -ge 5000 `
+            -and [long]$_.data.settle.landed_to_delete_ms -ge 5000
+    }).Count -eq 1
+    all_three_new_delete_methods_wait_at_least_5s = @($localRun.local_events | Where-Object {
+        $_.event_action -eq "delete" `
+            -and $_.data.subtest -in @("dll_dotnet_delete_5s", "json_disposition_5s", "dll_disposition_5s") `
+            -and [long]$_.data.settle.requested_delay_ms -eq 5000 `
+            -and [long]$_.data.settle.elapsed_ms -ge 5000 `
+            -and [long]$_.data.settle.landed_to_delete_ms -ge 5000
+    }).Count -eq 3
     event_actions_complete = (Compare-Object $expectedActions $actualActions).Count -eq 0
     all_events_high_confidence = @($localRun.local_events | Where-Object { $_.confidence -ne "high" }).Count -eq 0
-    cleanup_count_is_11 = @($localRun.cleanup_results).Count -eq 11
+    cleanup_count_is_14 = @($localRun.cleanup_results).Count -eq 14
     all_cleanup_succeeded = $failedCleanup.Count -eq 0
-    evidence_artifact_count_is_11 = @($localRun.artifacts).Count -eq 11
+    evidence_artifact_count_is_14 = @($localRun.artifacts).Count -eq 14
     all_event_evidence_refs_resolve = $invalidEvidenceRefs.Count -eq 0
     nonce_fact_count_is_5 = @($localRun.local_facts | Where-Object { $_.key -eq "correlation.nonce" }).Count -eq 5
-    occurred_time_fact_count_is_11 = @($localRun.local_facts | Where-Object { $_.key -match '^file\.(txt|json|json_delayed_5s)\.occurred_at_utc$' }).Count -eq 11
+    occurred_time_fact_count_is_14 = @($localRun.local_facts | Where-Object { $_.key -match '^file\.(txt|json|json_delayed_5s|dll_dotnet_delete_5s|json_disposition_5s|dll_disposition_5s)\.occurred_at_utc$' }).Count -eq 14
     all_manifest_expected_facts_present = $missingExpectedFacts.Count -eq 0
     synthetic_compare_exit_code_is_0 = $comparisonExitCode -eq 0
     synthetic_compare_pass_count_is_5 = $null -ne $validation -and $validation.summary.pass -eq 5

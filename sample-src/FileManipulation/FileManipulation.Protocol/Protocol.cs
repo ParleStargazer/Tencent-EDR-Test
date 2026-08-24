@@ -39,6 +39,7 @@ public sealed class FileSnapshot
 public sealed class BehaviorResult
 {
     public required string Operation { get; init; }
+    public string? DeletionMethod { get; init; }
     public required bool Succeeded { get; init; }
     public required DateTimeOffset OccurredAtUtc { get; init; }
     public int? Win32Error { get; init; }
