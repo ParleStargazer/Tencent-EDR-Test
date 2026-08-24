@@ -3,7 +3,8 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     [string]$SamplesRoot,
-    [switch]$SuppressPrivilegeWarning
+    [switch]$SuppressPrivilegeWarning,
+    [switch]$SkipRestore
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,8 +30,10 @@ if (-not $isAdministrator -and -not $SuppressPrivilegeWarning) {
     Write-Warning "当前 PowerShell 未以管理员身份运行。建议使用管理员权限重新运行；能力包可以构建，但五项用户账号活动测试可能不可用并会被 Runner 跳过。"
 }
 
-dotnet restore (Join-Path $repositoryRoot "EdrTest.sln") --locked-mode
-if ($LASTEXITCODE -ne 0) { throw "dotnet restore 失败。" }
+if (-not $SkipRestore) {
+    dotnet restore (Join-Path $repositoryRoot "EdrTest.sln") --locked-mode
+    if ($LASTEXITCODE -ne 0) { throw "dotnet restore 失败。" }
+}
 
 dotnet publish (Join-Path $repositoryRoot "sample-src\UserAccountActivity\UserAccountActivity.Controller\UserAccountActivity.Controller.csproj") `
     --configuration $Configuration --no-restore --output $controllerPublish

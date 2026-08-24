@@ -22,14 +22,17 @@ flowchart LR
 
 ## 2. 一键启动
 
-根目录 `启动平台.cmd` 调用 `scripts/Start-EdrTest.ps1`，按顺序完成：
+根目录 `启动平台.cmd` 先提供两种启动方式；5 秒未选择时自动使用“增量启动”，也可选择“全量重构启动”。随后调用 `scripts/Start-EdrTest.ps1`，按顺序完成：
 
 1. 检查 .NET、PowerShell 7、pnpm 与固定端口；
-2. 还原并构建 .NET 解决方案；
-3. 发布所有已实现能力包到本地 `samples/`，包括 Process、File、Account、Network、Hash、Registry、Scheduled Task、Service、Group Policy、Named Pipe、PowerShell、BITS、WMI、Virtual Disk、USB Device 和 Driver Activity；
-4. 安装缺失的前端依赖并构建 Vinext 生产包；
-5. 隐藏启动 API 与前端，等待两个服务通过健康检查；
-6. 写入 `.edr-test/services.json` 并打开浏览器。
+2. 计算 Runner、各能力域、前端依赖和前端产物的 SHA-256 构建指纹；
+3. 有 .NET 构建项失效时统一还原一次解决方案，只构建 Runner 项目和指纹变化的能力域；独立能力脚本仍可自行还原，保留现场单项构建能力；
+4. 将已实现能力包发布到本地 `samples/`，包括 Process、File、Account、Network、Hash、Registry、Scheduled Task、Service、Group Policy、Named Pipe、PowerShell、BITS、WMI、Virtual Disk、USB Device 和 Driver Activity；
+5. 前端锁文件或运行时版本变化时安装依赖，前端源码、配置或 API 地址变化时构建 Vinext 生产包；
+6. 隐藏启动 API 与前端，等待两个服务通过健康检查；
+7. 写入 `.edr-test/services.json` 并打开浏览器。
+
+构建指纹缓存位于 `.edr-test/build-cache/`。能力指纹包含能力源码、manifest、能力构建脚本、公共协议、Runner 公共代码、嵌入式数据库 Schema、.NET SDK 版本，以及适用时的预构建驱动和公开证书。缓存命中还要求对应能力目录、`capability.json` 和参与程序存在，程序 SHA-256 与 manifest 一致，且输出目录的文件数与总大小未变化；删除或破坏产物会自动触发重建。
 
 `停止平台.cmd` 读取状态文件，先校验记录的仓库路径和进程命令行，再停止对应服务及其子进程。它不会按进程名批量终止其他 .NET、Node 或 PowerShell 进程。
 
@@ -39,7 +42,10 @@ flowchart LR
 pwsh -NoProfile -File scripts/Start-EdrTest.ps1 `
   -ApiPort 4317 -WebPort 3000 -NoBrowser
 
-# 仅在框架、样本和 web/dist 均为最新时使用
+# 忽略指纹并全量重建；构建完成后会更新指纹，供下一次增量启动使用
+pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -BuildMode Full
+
+# 完全跳过构建；仅在人工确认框架、样本和 web/dist 均可用时使用
 pwsh -NoProfile -File scripts/Start-EdrTest.ps1 -SkipBuild
 ```
 

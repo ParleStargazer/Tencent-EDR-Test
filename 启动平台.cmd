@@ -5,5 +5,5 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Start-EdrTest.ps1"
+pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Start-EdrTest.ps1" -PromptBuildMode
 if errorlevel 1 pause

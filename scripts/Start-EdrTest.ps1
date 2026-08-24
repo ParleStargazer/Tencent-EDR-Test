@@ -5,6 +5,9 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$WebPort = 3000,
     [switch]$SkipBuild,
+    [ValidateSet("Incremental", "Full")]
+    [string]$BuildMode = "Incremental",
+    [switch]$PromptBuildMode,
     [switch]$NoBrowser,
     [string]$EwdkRoot = "F:\EWDK",
     [ValidateSet("Prompt", "Always", "Never")]
@@ -20,6 +23,51 @@ $webRoot = Join-Path $repositoryRoot "web"
 $runnerDll = Join-Path $repositoryRoot "src\EdrTest\bin\Release\net8.0-windows\EdrTest.dll"
 $apiUrl = "http://127.0.0.1:$ApiPort"
 $webUrl = "http://127.0.0.1:$WebPort"
+$buildCacheRoot = Join-Path $stateRoot "build-cache"
+
+. (Join-Path $PSScriptRoot "Build-Cache.ps1")
+
+function Read-EdrBuildMode {
+    Write-Host ""
+    Write-Host "请选择启动方式：" -ForegroundColor Cyan
+    Write-Host "  [1] 增量启动（默认，仅重建发生变化的框架、能力包或前端）"
+    Write-Host "  [2] 全量重构启动（忽略构建指纹，重新生成全部构建产物）"
+    Write-Host ""
+
+    try {
+        if ([Console]::IsInputRedirected) {
+            Write-Host "输入不可交互，自动选择增量启动。" -ForegroundColor DarkGray
+            return "Incremental"
+        }
+        $deadline = [DateTimeOffset]::UtcNow.AddSeconds(5)
+        $shownSecond = -1
+        while ([DateTimeOffset]::UtcNow -lt $deadline) {
+            $remaining = [Math]::Max(1, [Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalSeconds))
+            if ($remaining -ne $shownSecond) {
+                Write-Host "`r请按 1 或 2 选择，$remaining 秒后自动选择增量启动… " -NoNewline -ForegroundColor Yellow
+                $shownSecond = $remaining
+            }
+            if ([Console]::KeyAvailable) {
+                $key = [Console]::ReadKey($true).KeyChar
+                if ($key -eq '1') {
+                    Write-Host "`r已选择：增量启动。                              " -ForegroundColor Green
+                    return "Incremental"
+                }
+                if ($key -eq '2') {
+                    Write-Host "`r已选择：全量重构启动。                          " -ForegroundColor Green
+                    return "Full"
+                }
+            }
+            Start-Sleep -Milliseconds 50
+        }
+        Write-Host "`r倒计时结束，自动选择：增量启动。                  " -ForegroundColor Green
+        return "Incremental"
+    } catch {
+        Write-Host ""
+        Write-Warning "无法读取交互按键，自动选择增量启动：$($_.Exception.Message)"
+        return "Incremental"
+    }
+}
 
 function Test-ProcessAlive([int]$ProcessId) {
     return $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
@@ -618,6 +666,13 @@ if (Test-Path $statePath) {
     }
 }
 
+if ($PromptBuildMode) {
+    $BuildMode = Read-EdrBuildMode
+}
+if ($SkipBuild -and $BuildMode -eq "Full") {
+    throw "-SkipBuild 与 -BuildMode Full 不能同时使用。"
+}
+
 $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
 if ($null -eq $dotnet) { throw "未找到 .NET 8 SDK。" }
 $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
@@ -654,67 +709,187 @@ if (-not $usbDriverPackage.Available) { Remove-UsbDeviceActivitySamplePackages }
 [System.IO.Directory]::CreateDirectory($logRoot) | Out-Null
 
 if (-not $SkipBuild) {
-    Write-Host "[1/5] 构建 EdrTest 框架…" -ForegroundColor Cyan
-    & $dotnet.Source restore (Join-Path $repositoryRoot "EdrTest.sln") --locked-mode
-    if ($LASTEXITCODE -ne 0) { throw "dotnet restore 失败。" }
-    & $dotnet.Source build (Join-Path $repositoryRoot "EdrTest.sln") --configuration Release --no-restore
-    if ($LASTEXITCODE -ne 0) { throw "dotnet build 失败。" }
+    [System.IO.Directory]::CreateDirectory($buildCacheRoot) | Out-Null
+    $dotnetVersion = ((& $dotnet.Source --version) | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($dotnetVersion)) {
+        throw "无法读取 .NET SDK 版本。"
+    }
+    $forceBuild = $BuildMode -eq "Full"
+    $modeTitle = if ($forceBuild) { "全量重构" } else { "增量" }
+    Write-Host "[构建模式] $modeTitle 启动" -ForegroundColor Cyan
 
-    Write-Host "[2/5] 构建 Process、File、Hash、User Account、Network、Registry、Scheduled Task、Service、Group Policy、Named Pipe、PowerShell、BITS、WMI、Virtual Disk、USB Device 与 Driver Activity 能力包…" -ForegroundColor Cyan
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-ProcessActivitySamples.ps1") -Configuration Release
-    if ($LASTEXITCODE -ne 0) { throw "能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-FileManipulationSamples.ps1") -Configuration Release
-    if ($LASTEXITCODE -ne 0) { throw "文件操作能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-HashAlgorithmsSamples.ps1") -Configuration Release
-    if ($LASTEXITCODE -ne 0) { throw "哈希算法能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-UserAccountActivitySamples.ps1") -Configuration Release -SuppressPrivilegeWarning
-    if ($LASTEXITCODE -ne 0) { throw "用户账号活动能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-NetworkActivitySamples.ps1") -Configuration Release
-    if ($LASTEXITCODE -ne 0) { throw "网络活动能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-RegistryActivitySamples.ps1") -Configuration Release
-    if ($LASTEXITCODE -ne 0) { throw "注册表活动能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-ScheduledTaskActivitySamples.ps1") -Configuration Release
-    if ($LASTEXITCODE -ne 0) { throw "计划任务活动能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-ServiceActivitySamples.ps1") -Configuration Release -SuppressPrivilegeWarning
-    if ($LASTEXITCODE -ne 0) { throw "服务活动能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-GroupPolicyActivitySamples.ps1") -Configuration Release -SuppressPrivilegeWarning
-    if ($LASTEXITCODE -ne 0) { throw "组策略修改能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-NamedPipeActivitySamples.ps1") -Configuration Release
-    if ($LASTEXITCODE -ne 0) { throw "命名管道活动能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-PowerShellActivitySamples.ps1") -Configuration Release
-    if ($LASTEXITCODE -ne 0) { throw "PowerShell 活动能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-BitsActivitySamples.ps1") -Configuration Release
-    if ($LASTEXITCODE -ne 0) { throw "BITS 活动能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-WmiActivitySamples.ps1") -Configuration Release -SuppressPrivilegeWarning
-    if ($LASTEXITCODE -ne 0) { throw "WMI 活动能力样本构建失败。" }
-    & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-VirtualDiskActivitySamples.ps1") -Configuration Release -SuppressPrivilegeWarning
-    if ($LASTEXITCODE -ne 0) { throw "虚拟磁盘挂载能力样本构建失败。" }
-    if ($driverPackage.Available) {
-        & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-DriverActivitySamples.ps1") `
-            -Configuration Release -DriverPackagePath $driverPackage.PackagePath `
-            -DriverCertificatePath $driverPackage.CertificatePath -EwdkRoot $EwdkRoot -SuppressPrivilegeWarning
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "驱动活动能力包构建失败，将跳过驱动三项；平台其他能力继续启动。"
-            Remove-DriverActivitySamplePackages
-        }
-    } else {
-        Write-Warning "没有可用的仓库驱动包或 EWDK 后备包，已跳过驱动三项能力包。"
+    $runnerOutputDirectory = Split-Path -Parent $runnerDll
+    $runnerCachePath = Join-Path $buildCacheRoot "runner.json"
+    $runnerFingerprint = Get-EdrBuildFingerprint -RepositoryRoot $repositoryRoot -InputPaths @(
+        "Directory.Build.props",
+        "src\EdrTest",
+        "schemas\run-db.sql"
+    ) -Properties @{
+        cache_contract = "2"
+        configuration = "Release"
+        dotnet_sdk = $dotnetVersion
     }
-    if ($usbDriverPackage.Available) {
-        & $pwsh.Source -NoProfile -File (Join-Path $PSScriptRoot "Build-UsbDeviceActivitySamples.ps1") `
-            -Configuration Release -UsbDriverPackagePath $usbDriverPackage.PackagePath `
-            -DriverCertificatePath $usbDriverPackage.CertificatePath -EwdkRoot $EwdkRoot -SuppressPrivilegeWarning
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "USB Device Activity 能力包构建失败，将跳过 USB 挂载与卸载；平台其他能力继续启动。"
-            Remove-UsbDeviceActivitySamplePackages
-        }
-    } else {
-        Write-Warning "没有可用的仓库 USB UDE 驱动包或 EWDK 后备包，已跳过 USB 挂载与卸载能力包。"
+    $runnerIsCurrent = -not $forceBuild -and (Test-EdrBuildCache `
+        -CachePath $runnerCachePath -Fingerprint $runnerFingerprint `
+        -DirectoryPaths @($runnerOutputDirectory) -RequiredFiles @($runnerDll))
+
+    $sharedSampleFingerprint = Get-EdrBuildFingerprint -RepositoryRoot $repositoryRoot -InputPaths @(
+        "Directory.Build.props",
+        "sample-src\Common",
+        "src\EdrTest",
+        "schemas\run-db.sql"
+    ) -Properties @{
+        cache_contract = "2"
+        configuration = "Release"
+        dotnet_sdk = $dotnetVersion
     }
+
+    $capabilityBuilds = @(
+        [pscustomobject]@{ Key = "process"; Title = "进程活动"; Source = "ProcessActivity"; Script = "Build-ProcessActivitySamples.ps1"; Arguments = @(); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "file"; Title = "文件操作"; Source = "FileManipulation"; Script = "Build-FileManipulationSamples.ps1"; Arguments = @(); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "hash"; Title = "哈希算法"; Source = "HashAlgorithms"; Script = "Build-HashAlgorithmsSamples.ps1"; Arguments = @(); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "account"; Title = "用户账号活动"; Source = "UserAccountActivity"; Script = "Build-UserAccountActivitySamples.ps1"; Arguments = @("-SuppressPrivilegeWarning"); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "network"; Title = "网络活动"; Source = "NetworkActivity"; Script = "Build-NetworkActivitySamples.ps1"; Arguments = @(); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "registry"; Title = "注册表活动"; Source = "RegistryActivity"; Script = "Build-RegistryActivitySamples.ps1"; Arguments = @(); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "scheduled-task"; Title = "计划任务活动"; Source = "ScheduledTaskActivity"; Script = "Build-ScheduledTaskActivitySamples.ps1"; Arguments = @(); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "service"; Title = "服务活动"; Source = "ServiceActivity"; Script = "Build-ServiceActivitySamples.ps1"; Arguments = @("-SuppressPrivilegeWarning"); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "group-policy"; Title = "组策略修改"; Source = "GroupPolicyActivity"; Script = "Build-GroupPolicyActivitySamples.ps1"; Arguments = @("-SuppressPrivilegeWarning"); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "named-pipe"; Title = "命名管道活动"; Source = "NamedPipeActivity"; Script = "Build-NamedPipeActivitySamples.ps1"; Arguments = @(); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "powershell"; Title = "PowerShell 活动"; Source = "PowerShellActivity"; Script = "Build-PowerShellActivitySamples.ps1"; Arguments = @(); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "bits"; Title = "BITS 活动"; Source = "BitsActivity"; Script = "Build-BitsActivitySamples.ps1"; Arguments = @(); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "wmi"; Title = "WMI 活动"; Source = "WmiActivity"; Script = "Build-WmiActivitySamples.ps1"; Arguments = @("-SuppressPrivilegeWarning"); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "virtual-disk"; Title = "虚拟磁盘挂载"; Source = "VirtualDiskActivity"; Script = "Build-VirtualDiskActivitySamples.ps1"; Arguments = @("-SuppressPrivilegeWarning"); Enabled = $true; ContinueOnFailure = $false },
+        [pscustomobject]@{ Key = "driver"; Title = "驱动活动"; Source = "DriverActivity"; Script = "Build-DriverActivitySamples.ps1"; Arguments = @("-DriverPackagePath", $driverPackage.PackagePath, "-DriverCertificatePath", $driverPackage.CertificatePath, "-EwdkRoot", $EwdkRoot, "-SuppressPrivilegeWarning"); Enabled = [bool]$driverPackage.Available; ContinueOnFailure = $true },
+        [pscustomobject]@{ Key = "usb-device"; Title = "USB 设备活动"; Source = "UsbDeviceActivity"; Script = "Build-UsbDeviceActivitySamples.ps1"; Arguments = @("-UsbDriverPackagePath", $usbDriverPackage.PackagePath, "-DriverCertificatePath", $usbDriverPackage.CertificatePath, "-EwdkRoot", $EwdkRoot, "-SuppressPrivilegeWarning"); Enabled = [bool]$usbDriverPackage.Available; ContinueOnFailure = $true }
+    )
+
+    foreach ($definition in $capabilityBuilds) {
+        $sourceDirectory = Join-Path $repositoryRoot "sample-src\$($definition.Source)"
+        $manifestRoot = Join-Path $sourceDirectory "manifests"
+        $packagePaths = if (Test-Path -LiteralPath $manifestRoot -PathType Container) {
+            @(Get-ChildItem -LiteralPath $manifestRoot -Directory | Sort-Object Name | ForEach-Object {
+                Join-Path $repositoryRoot "samples\$($_.Name)"
+            })
+        } else {
+            @()
+        }
+        $extraInputs = @()
+        if ($definition.Key -eq "driver" -and $definition.Enabled) {
+            $extraInputs += @($driverPackage.PackagePath, $driverPackage.CertificatePath)
+        }
+        if ($definition.Key -eq "usb-device" -and $definition.Enabled) {
+            $extraInputs += @($usbDriverPackage.PackagePath, $usbDriverPackage.CertificatePath)
+        }
+        $fingerprint = Get-EdrBuildFingerprint -RepositoryRoot $repositoryRoot -InputPaths (@(
+            $sourceDirectory,
+            (Join-Path $PSScriptRoot $definition.Script)
+        ) + $extraInputs) -Properties @{
+            cache_contract = "2"
+            configuration = "Release"
+            dotnet_sdk = $dotnetVersion
+            shared = $sharedSampleFingerprint
+        }
+        $cachePath = Join-Path $buildCacheRoot "capability-$($definition.Key).json"
+        $isCurrent = $definition.Enabled -and -not $forceBuild -and (Test-EdrBuildCache `
+            -CachePath $cachePath -Fingerprint $fingerprint `
+            -DirectoryPaths $packagePaths -CapabilityPackagePaths $packagePaths)
+        $definition | Add-Member -NotePropertyName Fingerprint -NotePropertyValue $fingerprint
+        $definition | Add-Member -NotePropertyName CachePath -NotePropertyValue $cachePath
+        $definition | Add-Member -NotePropertyName PackagePaths -NotePropertyValue $packagePaths
+        $definition | Add-Member -NotePropertyName IsCurrent -NotePropertyValue $isCurrent
+    }
+
+    $buildQueue = @($capabilityBuilds | Where-Object { $_.Enabled -and -not $_.IsCurrent })
+    if (-not $runnerIsCurrent -or $buildQueue.Count -gt 0) {
+        Write-Host "[1/5] 统一还原 .NET 依赖…" -ForegroundColor Cyan
+        & $dotnet.Source restore (Join-Path $repositoryRoot "EdrTest.sln") --locked-mode
+        if ($LASTEXITCODE -ne 0) { throw "dotnet restore 失败。" }
+    } else {
+        Write-Host "[1/5] .NET 框架与能力源码指纹未变化，跳过还原。" -ForegroundColor DarkGray
+    }
+
+    if ($runnerIsCurrent) {
+        Write-Host "[框架缓存命中] EdrTest Runner" -ForegroundColor DarkGray
+    } else {
+        Write-Host "[框架重建] EdrTest Runner" -ForegroundColor Cyan
+        & $dotnet.Source build (Join-Path $repositoryRoot "src\EdrTest\EdrTest.csproj") `
+            --configuration Release --no-restore
+        if ($LASTEXITCODE -ne 0) { throw "EdrTest Runner 构建失败。" }
+    }
+
+    Write-Host "[2/5] 检查并构建能力包…" -ForegroundColor Cyan
+    foreach ($definition in $capabilityBuilds) {
+        if (-not $definition.Enabled) {
+            if ($definition.Key -eq "driver") {
+                Write-Warning "没有可用的仓库驱动包或 EWDK 后备包，已跳过驱动三项能力包。"
+            } elseif ($definition.Key -eq "usb-device") {
+                Write-Warning "没有可用的仓库 USB UDE 驱动包或 EWDK 后备包，已跳过 USB 挂载与卸载能力包。"
+            }
+            continue
+        }
+        if ($definition.IsCurrent) {
+            Write-Host "[能力缓存命中] $($definition.Title)" -ForegroundColor DarkGray
+            continue
+        }
+
+        Write-Host "[能力重建] $($definition.Title)" -ForegroundColor Cyan
+        $scriptArguments = @(
+            "-NoProfile",
+            "-File", (Join-Path $PSScriptRoot $definition.Script),
+            "-Configuration", "Release",
+            "-SkipRestore"
+        ) + @($definition.Arguments)
+        & $pwsh.Source @scriptArguments
+        if ($LASTEXITCODE -ne 0) {
+            if ($definition.ContinueOnFailure) {
+                Write-Warning "$($definition.Title)能力包构建失败，已跳过该类能力；平台其他能力继续启动。"
+                if ($definition.Key -eq "driver") { Remove-DriverActivitySamplePackages }
+                if ($definition.Key -eq "usb-device") { Remove-UsbDeviceActivitySamplePackages }
+                continue
+            }
+            throw "$($definition.Title)能力样本构建失败。"
+        }
+        Set-EdrBuildCache -CachePath $definition.CachePath -Fingerprint $definition.Fingerprint `
+            -DirectoryPaths $definition.PackagePaths -Metadata @{
+                build_mode = $BuildMode
+                source = $definition.Source
+            }
+    }
+    if (-not $runnerIsCurrent -or $buildQueue.Count -gt 0) {
+        # Controller 发布会再次生成其 ProjectReference 的 EdrTest 输出，因此必须在所有
+        # 能力域完成后记录 Runner 快照，避免首次构建后的下一次启动误判为 Runner 损坏。
+        Set-EdrBuildCache -CachePath $runnerCachePath -Fingerprint $runnerFingerprint `
+            -DirectoryPaths @($runnerOutputDirectory) -Metadata @{ build_mode = $BuildMode }
+    }
+} else {
+    Write-Host "[构建模式] 已显式跳过框架、能力包和前端构建。" -ForegroundColor DarkGray
 }
 
 if (-not (Test-Path $runnerDll)) { throw "找不到 Runner：$runnerDll。请移除 -SkipBuild 后重试。" }
-if (-not (Test-Path (Join-Path $webRoot "node_modules\.modules.yaml")) -or -not (Test-Path (Join-Path $webRoot "node_modules\playwright-core\package.json"))) {
+
+$pnpmVersion = ((& $pnpm.Source --version) | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($pnpmVersion)) { throw "无法读取 pnpm 版本。" }
+$nodeVersion = ((& $node.Source --version) | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($nodeVersion)) { throw "无法读取 Node.js 版本。" }
+$frontendDependencyCachePath = Join-Path $buildCacheRoot "frontend-dependencies.json"
+$frontendDependencyFingerprint = Get-EdrBuildFingerprint -RepositoryRoot $repositoryRoot -InputPaths @(
+    "web\package.json",
+    "web\pnpm-lock.yaml",
+    "web\pnpm-workspace.yaml",
+    "web\patches"
+) -Properties @{
+    cache_contract = "2"
+    node = $nodeVersion
+    pnpm = $pnpmVersion
+}
+$frontendDependencyFiles = @(
+    (Join-Path $webRoot "node_modules\.modules.yaml"),
+    (Join-Path $webRoot "node_modules\playwright-core\package.json")
+)
+$frontendDependenciesCurrent = Test-EdrBuildCache `
+    -CachePath $frontendDependencyCachePath -Fingerprint $frontendDependencyFingerprint `
+    -RequiredFiles $frontendDependencyFiles
+if (-not $frontendDependenciesCurrent) {
     Write-Host "[3/5] 安装前端依赖…" -ForegroundColor Cyan
     Push-Location $webRoot
     try {
@@ -723,19 +898,57 @@ if (-not (Test-Path (Join-Path $webRoot "node_modules\.modules.yaml")) -or -not 
     } finally {
         Pop-Location
     }
+    Set-EdrBuildCache -CachePath $frontendDependencyCachePath `
+        -Fingerprint $frontendDependencyFingerprint -Metadata @{
+            node = $nodeVersion
+            pnpm = $pnpmVersion
+        }
 } else {
-    Write-Host "[3/5] 前端依赖已就绪。" -ForegroundColor DarkGray
+    Write-Host "[3/5] 前端依赖指纹未变化，跳过安装。" -ForegroundColor DarkGray
 }
 
 if (-not $SkipBuild) {
-    Write-Host "[4/5] 构建前端控制面…" -ForegroundColor Cyan
-    Push-Location $webRoot
-    try {
-        $env:VITE_EDR_API_URL = "$apiUrl/api"
-        & $pnpm.Source run build
-        if ($LASTEXITCODE -ne 0) { throw "pnpm build 失败。" }
-    } finally {
-        Pop-Location
+    $frontendDist = Join-Path $webRoot "dist"
+    $frontendCachePath = Join-Path $buildCacheRoot "frontend.json"
+    $frontendFingerprint = Get-EdrBuildFingerprint -RepositoryRoot $repositoryRoot -InputPaths @(
+        "web\.openai",
+        "web\app",
+        "web\automation",
+        "web\patches",
+        "web\public",
+        "web\worker",
+        "web\eslint.config.mjs",
+        "web\next.config.ts",
+        "web\package.json",
+        "web\pnpm-lock.yaml",
+        "web\pnpm-workspace.yaml",
+        "web\sites-vite-plugin.ts",
+        "web\tsconfig.json",
+        "web\vite.config.ts"
+    ) -Properties @{
+        api_url = "$apiUrl/api"
+        cache_contract = "2"
+        node = $nodeVersion
+        pnpm = $pnpmVersion
+    }
+    $frontendIsCurrent = $BuildMode -ne "Full" -and (Test-EdrBuildCache `
+        -CachePath $frontendCachePath -Fingerprint $frontendFingerprint `
+        -DirectoryPaths @($frontendDist) `
+        -RequiredFiles @((Join-Path $frontendDist "server\index.js")))
+    if ($frontendIsCurrent) {
+        Write-Host "[4/5] 前端源码指纹未变化，跳过构建。" -ForegroundColor DarkGray
+    } else {
+        Write-Host "[4/5] 构建前端控制面…" -ForegroundColor Cyan
+        Push-Location $webRoot
+        try {
+            $env:VITE_EDR_API_URL = "$apiUrl/api"
+            & $pnpm.Source run build
+            if ($LASTEXITCODE -ne 0) { throw "pnpm build 失败。" }
+        } finally {
+            Pop-Location
+        }
+        Set-EdrBuildCache -CachePath $frontendCachePath -Fingerprint $frontendFingerprint `
+            -DirectoryPaths @($frontendDist) -Metadata @{ build_mode = $BuildMode }
     }
 } elseif (-not (Test-Path (Join-Path $webRoot "dist\server\index.js"))) {
     throw "找不到前端构建产物。请移除 -SkipBuild 后重试。"

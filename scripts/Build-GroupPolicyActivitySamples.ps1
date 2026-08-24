@@ -3,7 +3,8 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     [string]$SamplesRoot,
-    [switch]$SuppressPrivilegeWarning
+    [switch]$SuppressPrivilegeWarning,
+    [switch]$SkipRestore
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,8 +25,10 @@ if (-not $SuppressPrivilegeWarning) {
     } finally { $identity.Dispose() }
 }
 
-dotnet restore (Join-Path $repositoryRoot "EdrTest.sln") --locked-mode
-if ($LASTEXITCODE -ne 0) { throw "dotnet restore 失败。" }
+if (-not $SkipRestore) {
+    dotnet restore (Join-Path $repositoryRoot "EdrTest.sln") --locked-mode
+    if ($LASTEXITCODE -ne 0) { throw "dotnet restore 失败。" }
+}
 dotnet publish (Join-Path $repositoryRoot "sample-src\GroupPolicyActivity\GroupPolicyActivity.Controller\GroupPolicyActivity.Controller.csproj") `
     --configuration $Configuration --no-restore --output $controllerPublish
 if ($LASTEXITCODE -ne 0) { throw "GroupPolicyActivity Controller 发布失败。" }

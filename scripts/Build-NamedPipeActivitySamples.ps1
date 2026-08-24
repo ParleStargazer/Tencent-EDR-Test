@@ -2,7 +2,8 @@
 param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
-    [string]$SamplesRoot
+    [string]$SamplesRoot,
+    [switch]$SkipRestore
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,8 +14,10 @@ $publishRoot = Join-Path $repositoryRoot "artifacts\named-pipe-activity-publish"
 $controllerPublish = Join-Path $publishRoot "controller"
 $behaviorPublish = Join-Path $publishRoot "behavior"
 
-dotnet restore (Join-Path $repositoryRoot "EdrTest.sln") --locked-mode
-if ($LASTEXITCODE -ne 0) { throw "dotnet restore 失败。" }
+if (-not $SkipRestore) {
+    dotnet restore (Join-Path $repositoryRoot "EdrTest.sln") --locked-mode
+    if ($LASTEXITCODE -ne 0) { throw "dotnet restore 失败。" }
+}
 dotnet publish (Join-Path $repositoryRoot "sample-src\NamedPipeActivity\NamedPipeActivity.Controller\NamedPipeActivity.Controller.csproj") `
     --configuration $Configuration --no-restore --output $controllerPublish
 if ($LASTEXITCODE -ne 0) { throw "NamedPipeActivity Controller 发布失败。" }
