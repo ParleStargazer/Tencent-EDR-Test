@@ -244,10 +244,12 @@ internal sealed class TencentEdrCloudExportService
             if (!Available)
                 throw new CloudAutomationException("AUTOMATION_RUNTIME_UNAVAILABLE", "未找到 Node.js、Playwright Core 或自动化脚本；可继续手动导入。");
             journal.Report("runtime_ready", "Node.js、Playwright Core 与自动化脚本已就绪。", 5);
-            await RunBrowserAutomationAsync(config, queryStartUtc, cloudPath, journal, cancellationToken);
+            var queryEndUtc = DateTimeOffset.UtcNow;
+            if (queryEndUtc <= queryStartUtc)
+                throw new CloudAutomationException("INVALID_QUERY_WINDOW", "云端日志结束时间必须晚于起始时间。");
+            await RunBrowserAutomationAsync(config, queryStartUtc, queryEndUtc, cloudPath, journal, cancellationToken);
             journal.Report("validate_download", "正在校验下载文件的 JSON 格式、大小和摘要。", 94);
             var inspection = CloudExportFile.Inspect(cloudPath);
-            var queryEndUtc = DateTimeOffset.UtcNow;
             journal.Report("write_manifest", $"下载文件校验通过，共 {inspection.RecordCount} 条事件；正在生成导出清单。", 97);
             WriteManifest(manifestPath, run.RunId, config.DeviceName, queryStartUtc, queryEndUtc, inspection);
             var succeeded = new ApiCloudImportRecord(
@@ -280,6 +282,7 @@ internal sealed class TencentEdrCloudExportService
     private async Task RunBrowserAutomationAsync(
         CloudExportAutomationConfig config,
         DateTimeOffset queryStartUtc,
+        DateTimeOffset queryEndUtc,
         string cloudPath,
         CloudAutomationJournal journal,
         CancellationToken cancellationToken)
@@ -310,6 +313,7 @@ internal sealed class TencentEdrCloudExportService
             ["password"] = config.Password,
             ["device_name"] = config.DeviceName,
             ["query_start_local"] = queryStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+            ["query_end_local"] = queryEndUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
             ["download_path"] = Path.GetFullPath(cloudPath),
             ["timeout_ms"] = 300_000,
             ["debug_mode"] = config.DebugMode,

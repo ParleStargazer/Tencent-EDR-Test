@@ -58,6 +58,23 @@ async function firstVisible(locators, timeoutMs = 10_000, errorCode = "CONTROL_N
   throw new AutomationError(errorCode, errorMessage);
 }
 
+async function firstTwoVisible(locatorGroups, timeoutMs = 10_000, errorCode = "CONTROL_NOT_FOUND", errorMessage = "腾讯云控制台页面结构与自动化基准不一致，未找到两个所需控件。") {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const group of locatorGroups) {
+      const count = await group.count().catch(() => 0);
+      const visible = [];
+      for (let index = 0; index < count; index++) {
+        const candidate = group.nth(index);
+        if (await candidate.isVisible().catch(() => false)) visible.push(candidate);
+        if (visible.length === 2) return visible;
+      }
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+  }
+  throw new AutomationError(errorCode, errorMessage);
+}
+
 async function firstVisibleState(states, timeoutMs, errorCode, errorMessage) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -127,7 +144,7 @@ function eventViewCandidates(page) {
 export function validateRequest(request) {
   if (!request || typeof request !== "object" || Array.isArray(request))
     throw new AutomationError("INVALID_REQUEST", "自动化请求必须是 JSON 对象。");
-  for (const field of ["account", "password", "device_name", "query_start_local", "download_path"]) {
+  for (const field of ["account", "password", "device_name", "query_start_local", "query_end_local", "download_path"]) {
     if (typeof request[field] !== "string" || !request[field].trim())
       throw new AutomationError("INVALID_REQUEST", `自动化请求缺少 ${field}。`);
   }
@@ -135,6 +152,10 @@ export function validateRequest(request) {
     throw new AutomationError("INVALID_REQUEST", "自动化请求字段长度超过限制。");
   if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(request.query_start_local))
     throw new AutomationError("INVALID_REQUEST", "日志起始时间格式必须为 yyyy-MM-dd HH:mm:ss。");
+  if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(request.query_end_local))
+    throw new AutomationError("INVALID_REQUEST", "日志结束时间格式必须为 yyyy-MM-dd HH:mm:ss。");
+  if (request.query_end_local <= request.query_start_local)
+    throw new AutomationError("INVALID_REQUEST", "日志结束时间必须晚于起始时间。");
   if (!isAbsolute(request.download_path) || !request.download_path.toLowerCase().endsWith(".json"))
     throw new AutomationError("INVALID_REQUEST", "下载目标必须是绝对 JSON 文件路径。");
   const timeoutMs = Number(request.timeout_ms ?? 300_000);
@@ -239,7 +260,7 @@ async function addHostFilter(page, deviceName, timing) {
   ], timeoutMs));
 }
 
-async function addStartTimeFilter(page, queryStartLocal, timing) {
+async function addTimeRangeFilter(page, queryStartLocal, queryEndLocal, timing) {
   const timeoutMs = timing.stepTimeoutMs;
   await runFilterAction(page, timing, () => clickFirst([
     page.getByRole("button", { name: /添加条件/ }),
@@ -261,14 +282,16 @@ async function addStartTimeFilter(page, queryStartLocal, timing) {
     page.locator("div").filter({ hasText: /^选择关系$/ }),
     page.getByText("选择关系", { exact: true }),
   ], timeoutMs));
-  await runFilterAction(page, timing, () => clickFirst([page.getByRole("listitem", { name: "大于", exact: true }), page.getByText("大于", { exact: true })], timeoutMs));
-  const timeInput = await runFilterAction(page, timing, () => firstVisible([
+  await runFilterAction(page, timing, () => clickFirst([page.getByRole("listitem", { name: "在范围内", exact: true }), page.getByText("在范围内", { exact: true })], timeoutMs));
+  const [startTimeInput, endTimeInput] = await runFilterAction(page, timing, () => firstTwoVisible([
     page.getByRole("textbox", { name: "选择时间" }),
     page.locator('input[placeholder*="选择时间"]'),
-  ], timeoutMs));
-  await runFilterAction(page, timing, () => timeInput.click());
-  await runFilterAction(page, timing, () => timeInput.fill(queryStartLocal));
-  await runFilterAction(page, timing, () => timeInput.press("Enter"));
+  ], timeoutMs, "TIME_RANGE_INPUTS_NOT_FOUND", "选择“在范围内”后未找到起始和结束两个时间输入框。"));
+  await runFilterAction(page, timing, () => startTimeInput.click());
+  await runFilterAction(page, timing, () => startTimeInput.fill(queryStartLocal));
+  await runFilterAction(page, timing, () => endTimeInput.click());
+  await runFilterAction(page, timing, () => endTimeInput.fill(queryEndLocal));
+  await runFilterAction(page, timing, () => endTimeInput.press("Enter"));
   await runFilterAction(page, timing, () => clickFirst([
     page.locator("#tea-overlay-root").getByRole("button", { name: "检索", exact: true }),
   ], timeoutMs));
@@ -410,8 +433,8 @@ export async function runTencentEdrExport(rawRequest, runtime = {}) {
     await settleStep(page, timing, events, "apply_host_filter");
     events.debug("host_filter_applied", "主机名称筛选已应用并完成稳定等待。");
 
-    events.emit("apply_time_filter", "正在添加采集时间筛选并执行检索。", 71);
-    await addStartTimeFilter(page, request.query_start_local, timing);
+    events.emit("apply_time_filter", "正在添加采集时间范围并执行检索。", 71);
+    await addTimeRangeFilter(page, request.query_start_local, request.query_end_local, timing);
     if (timing.queryResultSettleMs > 0) {
       events.debug("query_result_wait", `时间筛选已提交，等待检索结果加载 ${timing.queryResultSettleMs} ms。`);
       await page.waitForTimeout(timing.queryResultSettleMs);

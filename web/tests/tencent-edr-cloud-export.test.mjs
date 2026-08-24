@@ -13,6 +13,7 @@ test("云端自动化请求只接受受限的本地 JSON 下载目标", () => {
     password: "secret-value",
     device_name: "EDR-TEST-01",
     query_start_local: "2026-08-22 09:10:11",
+    query_end_local: "2026-08-22 09:40:11",
     download_path: target,
     timeout_ms: 30_000,
   });
@@ -42,6 +43,8 @@ test("云端自动化请求只接受受限的本地 JSON 下载目标", () => {
   assert.throws(() => validateRequest({ ...value, debug_mode: "true" }), /debug_mode 必须是布尔值/);
   assert.throws(() => validateRequest({ ...value, download_path: "relative.json" }), /绝对 JSON 文件路径/);
   assert.throws(() => validateRequest({ ...value, query_start_local: "2026/08/22" }), /yyyy-MM-dd HH:mm:ss/);
+  assert.throws(() => validateRequest({ ...value, query_end_local: "2026/08/22" }), /yyyy-MM-dd HH:mm:ss/);
+  assert.throws(() => validateRequest({ ...value, query_end_local: value.query_start_local }), /必须晚于起始时间/);
 });
 
 test("调试模式在 Edge 启动失败时保留阶段并脱敏异常", async () => {
@@ -53,6 +56,7 @@ test("调试模式在 Edge 启动失败时保留阶段并脱敏异常", async ()
       password: "secret-value",
       device_name: "EDR-TEST-01",
       query_start_local: "2026-08-22 09:10:11",
+      query_end_local: "2026-08-22 09:40:11",
       download_path: join(directory, "cloud.json"),
       timeout_ms: 30_000,
       debug_mode: true,
@@ -93,13 +97,14 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
       <div>添加筛选条件</div><button>添加条件</button>
       <div>选择字段</div><div>选择关系</div><div>请指定</div>
       <input aria-label="请输入添加内容" placeholder="请输入添加内容" />
-      <input aria-label="选择时间" placeholder="选择时间" />
+      <input id="time-start" aria-label="选择时间" placeholder="选择时间" />
+      <input id="time-end" aria-label="选择时间" placeholder="选择时间" />
       <button id="initial-export">导出</button>
       <label>全选<input type="checkbox" /></label><span>xlsx</span>
       <div id="tea-overlay-root">
         <span>主机名称（系统环境信息）</span>
         <div role="listitem">等于</div><div role="listitem">其他信息</div>
-        <div role="listitem">采集时间</div><div role="listitem">大于</div>
+        <div role="listitem">采集时间</div><div id="time-range-relation" role="listitem">在范围内</div>
         <div role="listitem">json</div>
         <button>确定</button><button id="time-search">检索</button><button id="final-export">导出</button>
       </div>
@@ -110,7 +115,9 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
       const domainHeader = document.querySelector(".app-ioa-dropdown__header.app-ioa-dropdown-btn");
       const domainOption = document.getElementById("default-domain");
       const domainConfirm = document.getElementById("domain-confirm");
-      const timeInput = document.querySelector('input[aria-label="选择时间"]');
+      const startTimeInput = document.getElementById("time-start");
+      const endTimeInput = document.getElementById("time-end");
+      const timeRangeRelation = document.getElementById("time-range-relation");
       let domainSelected = false;
       let timeSearchCompleted = false;
       document.getElementById("login").addEventListener("click", () => setTimeout(() => { domainStep.hidden = false; }, 5_500));
@@ -122,12 +129,18 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
         domainStep.hidden = true;
         eventView.hidden = false;
       });
-      timeInput.addEventListener("click", () => { timeInput.dataset.clicked = "true"; });
-      timeInput.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" && timeInput.dataset.clicked === "true") timeInput.dataset.entered = "true";
+      timeRangeRelation.addEventListener("click", () => { timeRangeRelation.dataset.selected = "true"; });
+      startTimeInput.addEventListener("click", () => { startTimeInput.dataset.clicked = "true"; });
+      endTimeInput.addEventListener("click", () => { endTimeInput.dataset.clicked = "true"; });
+      endTimeInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && endTimeInput.dataset.clicked === "true") endTimeInput.dataset.entered = "true";
       });
       document.getElementById("time-search").addEventListener("click", () => {
-        timeSearchCompleted = timeInput.dataset.entered === "true";
+        timeSearchCompleted = timeRangeRelation.dataset.selected === "true"
+          && startTimeInput.dataset.clicked === "true"
+          && startTimeInput.value === "2026-08-22 09:10:11"
+          && endTimeInput.dataset.entered === "true"
+          && endTimeInput.value === "2026-08-22 09:40:11";
       });
       document.getElementById("final-export").addEventListener("click", () => {
         if (!timeSearchCompleted) return;
@@ -157,6 +170,7 @@ test("本机 Edge 可按腾讯 EDR 页面基准完成筛选并保存下载", asy
         password: "secret-value",
         device_name: "EDR-TEST-01",
         query_start_local: "2026-08-22 09:10:11",
+        query_end_local: "2026-08-22 09:40:11",
         download_path: output,
         timeout_ms: 30_000,
         debug_mode: true,

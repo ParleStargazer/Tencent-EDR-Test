@@ -164,8 +164,9 @@ test("模板预览已移除且页面接入本地 Runner API", async () => {
   assert.match(cloudAutomation, /trial: true/);
   assert.match(cloudAutomation, /domainLookupDelayMs[\s\S]*firstVisibleState/);
   assert.match(cloudAutomation, /runFilterAction[\s\S]*waitForTimeout[\s\S]*action\(\)[\s\S]*waitForTimeout/);
-  assert.equal((cloudAutomation.match(/await runFilterAction\(page, timing/g) ?? []).length, 20);
-  assert.match(cloudAutomation, /timeInput\.press\("Enter"\)/);
+  assert.equal((cloudAutomation.match(/await runFilterAction\(page, timing/g) ?? []).length, 22);
+  assert.match(cloudAutomation, /endTimeInput\.press\("Enter"\)/);
+  assert.match(cloudAutomation, /query_end_local/);
   assert.match(cloudAutomation, /firstVisibleState/);
   assert.doesNotMatch(cloudAutomation, /selectDefaultDomain\(page, 30_000\)/);
   assert.match(cloudService, /TimeSpan\.FromMinutes\(10\)/);
