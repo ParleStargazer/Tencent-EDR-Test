@@ -73,7 +73,7 @@ public sealed class RunnerService
             try
             {
                 database.AddLog(null, "info", "run", "测试轮次已创建。", properties: new JsonObject { ["run_id"] = runId });
-                Report(request, new RunProgressUpdate(started, "run_started", "info", $"测试轮次已创建，共 {packages.Length} 项能力，将严格串行执行。", 3, packages.Length, Important: true));
+                Report(request, new RunProgressUpdate(started, "run_started", "info", $"测试轮次已创建，共 {packages.Length} 项能力。", 3, packages.Length, Important: true));
                 for (var index = 0; index < packages.Length; index++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();

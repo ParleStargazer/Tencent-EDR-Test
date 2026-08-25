@@ -39,11 +39,11 @@ test("工作台提供测试与离线比较两个独立入口", async () => {
   assert.doesNotMatch(html, /Your site is taking shape|Starter Project|codex-preview/i);
 });
 
-test("测试子页面展示串行设置、逐项进度与两级日志", async () => {
+test("测试子页面展示执行顺序设置、逐项进度与两级日志", async () => {
   const response = await render("/test");
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /串行能力测试/);
+  assert.match(html, /能力按选择顺序执行/);
   assert.match(html, /下一项能力前等待（秒）/);
   assert.match(html, /默认 3 秒/);
   assert.match(html, /测试进度/);
