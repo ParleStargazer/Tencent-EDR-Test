@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "scheduled-task",
-  "source_fingerprint": "ddfac1fef197bd717e1a52ceb09a59286de9825bc44ba739378d08791b70102a",
+  "source_fingerprint": "0346e92a870865e8bc591a4b5c8c0ccae696b6de57ad8320d29574fefc235be5",
   "packages": [
     {
       "path": "samples/win.scheduled_task.create",

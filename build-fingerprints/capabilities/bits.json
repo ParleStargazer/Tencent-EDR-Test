@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "bits",
-  "source_fingerprint": "27234e57f4523105407092aaccc77aeba18c5e003d877502c13268164aca7462",
+  "source_fingerprint": "02980698571273534b11be725c3318f6d579ae5bd669a817673f2cbfd04ccef1",
   "packages": [
     {
       "path": "samples/win.bits.job",

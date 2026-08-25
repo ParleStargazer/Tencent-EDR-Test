@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "process",
-  "source_fingerprint": "6fbb527c395cace1818cf15753553e8daa938c6724659ecbef0405fd8365dda7",
+  "source_fingerprint": "f825597989df0f2a9473d187b148be997ec32b9a9001b2230c4a9acd4b75aa98",
   "packages": [
     {
       "path": "samples/win.process.access",

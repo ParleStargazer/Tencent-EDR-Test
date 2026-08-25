@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "driver",
-  "source_fingerprint": "17792457e604ba9633ae46bf7d646e318377bdaee08a594463b1278037d5737e",
+  "source_fingerprint": "5b5bcbf75dcf5b56bad5ad91e33ffaa5d812c72a6bedf4690384da5d1e7af9e4",
   "packages": [
     {
       "path": "samples/win.driver.load",

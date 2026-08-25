@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "account",
-  "source_fingerprint": "f294a3004b010f9dd13d31c7a9fe2123fe7375287b43dadfac2f6954b5bc00d7",
+  "source_fingerprint": "0fcf315224cd8314ebf3296cd2327badeba54b14c0c4eaf65dac1c5cf81f6aa9",
   "packages": [
     {
       "path": "samples/win.account.local.create",

@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "network",
-  "source_fingerprint": "ee8cedb1be449f25bc7f0e82ae7b4eb7eab9273683e18e0f9ec1853d408c5ac8",
+  "source_fingerprint": "69eaec69b4e8c2a890a49f09fcaede0c7c0fd39288918e13914f1560c1c67b12",
   "packages": [
     {
       "path": "samples/win.network.dns",

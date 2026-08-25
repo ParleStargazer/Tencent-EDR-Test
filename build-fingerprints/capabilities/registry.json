@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "registry",
-  "source_fingerprint": "7c1d32cb7de6dd0c19ab7bdc32084bcb24f264cf90e8fe5681d2f2f53b517670",
+  "source_fingerprint": "49a3a2fb71e6774f4740b42ace773bed50632ec4ed590df393d78099210577af",
   "packages": [
     {
       "path": "samples/win.registry.create",

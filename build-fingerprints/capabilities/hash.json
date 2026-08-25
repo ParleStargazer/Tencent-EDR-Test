@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "hash",
-  "source_fingerprint": "1cc3677536e314e81ce9922710d0f39b05268da3d3bb2add350f6f6cf3fe9888",
+  "source_fingerprint": "0b389fe0db89c9fd7aea009339dcb3915626c31990c0ed78bc4294495e698591",
   "packages": [
     {
       "path": "samples/win.hash.imphash",

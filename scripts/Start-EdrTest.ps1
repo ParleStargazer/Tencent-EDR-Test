@@ -734,23 +734,16 @@ if (-not $SkipBuild) {
         -CachePath $runnerCachePath -Fingerprint $runnerFingerprint `
         -DirectoryPaths @($runnerOutputDirectory) -RequiredFiles @($runnerDll))
 
-    $sharedSampleFingerprint = Get-EdrBuildFingerprint -RepositoryRoot $repositoryRoot -InputPaths @(
-        "Directory.Build.props",
-        "sample-src\Common",
-        "src\EdrTest",
-        "schemas\run-db.sql"
-    ) -Properties @{
-        cache_contract = "2"
+    $capabilitySharedSourceInputs = @(Get-EdrCapabilitySharedSourceInputs)
+    $sharedSampleFingerprint = Get-EdrBuildFingerprint -RepositoryRoot $repositoryRoot `
+        -InputPaths $capabilitySharedSourceInputs -Properties @{
+        cache_contract = "3"
         configuration = "Release"
         dotnet_sdk = $dotnetVersion
     }
-    $repositorySharedSampleFingerprint = Get-EdrBuildFingerprint -RepositoryRoot $repositoryRoot -InputPaths @(
-        "Directory.Build.props",
-        "sample-src\Common",
-        "src\EdrTest",
-        "schemas\run-db.sql"
-    ) -Properties @{
-        cache_contract = "repository-capability-source-v1"
+    $repositorySharedSampleFingerprint = Get-EdrBuildFingerprint -RepositoryRoot $repositoryRoot `
+        -InputPaths $capabilitySharedSourceInputs -Properties @{
+        cache_contract = "repository-capability-source-v2"
         configuration = "Release"
     }
 
@@ -794,7 +787,7 @@ if (-not $SkipBuild) {
             $sourceDirectory,
             (Join-Path $PSScriptRoot $definition.Script)
         ) + $extraInputs) -Properties @{
-            cache_contract = "2"
+            cache_contract = "3"
             configuration = "Release"
             dotnet_sdk = $dotnetVersion
             shared = $sharedSampleFingerprint
@@ -803,25 +796,35 @@ if (-not $SkipBuild) {
             $sourceDirectory,
             (Join-Path $PSScriptRoot $definition.Script)
         ) + $extraInputs) -Properties @{
-            cache_contract = "repository-capability-source-v1"
+            cache_contract = "repository-capability-source-v2"
             configuration = "Release"
             shared = $repositorySharedSampleFingerprint
         }
         $cachePath = Join-Path $buildCacheRoot "capability-$($definition.Key).json"
-        $localIsCurrent = $definition.Enabled -and -not $forceBuild -and (Test-EdrBuildCache `
-            -CachePath $cachePath -Fingerprint $fingerprint `
-            -DirectoryPaths $packagePaths -CapabilityPackagePaths $packagePaths)
+        $localStatus = if (-not $definition.Enabled) {
+            [pscustomobject]@{ IsCurrent = $false; Reason = "disabled"; Message = "当前环境未启用该能力域" }
+        } elseif ($forceBuild) {
+            [pscustomobject]@{ IsCurrent = $false; Reason = "full_build"; Message = "已选择全量重构" }
+        } else {
+            Get-EdrBuildCacheStatus -CachePath $cachePath -Fingerprint $fingerprint `
+                -DirectoryPaths $packagePaths -CapabilityPackagePaths $packagePaths
+        }
+        $localIsCurrent = $localStatus.IsCurrent
         $repositoryFingerprintPath = Join-Path $repositoryCapabilityFingerprintRoot "$($definition.Key).json"
-        $repositoryIsCurrent = $definition.Enabled -and -not $forceBuild -and -not $localIsCurrent -and `
-            (Test-EdrRepositoryCapabilityFingerprint -FingerprintPath $repositoryFingerprintPath `
+        $repositoryStatus = if (-not $definition.Enabled) {
+            [pscustomobject]@{ IsCurrent = $false; Reason = "disabled"; Message = "当前环境未启用该能力域" }
+        } elseif ($forceBuild) {
+            [pscustomobject]@{ IsCurrent = $false; Reason = "full_build"; Message = "已选择全量重构" }
+        } elseif ($localIsCurrent) {
+            [pscustomobject]@{ IsCurrent = $false; Reason = "not_checked"; Message = "本地缓存已命中，未检查仓库指纹" }
+        } else {
+            Get-EdrRepositoryCapabilityFingerprintStatus -FingerprintPath $repositoryFingerprintPath `
                 -SourceFingerprint $repositoryFingerprint -RepositoryRoot $repositoryRoot `
-                -CapabilityPackagePaths $packagePaths)
+                -CapabilityPackagePaths $packagePaths
+        }
+        $repositoryIsCurrent = $repositoryStatus.IsCurrent
         $isCurrent = $localIsCurrent -or $repositoryIsCurrent
-        if ($localIsCurrent) {
-            Set-EdrRepositoryCapabilityFingerprint -FingerprintPath $repositoryFingerprintPath `
-                -CapabilityKey $definition.Key -SourceFingerprint $repositoryFingerprint `
-                -RepositoryRoot $repositoryRoot -CapabilityPackagePaths $packagePaths
-        } elseif ($repositoryIsCurrent) {
+        if ($repositoryIsCurrent) {
             Set-EdrBuildCache -CachePath $cachePath -Fingerprint $fingerprint `
                 -DirectoryPaths $packagePaths -Metadata @{
                     build_mode = $BuildMode
@@ -832,8 +835,9 @@ if (-not $SkipBuild) {
         $definition | Add-Member -NotePropertyName CachePath -NotePropertyValue $cachePath
         $definition | Add-Member -NotePropertyName PackagePaths -NotePropertyValue $packagePaths
         $definition | Add-Member -NotePropertyName IsCurrent -NotePropertyValue $isCurrent
-        $definition | Add-Member -NotePropertyName RepositoryFingerprint -NotePropertyValue $repositoryFingerprint
-        $definition | Add-Member -NotePropertyName RepositoryFingerprintPath -NotePropertyValue $repositoryFingerprintPath
+        $definition | Add-Member -NotePropertyName LocalCacheStatus -NotePropertyValue $localStatus
+        $definition | Add-Member -NotePropertyName RepositoryCacheStatus -NotePropertyValue $repositoryStatus
+        $definition | Add-Member -NotePropertyName CacheSource -NotePropertyValue $(if ($localIsCurrent) { "local" } elseif ($repositoryIsCurrent) { "repository" } else { "none" })
     }
 
     $buildQueue = @($capabilityBuilds | Where-Object { $_.Enabled -and -not $_.IsCurrent })
@@ -865,10 +869,12 @@ if (-not $SkipBuild) {
             continue
         }
         if ($definition.IsCurrent) {
-            Write-Host "[能力缓存命中] $($definition.Title)" -ForegroundColor DarkGray
+            $cacheSourceTitle = if ($definition.CacheSource -eq "repository") { "仓库指纹" } else { "本地缓存" }
+            Write-Host "[能力缓存命中/$cacheSourceTitle] $($definition.Title)" -ForegroundColor DarkGray
             continue
         }
 
+        Write-Host "[能力缓存未命中] $($definition.Title)：本地=$($definition.LocalCacheStatus.Message)；仓库=$($definition.RepositoryCacheStatus.Message)" -ForegroundColor DarkYellow
         Write-Host "[能力重建] $($definition.Title)" -ForegroundColor Cyan
         $scriptArguments = @(
             "-NoProfile",
@@ -891,9 +897,6 @@ if (-not $SkipBuild) {
                 build_mode = $BuildMode
                 source = $definition.Source
             }
-        Set-EdrRepositoryCapabilityFingerprint -FingerprintPath $definition.RepositoryFingerprintPath `
-            -CapabilityKey $definition.Key -SourceFingerprint $definition.RepositoryFingerprint `
-            -RepositoryRoot $repositoryRoot -CapabilityPackagePaths $definition.PackagePaths
     }
     if (-not $runnerIsCurrent -or $buildQueue.Count -gt 0) {
         # Controller 发布会再次生成其 ProjectReference 的 EdrTest 输出，因此必须在所有

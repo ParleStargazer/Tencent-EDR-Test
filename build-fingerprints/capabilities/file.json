@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "file",
-  "source_fingerprint": "64e19a4610deadada10c627bf1674b29c967ba6be744f4267cffcbd32e7b5581",
+  "source_fingerprint": "05214933432a62d84497661be1c164f39a9b8b0597aeaf0c141e12ae41393ce1",
   "packages": [
     {
       "path": "samples/win.file.create",

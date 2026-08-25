@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "wmi",
-  "source_fingerprint": "749fe940d08c1fc7a380dabc0e73cf5ea56540490bbc6ac87a5eefaf060d4e48",
+  "source_fingerprint": "da1ea8337c6d5d1d31cc6f1df7e8203764b78b1723e9f3557b8c6bbdf29e3080",
   "packages": [
     {
       "path": "samples/win.wmi.consumer",

@@ -1,7 +1,8 @@
 #Requires -Version 7.0
 [CmdletBinding()]
 param(
-    [string[]]$CapabilityKey = @()
+    [string[]]$CapabilityKey = @(),
+    [switch]$VerifyOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,13 +10,9 @@ $repositoryRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoo
 $fingerprintRoot = Join-Path $repositoryRoot "build-fingerprints\capabilities"
 . (Join-Path $PSScriptRoot "Build-Cache.ps1")
 
-$sharedFingerprint = Get-EdrBuildFingerprint -RepositoryRoot $repositoryRoot -InputPaths @(
-    "Directory.Build.props",
-    "sample-src\Common",
-    "src\EdrTest",
-    "schemas\run-db.sql"
-) -Properties @{
-    cache_contract = "repository-capability-source-v1"
+$sharedFingerprint = Get-EdrBuildFingerprint -RepositoryRoot $repositoryRoot `
+    -InputPaths @(Get-EdrCapabilitySharedSourceInputs) -Properties @{
+    cache_contract = "repository-capability-source-v2"
     configuration = "Release"
 }
 
@@ -63,11 +60,21 @@ foreach ($definition in $definitions) {
         $sourceDirectory,
         (Join-Path $PSScriptRoot $definition.Script)
     ) + @($definition.ExtraInputs)) -Properties @{
-        cache_contract = "repository-capability-source-v1"
+        cache_contract = "repository-capability-source-v2"
         configuration = "Release"
         shared = $sharedFingerprint
     }
     $fingerprintPath = Join-Path $fingerprintRoot "$($definition.Key).json"
+    if ($VerifyOnly) {
+        $status = Get-EdrRepositoryCapabilityFingerprintStatus -FingerprintPath $fingerprintPath `
+            -SourceFingerprint $sourceFingerprint -RepositoryRoot $repositoryRoot `
+            -CapabilityPackagePaths $packagePaths
+        if (-not $status.IsCurrent) {
+            throw "能力包指纹验证失败：$($definition.Key)：$($status.Message)"
+        }
+        Write-Host "[指纹验证通过] $($definition.Key) -> $fingerprintPath" -ForegroundColor Green
+        continue
+    }
     Set-EdrRepositoryCapabilityFingerprint -FingerprintPath $fingerprintPath `
         -CapabilityKey $definition.Key -SourceFingerprint $sourceFingerprint `
         -RepositoryRoot $repositoryRoot -CapabilityPackagePaths $packagePaths

@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "named-pipe",
-  "source_fingerprint": "fdae0199804aec56e50ae7c829848198ba9e6e5444e1c7db655699dd2f87ab54",
+  "source_fingerprint": "02ff46d1100306cbb747b049334f0284f7671cb11220a1167d1930f39fdca092",
   "packages": [
     {
       "path": "samples/win.named_pipe.connect",

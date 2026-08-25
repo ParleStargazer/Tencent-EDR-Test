@@ -78,6 +78,24 @@ function Get-EdrBuildFingerprint {
     }
 }
 
+function Get-EdrCapabilitySharedSourceInputs {
+    <#
+      能力 Controller 只依赖 EdrTest 中的清单、数据库、通用值与子测试计时协议。
+      Runner、比较器、本地 API 和云端导出服务属于平台控制面，不应使所有能力包失效。
+    #>
+    return [string[]]@(
+        "Directory.Build.props",
+        "sample-src\Common",
+        "src\EdrTest\EdrTest.csproj",
+        "src\EdrTest\packages.lock.json",
+        "src\EdrTest\Common.cs",
+        "src\EdrTest\CapabilityModels.cs",
+        "src\EdrTest\RunDatabase.cs",
+        "src\EdrTest\SubtestTiming.cs",
+        "schemas\run-db.sql"
+    )
+}
+
 function Get-EdrDirectorySnapshot {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -153,6 +171,62 @@ function Get-EdrCapabilityPackageContentFingerprint {
     }
 }
 
+function Get-EdrRepositoryCapabilityFingerprintStatus {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$FingerprintPath,
+        [Parameter(Mandatory)][string]$SourceFingerprint,
+        [Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string[]]$CapabilityPackagePaths
+    )
+
+    if (-not (Test-Path -LiteralPath $FingerprintPath -PathType Leaf)) {
+        return [pscustomobject]@{ IsCurrent = $false; Reason = "fingerprint_missing"; Message = "仓库指纹文件不存在" }
+    }
+    try {
+        $record = Get-Content -LiteralPath $FingerprintPath -Raw | ConvertFrom-Json -Depth 30
+        if ($record.schema_version -ne "1.0" -or $record.cache_contract -ne "repository-capability-v2" `
+            -or $record.source_fingerprint -ne $SourceFingerprint) {
+            $contractMismatch = $record.schema_version -ne "1.0" -or $record.cache_contract -ne "repository-capability-v2"
+            $message = if ($contractMismatch) { "仓库指纹格式版本不受支持" } else { "能力源码指纹已变化" }
+            $reason = if ($contractMismatch) { "schema_mismatch" } else { "source_fingerprint_changed" }
+            return [pscustomobject]@{ IsCurrent = $false; Reason = $reason; Message = $message }
+        }
+        $expectedPackages = @($record.packages)
+        if ($expectedPackages.Count -ne $CapabilityPackagePaths.Count) {
+            return [pscustomobject]@{ IsCurrent = $false; Reason = "package_count_changed"; Message = "能力包数量已变化" }
+        }
+
+        foreach ($packagePath in $CapabilityPackagePaths) {
+            if (-not (Test-EdrCapabilityPackage -PackagePath $packagePath)) {
+                return [pscustomobject]@{ IsCurrent = $false; Reason = "package_invalid"; Message = "能力包缺失或清单校验失败：$packagePath" }
+            }
+            $relativePath = Get-EdrRepositoryRelativePath -RepositoryRoot $RepositoryRoot -Path $packagePath
+            $expected = @($expectedPackages | Where-Object {
+                [string]::Equals($_.path, $relativePath, [System.StringComparison]::OrdinalIgnoreCase)
+            }) | Select-Object -First 1
+            if ($null -eq $expected) {
+                return [pscustomobject]@{ IsCurrent = $false; Reason = "package_not_recorded"; Message = "仓库指纹未记录能力包：$relativePath" }
+            }
+            $snapshot = Get-EdrDirectorySnapshot -Path $packagePath
+            if ($null -eq $snapshot `
+                -or [int]$expected.file_count -ne $snapshot.file_count `
+                -or [long]$expected.total_bytes -ne $snapshot.total_bytes) {
+                return [pscustomobject]@{ IsCurrent = $false; Reason = "package_snapshot_changed"; Message = "能力包文件数或总大小已变化：$relativePath" }
+            }
+            $contentFingerprint = Get-EdrCapabilityPackageContentFingerprint `
+                -RepositoryRoot $RepositoryRoot -PackagePath $packagePath
+            if (-not [string]::Equals($expected.content_fingerprint, $contentFingerprint,
+                    [System.StringComparison]::OrdinalIgnoreCase)) {
+                return [pscustomobject]@{ IsCurrent = $false; Reason = "package_content_changed"; Message = "能力包内容指纹已变化：$relativePath" }
+            }
+        }
+        return [pscustomobject]@{ IsCurrent = $true; Reason = "current"; Message = "仓库能力包指纹匹配" }
+    } catch {
+        return [pscustomobject]@{ IsCurrent = $false; Reason = "fingerprint_invalid"; Message = "仓库指纹读取失败：$($_.Exception.Message)" }
+    }
+}
+
 function Test-EdrRepositoryCapabilityFingerprint {
     [CmdletBinding()]
     param(
@@ -162,39 +236,9 @@ function Test-EdrRepositoryCapabilityFingerprint {
         [Parameter(Mandatory)][string[]]$CapabilityPackagePaths
     )
 
-    if (-not (Test-Path -LiteralPath $FingerprintPath -PathType Leaf)) { return $false }
-    try {
-        $record = Get-Content -LiteralPath $FingerprintPath -Raw | ConvertFrom-Json -Depth 30
-        if ($record.schema_version -ne "1.0" -or $record.source_fingerprint -ne $SourceFingerprint) {
-            return $false
-        }
-        $expectedPackages = @($record.packages)
-        if ($expectedPackages.Count -ne $CapabilityPackagePaths.Count) { return $false }
-
-        foreach ($packagePath in $CapabilityPackagePaths) {
-            if (-not (Test-EdrCapabilityPackage -PackagePath $packagePath)) { return $false }
-            $relativePath = Get-EdrRepositoryRelativePath -RepositoryRoot $RepositoryRoot -Path $packagePath
-            $expected = @($expectedPackages | Where-Object {
-                [string]::Equals($_.path, $relativePath, [System.StringComparison]::OrdinalIgnoreCase)
-            }) | Select-Object -First 1
-            if ($null -eq $expected) { return $false }
-            $snapshot = Get-EdrDirectorySnapshot -Path $packagePath
-            if ($null -eq $snapshot `
-                -or [int]$expected.file_count -ne $snapshot.file_count `
-                -or [long]$expected.total_bytes -ne $snapshot.total_bytes) {
-                return $false
-            }
-            $contentFingerprint = Get-EdrCapabilityPackageContentFingerprint `
-                -RepositoryRoot $RepositoryRoot -PackagePath $packagePath
-            if (-not [string]::Equals($expected.content_fingerprint, $contentFingerprint,
-                    [System.StringComparison]::OrdinalIgnoreCase)) {
-                return $false
-            }
-        }
-        return $true
-    } catch {
-        return $false
-    }
+    return (Get-EdrRepositoryCapabilityFingerprintStatus -FingerprintPath $FingerprintPath `
+        -SourceFingerprint $SourceFingerprint -RepositoryRoot $RepositoryRoot `
+        -CapabilityPackagePaths $CapabilityPackagePaths).IsCurrent
 }
 
 function Set-EdrRepositoryCapabilityFingerprint {
@@ -222,7 +266,7 @@ function Set-EdrRepositoryCapabilityFingerprint {
     })
     $record = [ordered]@{
         schema_version = "1.0"
-        cache_contract = "repository-capability-v1"
+        cache_contract = "repository-capability-v2"
         capability_key = $CapabilityKey
         source_fingerprint = $SourceFingerprint
         packages = $packages
@@ -246,6 +290,63 @@ function Set-EdrRepositoryCapabilityFingerprint {
     }
 }
 
+function Get-EdrBuildCacheStatus {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$CachePath,
+        [Parameter(Mandatory)][string]$Fingerprint,
+        [string[]]$DirectoryPaths = @(),
+        [string[]]$CapabilityPackagePaths = @(),
+        [string[]]$RequiredFiles = @()
+    )
+
+    if (-not (Test-Path -LiteralPath $CachePath -PathType Leaf)) {
+        return [pscustomobject]@{ IsCurrent = $false; Reason = "cache_missing"; Message = "本地构建缓存不存在" }
+    }
+    try {
+        $cache = Get-Content -LiteralPath $CachePath -Raw | ConvertFrom-Json -Depth 30
+        if ($cache.schema_version -ne "1.0") {
+            return [pscustomobject]@{ IsCurrent = $false; Reason = "schema_mismatch"; Message = "本地构建缓存格式版本不受支持" }
+        }
+        if ($cache.fingerprint -ne $Fingerprint) {
+            return [pscustomobject]@{ IsCurrent = $false; Reason = "source_fingerprint_changed"; Message = "本地源码或构建环境指纹已变化" }
+        }
+
+        foreach ($requiredFile in $RequiredFiles) {
+            if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
+                return [pscustomobject]@{ IsCurrent = $false; Reason = "required_file_missing"; Message = "构建输出文件不存在：$requiredFile" }
+            }
+        }
+        foreach ($packagePath in $CapabilityPackagePaths) {
+            if (-not (Test-EdrCapabilityPackage -PackagePath $packagePath)) {
+                return [pscustomobject]@{ IsCurrent = $false; Reason = "package_invalid"; Message = "能力包缺失或清单校验失败：$packagePath" }
+            }
+        }
+
+        $expectedSnapshots = @($cache.directory_snapshots)
+        if ($expectedSnapshots.Count -ne $DirectoryPaths.Count) {
+            return [pscustomobject]@{ IsCurrent = $false; Reason = "snapshot_count_changed"; Message = "构建输出目录数量已变化" }
+        }
+        foreach ($directoryPath in $DirectoryPaths) {
+            $actual = Get-EdrDirectorySnapshot -Path $directoryPath
+            if ($null -eq $actual) {
+                return [pscustomobject]@{ IsCurrent = $false; Reason = "output_directory_missing"; Message = "构建输出目录不存在：$directoryPath" }
+            }
+            $expected = @($expectedSnapshots | Where-Object {
+                [string]::Equals($_.path, $actual.path, [System.StringComparison]::OrdinalIgnoreCase)
+            }) | Select-Object -First 1
+            if ($null -eq $expected `
+                -or [int]$expected.file_count -ne $actual.file_count `
+                -or [long]$expected.total_bytes -ne $actual.total_bytes) {
+                return [pscustomobject]@{ IsCurrent = $false; Reason = "output_snapshot_changed"; Message = "构建输出文件数或总大小已变化：$directoryPath" }
+            }
+        }
+        return [pscustomobject]@{ IsCurrent = $true; Reason = "current"; Message = "本地构建缓存匹配" }
+    } catch {
+        return [pscustomobject]@{ IsCurrent = $false; Reason = "cache_invalid"; Message = "本地构建缓存读取失败：$($_.Exception.Message)" }
+    }
+}
+
 function Test-EdrBuildCache {
     [CmdletBinding()]
     param(
@@ -256,36 +357,9 @@ function Test-EdrBuildCache {
         [string[]]$RequiredFiles = @()
     )
 
-    if (-not (Test-Path -LiteralPath $CachePath -PathType Leaf)) { return $false }
-    try {
-        $cache = Get-Content -LiteralPath $CachePath -Raw | ConvertFrom-Json -Depth 30
-        if ($cache.schema_version -ne "1.0" -or $cache.fingerprint -ne $Fingerprint) { return $false }
-
-        foreach ($requiredFile in $RequiredFiles) {
-            if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) { return $false }
-        }
-        foreach ($packagePath in $CapabilityPackagePaths) {
-            if (-not (Test-EdrCapabilityPackage -PackagePath $packagePath)) { return $false }
-        }
-
-        $expectedSnapshots = @($cache.directory_snapshots)
-        if ($expectedSnapshots.Count -ne $DirectoryPaths.Count) { return $false }
-        foreach ($directoryPath in $DirectoryPaths) {
-            $actual = Get-EdrDirectorySnapshot -Path $directoryPath
-            if ($null -eq $actual) { return $false }
-            $expected = @($expectedSnapshots | Where-Object {
-                [string]::Equals($_.path, $actual.path, [System.StringComparison]::OrdinalIgnoreCase)
-            }) | Select-Object -First 1
-            if ($null -eq $expected `
-                -or [int]$expected.file_count -ne $actual.file_count `
-                -or [long]$expected.total_bytes -ne $actual.total_bytes) {
-                return $false
-            }
-        }
-        return $true
-    } catch {
-        return $false
-    }
+    return (Get-EdrBuildCacheStatus -CachePath $CachePath -Fingerprint $Fingerprint `
+        -DirectoryPaths $DirectoryPaths -CapabilityPackagePaths $CapabilityPackagePaths `
+        -RequiredFiles $RequiredFiles).IsCurrent
 }
 
 function Set-EdrBuildCache {

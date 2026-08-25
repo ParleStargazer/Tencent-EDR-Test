@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "group-policy",
-  "source_fingerprint": "ae22c10d0e4defed711dfa442d3bc27d461392c1654babf439a063393979a4aa",
+  "source_fingerprint": "c9f78fa00b690caa5b6d19cf6e11bd91be3c084441ffc56efb93ee85a861fb8a",
   "packages": [
     {
       "path": "samples/win.group_policy.modify",

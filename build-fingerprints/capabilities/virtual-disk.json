@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "virtual-disk",
-  "source_fingerprint": "f8094db0a72e5c76c96d1ea52058030126e17c094a3b56f1355d69cbe7f7618f",
+  "source_fingerprint": "bede0c14db3680c8ef709b51c5c49b8fe32023b07e6a61d8ff08cbaf35c0f6d8",
   "packages": [
     {
       "path": "samples/win.device.virtual_disk.mount",

@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "service",
-  "source_fingerprint": "2ab60157ed921279d30662c75bc53eb3a7f02a919106764928eba8eb6fdc0d2a",
+  "source_fingerprint": "78ff0951b5cd02a24aa9e4f7a226b7506b54a2e849850f6a102fb6c797fea37d",
   "packages": [
     {
       "path": "samples/win.service.create",

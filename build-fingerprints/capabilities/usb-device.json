@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "cache_contract": "repository-capability-v1",
+  "cache_contract": "repository-capability-v2",
   "capability_key": "usb-device",
-  "source_fingerprint": "95bb13d5c5c0e937ad98eb6f02312afb47516404eb7973f7f551795d37d90f6f",
+  "source_fingerprint": "0ef566e13130c557a49e258d33394cbac3b57e9d8913d6e3b5d004af08e6926c",
   "packages": [
     {
       "path": "samples/win.device.usb.mount",
